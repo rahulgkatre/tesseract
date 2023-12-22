@@ -1,6 +1,9 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+// A proof of concept showing that it is possible to make tensor shape a generic
+// type parameter to enable compile time verification of broadcasts
+
 fn TensorStorage(comptime dtype: type, comptime size: usize) type {
     return struct {
         const Self = @This();
@@ -33,6 +36,11 @@ pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
         .ComptimeFloat => {},
         .Float => {},
         else => @compileError("Non-numeric or non-bool tensor dtype not supported, received " ++ @typeName(dtype)),
+    }
+
+    switch (@typeInfo(@TypeOf(shape))) {
+        .Array => {},
+        else => @compileError("Shape parameter must be an array with fixed size, received " ++ @typeName(@TypeOf(shape))),
     }
 
     return struct {
@@ -123,7 +131,7 @@ pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
 
                 var dim1: usize = undefined;
                 var dim2: usize = undefined;
-                inline for (0..broadcast_ndims) |i| {
+                for (0..broadcast_ndims) |i| {
                     dim1 = if (i >= ndims1) 1 else shape1[ndims1 - i - 1];
                     dim2 = if (i >= ndims2) 1 else shape2[ndims2 - i - 1];
                     if (dim1 != 1 and dim2 != 1 and dim1 != dim2) {
@@ -169,6 +177,6 @@ test "test_nonnumeric_compile" {
         a: bool,
     };
     _ = some_type;
-    var tensor1 = try Tensor(c_int, .{ 1, 4 }).init(null, &allocator);
+    const tensor1 = try Tensor(c_int, .{ 1, 4 }).init(null, &allocator);
     _ = tensor1;
 }

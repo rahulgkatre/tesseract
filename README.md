@@ -11,3 +11,9 @@ Why Zig?
 - Portable SIMD. Usage of Zig's SIMD features for tensor computations on the CPU means that CPU operations can be written once and run fast anywhere.
 - C interop. Zig can natively import C/C++ files and compile with them. This is useful for importing headers for GPUs and calling functions to compile and run emitted code.
 
+Other notes
+- Tensors are immutable. Any operation on a tensor will return a new Tensor object. However, the underlying buffer may be the same. 
+- With tensor shapes being known at compile time, all bounds checking is uneccessary and every loop can be unrolled.
+- Sinced minibatch/batch training is used and has a fixed batch size, data can be loaded as a slice, from which arrays of the batch size can be extracted and passed to the model. 
+- For now, ONNX ops will be targeted but StableHLO can be added in the future.
+
