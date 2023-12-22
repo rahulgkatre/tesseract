@@ -41,10 +41,28 @@ fn Buffer(comptime dtype: type, comptime size: usize) type {
     };
 }
 
+fn tensor(comptime dtype: type, comptime shape: anytype, allocator: *const Allocator) !*Tensor(dtype, shape.len, shape, comptime_get_tensor_default_strides(shape.len, shape)) {
+    return try Tensor(dtype, shape.len, shape, comptime_get_tensor_default_strides(shape.len, shape)).init(null, allocator);
+}
+
+// pub fn empty(comptime dtype: type, comptime shape: anytype, allocator: *const Allocator) !*Tensor(dtype, shape.len, shape, comptime_get_tensor_default_strides(shape.len, shape)) {
+//     return (tryinit(null, allocator);
+// }
+
+pub fn full(comptime dtype: type, comptime shape: anytype, val: dtype, allocator: *const Allocator) !*Tensor(dtype, shape.len, shape, comptime_get_tensor_default_strides(shape.len, shape)) {
+    const t = try tensor(dtype, shape, allocator);
+    @memset(t.buffer.data, val);
+    return t;
+}
+
+pub fn zeros(comptime dtype: type, comptime shape: anytype, allocator: *const Allocator) !*Tensor(dtype, shape.len, shape, comptime_get_tensor_default_strides(shape.len, shape)) {
+    return full(dtype, shape, 0, allocator);
+}
+
 // TODO: Add a device type param here
 // Should be easy to add this type param everywhere as the device will remain the same unless a to(x)
 // method is called
-pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
+fn Tensor(comptime dtype: type, comptime ndims: u8, comptime shape: [ndims]usize, comptime strides: [ndims]usize) type {
     // Some type checks to make sure that the dtype and shape have valid typing
     // const ndims: u8 = undefined;
     // const shape = undefined;
@@ -80,11 +98,13 @@ pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
         const Self = @This();
         // comptime const used for array sizing
         const size = comptime_get_tensor_size();
-        const ndims = shape.len;
+        // const ndims = shape.len;
+        // const strides = strides orelse comptime_get_tensor_default_strides(ndims, shape);
         // runtime accessible field
         ndims: u8 = ndims,
         shape: [ndims]usize = shape,
-        strides: [ndims]usize = comptime_get_tensor_default_strides(ndims, shape),
+        strides: [ndims]usize = strides,
+        contiguous: bool = comptime_is_contiguous(),
         buffer: *Buffer(dtype, size),
         owns_storage: bool,
         allocator: *const Allocator,
@@ -129,12 +149,12 @@ pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
         }
         // Utility function for permuting the dimensions of a tensor
         // It runs in comptime to determine the return tensor shape, and also at runtime to get the actual new shape
-        fn comptime_shape_permute(old_shape: [ndims]usize, perm: [ndims]usize) [ndims]usize {
-            var new_shape: [ndims]usize = undefined;
+        fn comptime_permute(shape_or_strides: [ndims]usize, perm: [ndims]usize) [ndims]usize {
+            var new_shape_or_strides: [ndims]usize = undefined;
             for (0..ndims) |dim| {
-                new_shape[dim] = old_shape[perm[dim]];
+                new_shape_or_strides[dim] = shape_or_strides[perm[dim]];
             }
-            return new_shape;
+            return new_shape_or_strides;
         }
         // Gets the broadcast shape between current tensor and other tensor if comptime 1possible
         fn shape_broadcast(self: *Self, other_tensor_ptr: anytype) [@max(shape.len, comptime_get_tensor_ndims(@TypeOf(other_tensor_ptr.*)))]usize {
@@ -170,24 +190,28 @@ pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
                 break :get_index index;
             };
         }
-        // fn comptime_is_contiguous() bool {
-        //     return comptime is_contiguous: {
-        //         for (strides) {
-
-        //         }
-
-        //     }
-        // }
+        fn comptime_is_contiguous() bool {
+            return comptime is_contiguous: {
+                var prev_stride = strides[0];
+                for (strides[1..]) |s| {
+                    if (prev_stride <= s) {
+                        break :is_contiguous false;
+                    }
+                    prev_stride = s;
+                }
+                break :is_contiguous true;
+            };
+        }
 
         pub fn init(buffer: ?*Buffer(dtype, size), allocator: *const Allocator) !*Self {
-            const tensor = try allocator.create(Self);
-            errdefer allocator.destroy(tensor);
-            tensor.* = .{
+            const t = try allocator.create(Self);
+            errdefer allocator.destroy(t);
+            t.* = .{
                 .buffer = buffer orelse try Buffer(dtype, comptime_get_tensor_size()).init(allocator),
                 .owns_storage = buffer == null,
                 .allocator = allocator,
             };
-            return tensor;
+            return t;
         }
 
         pub fn deinit(self: *Self) void {
@@ -196,36 +220,19 @@ pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
             }
         }
 
-        pub fn empty(allocator: *const Allocator) !*Self {
-            return init(null, allocator);
-        }
-
-        pub fn full(val: dtype, allocator: *const Allocator) !*Self {
-            const tensor = try empty(allocator);
-            @memset(tensor.buffer.data, val);
-            return tensor;
-        }
-
-        pub fn zeros(allocator: *const Allocator) !*Self {
-            return full(0, allocator);
-        }
-
-        pub fn permute(self: *Self, comptime perm: [shape.len]usize) !*Tensor(dtype, comptime_shape_permute(shape, perm)) {
-            const new_shape = comptime comptime_shape_permute(shape, perm);
-            const perm_tensor: *Tensor(dtype, new_shape) = try Tensor(dtype, new_shape).init(self.buffer, self.allocator);
+        pub fn permute(self: *Self, comptime perm: [shape.len]usize) !*Tensor(dtype, ndims, comptime_permute(shape, perm), comptime_permute(strides, perm)) {
+            const new_shape = comptime comptime_permute(shape, perm);
+            const new_strides = comptime comptime_permute(strides, perm);
+            const perm_tensor: *Tensor(dtype, ndims, new_shape, new_strides) = try Tensor(dtype, ndims, new_shape, new_strides).init(self.buffer, self.allocator);
             return perm_tensor;
         }
-
-        // pub fn shape_broadcast(self: *Self, other: anytype) {
-
-        // }
     };
 }
 
 test "test_permute_compile" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
-    var tensor1 = try Tensor(i32, [_]usize{ 2, 3, 4 }).zeros(&allocator);
+    var tensor1 = try zeros(i32, [_]usize{ 2, 3, 4 }, &allocator);
     defer tensor1.deinit();
     const tensor2 = try tensor1.permute([_]usize{ 0, 2, 1 });
     defer tensor2.deinit();
@@ -239,9 +246,9 @@ test "test_broadcast_compile" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
     // Try changing the shape of the tensors. If the shapes don't broadcast together, the code won't compile.
-    var tensor1 = try Tensor(i32, [_]usize{ 1, 4 }).zeros(&allocator);
+    var tensor1 = try tensor(i32, [_]usize{ 1, 4 }, &allocator);
     defer tensor1.deinit();
-    var tensor2 = try Tensor(i32, [_]usize{ 3, 1 }).zeros(&allocator);
+    var tensor2 = try zeros(i32, [_]usize{ 3, 1 }, &allocator);
     defer tensor2.deinit();
     const broadcast_shape = tensor1.shape_broadcast(tensor2);
     std.debug.print("\n{any} and {any} broadcast to {any}\n", .{ tensor1.shape, tensor2.shape, broadcast_shape });
@@ -254,6 +261,6 @@ test "test_nonnumeric_compile" {
         a: bool,
     };
     _ = some_type;
-    const tensor1 = try Tensor(c_int, [_]usize{ 1, 4 }).init(null, &allocator);
+    const tensor1 = try zeros(c_int, [_]usize{ 1, 4 }, &allocator);
     _ = tensor1;
 }
