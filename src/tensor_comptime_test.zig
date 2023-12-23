@@ -40,6 +40,6 @@ test "test_reduce_fn_compile" {
     var tensor1 = try zeros(i32, [_]usize{ 2, 3, 4 }, &allocator);
     defer tensor1.deinit();
     // Reduce along axis 1. If reduce dim is outside the number of dimensions the tensor has then the code won't compile.
-    var tensor2 = try tensor1.mock_reduce_fn(null, 1);
+    const tensor2 = try tensor1.mock_reduce_fn(null, 1);
     std.debug.print("\n{any}\n.reduce_fn({any}) = \n{any}\n\n", .{ tensor1, 1, tensor2 });
 }
