@@ -47,9 +47,10 @@ test "test_reduce_fn_compile" {
 }
 
 test "test_lazy" {
-    comptime {
-        var tensor1 = lazy(i32, .{ 2, 3, 4 });
-        @compileLog(comptimePrint("{any}", .{tensor1}));
-    }
-    // std.debug.print("\n{any}\n", .{tensor1});
+    var tensor1 = comptime lazy(i32, .{ 2, 3, 4 });
+    std.debug.print("\n{any}\n", .{tensor1});
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    _ = try tensor1.realize(null, &allocator);
+    std.debug.print("\n{any}\n", .{tensor1});
 }
