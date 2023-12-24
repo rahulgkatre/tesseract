@@ -4,10 +4,20 @@ const comptimePrint = std.fmt.comptimePrint;
 const ComptimeUtils = @import("tensor_comptime_utils.zig");
 const TensorStorage = @import("tensor_storage.zig").TensorStorage;
 
-pub fn tensor(comptime dtype: type, comptime shape: anytype, allocator: *const Allocator) !ret: {
-    break :ret *Tensor(dtype, shape.len, shape, ComptimeUtils.defaultStrides(shape.len, shape));
+pub fn lazy(comptime dtype: type, comptime shape: anytype) ret: {
+    const strides = ComptimeUtils.defaultStrides(shape.len, shape);
+    break :ret Tensor(dtype, shape.len, shape, strides);
 } {
-    return try Tensor(dtype, shape.len, shape, ComptimeUtils.defaultStrides(shape.len, shape)).init(null, allocator);
+    const strides = comptime ComptimeUtils.defaultStrides(shape.len, shape);
+    return Tensor(dtype, shape.len, shape, strides).lazy_init();
+}
+
+pub fn tensor(comptime dtype: type, comptime shape: anytype, allocator: *const Allocator) !ret: {
+    const strides = ComptimeUtils.defaultStrides(shape.len, shape);
+    break :ret *Tensor(dtype, shape.len, shape, strides);
+} {
+    const strides = comptime ComptimeUtils.defaultStrides(shape.len, shape);
+    return try Tensor(dtype, shape.len, shape, strides).init(null, allocator);
 }
 
 pub fn full(comptime dtype: type, comptime shape: anytype, val: dtype, allocator: *const Allocator) !ret: {
@@ -15,7 +25,7 @@ pub fn full(comptime dtype: type, comptime shape: anytype, val: dtype, allocator
     break :ret *Tensor(dtype, shape.len, shape, strides);
 } {
     const t = try tensor(dtype, shape, allocator);
-    @memset(t.storage.data, val);
+    @memset(t.storage.?.data, val);
     return t;
 }
 
@@ -26,7 +36,7 @@ pub fn zeros(comptime dtype: type, comptime shape: anytype, allocator: *const Al
 // TODO: Add a device type param here
 // Should be easy to add this type param everywhere as the device will remain the same unless a to(x)
 // method is called
-fn Tensor(comptime dtype: type, comptime ndims: u8, comptime shape: [ndims]usize, comptime strides: [ndims]usize) type {
+fn Tensor(comptime dtype: type, comptime _ndims: u8, comptime _shape: [_ndims]usize, comptime _strides: [_ndims]usize) type {
     switch (@typeInfo(dtype)) {
         .Bool => {},
         .ComptimeInt => {},
@@ -37,13 +47,15 @@ fn Tensor(comptime dtype: type, comptime ndims: u8, comptime shape: [ndims]usize
     }
     return struct {
         const Self = @This();
+        pub const ndims: u8 = _ndims;
+        pub const shape: [ndims]usize = _shape;
+        pub const strides: [ndims]usize = _strides;
         ndims: u8 = ndims,
         shape: [ndims]usize = shape,
         strides: [ndims]usize = strides,
-        storage: *TensorStorage(dtype, size()),
-        // id: usize = ComptimeUtils.TensorIdGenerator.getAndIncrement(),
+        storage: ?*TensorStorage(dtype, size()),
         owns_storage: bool,
-        allocator: *const Allocator,
+        allocator: ?*const Allocator,
         // Used to determine the size of the underlying storage
         pub fn size() usize {
             return comptime get_size: {
@@ -75,6 +87,14 @@ fn Tensor(comptime dtype: type, comptime ndims: u8, comptime shape: [ndims]usize
             _ = self;
             return comptime ComptimeUtils.isContiguous(ndims, strides);
         }
+        pub fn lazy_init() Self {
+            return .{ .storage = null, .owns_storage = false, .allocator = null };
+        }
+        pub fn realize(self: *Self, storage: ?*TensorStorage(dtype, size()), allocator: *const Allocator) !void {
+            self.storage = storage orelse try TensorStorage(dtype, size()).init(allocator);
+            self.owns_storage = storage == null;
+            self.allocator = allocator;
+        }
         pub fn init(storage: ?*TensorStorage(dtype, size()), allocator: *const Allocator) !*Self {
             const t = try allocator.create(Self);
             errdefer allocator.destroy(t);
@@ -87,7 +107,7 @@ fn Tensor(comptime dtype: type, comptime ndims: u8, comptime shape: [ndims]usize
         }
         pub fn deinit(self: *Self) void {
             if (self.owns_storage) {
-                self.storage.deinit();
+                self.storage.?.deinit();
             }
         }
         pub fn permute(self: *Self, comptime perm: [ndims]usize) !ret: {
@@ -97,7 +117,7 @@ fn Tensor(comptime dtype: type, comptime ndims: u8, comptime shape: [ndims]usize
         } {
             const new_shape = comptime ComptimeUtils.permuteArray(ndims, shape, perm);
             const new_strides = comptime ComptimeUtils.permuteArray(ndims, strides, perm);
-            return try Tensor(dtype, ndims, new_shape, new_strides).init(self.storage, self.allocator);
+            return try Tensor(dtype, ndims, new_shape, new_strides).init(self.storage, self.allocator.?);
         }
 
         // Mock implementations of three kinds of tensor ops
@@ -116,7 +136,7 @@ fn Tensor(comptime dtype: type, comptime ndims: u8, comptime shape: [ndims]usize
         } {
             _ = zip_op;
             const out_shape = comptime ComptimeUtils.shapeBroadcast(Self, @TypeOf(other_tensor_ptr.*));
-            return try tensor(dtype, out_shape, self.allocator);
+            return try tensor(dtype, out_shape, self.allocator.?);
         }
         // Reduce is many to 1 and collapses a dimension to 1 (sum, prod, max, etc.)
         pub fn mock_reduce_fn(self: *Self, reduce_op: anytype, comptime reduce_dim: usize) !ret: {
@@ -126,7 +146,7 @@ fn Tensor(comptime dtype: type, comptime ndims: u8, comptime shape: [ndims]usize
         } {
             _ = reduce_op;
             const out_shape = comptime ComptimeUtils.getReducedShape(ndims, shape, reduce_dim);
-            return try tensor(dtype, out_shape, self.allocator);
+            return try tensor(dtype, out_shape, self.allocator.?);
         }
     };
 }

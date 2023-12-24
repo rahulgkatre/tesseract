@@ -24,24 +24,24 @@ const comptimePrint = std.fmt.comptimePrint;
 // - shape: [ndims]usize is the second field of the struct
 // As long as these assumptions are valid there should not be any problems as if they are not valid then the code will still fail to compile
 // It would be better if a compile error could be generated to explain that the code was attempting to operate on something that is not a tensor
-fn unsafeGetNdims(comptime tensor_type: type) u8 {
-    const info = @typeInfo(tensor_type);
-    const ndims_field = info.Struct.fields[0];
-    const ndims_default_value_aligned: *align(ndims_field.alignment) const anyopaque = @alignCast(@ptrCast(ndims_field.default_value));
-    return @as(*const ndims_field.type, @ptrCast(ndims_default_value_aligned)).*;
-}
-fn unsafeGetShape(comptime ndims: u8, comptime tensor_type: type) [ndims]usize {
-    const info = @typeInfo(tensor_type);
-    const shape_field = info.Struct.fields[1];
-    const shape_default_value_aligned: *align(shape_field.alignment) const anyopaque = @alignCast(@ptrCast(shape_field.default_value));
-    return @as(*const shape_field.type, @ptrCast(shape_default_value_aligned)).*;
-}
-fn unsafeGetStrides(comptime ndims: u8, comptime tensor_type: type) [ndims]usize {
-    const info = @typeInfo(tensor_type);
-    const strides_field = info.Struct.fields[2];
-    const strides_default_value_aligned: *align(strides_field.alignment) const anyopaque = @alignCast(@ptrCast(strides_field.default_value));
-    return @as(*const strides_field.type, @ptrCast(strides_default_value_aligned)).*;
-}
+// fn unsafeGetNdims(comptime tensor_type: type) u8 {
+//     const info = @typeInfo(tensor_type);
+//     const ndims_field = info.Struct.fields[0];
+//     const ndims_default_value_aligned: *align(ndims_field.alignment) const anyopaque = @alignCast(@ptrCast(ndims_field.default_value));
+//     return @as(*const ndims_field.type, @ptrCast(ndims_default_value_aligned)).*;
+// }
+// fn unsafeGetShape(comptime ndims: u8, comptime tensor_type: type) [ndims]usize {
+//     const info = @typeInfo(tensor_type);
+//     const shape_field = info.Struct.fields[1];
+//     const shape_default_value_aligned: *align(shape_field.alignment) const anyopaque = @alignCast(@ptrCast(shape_field.default_value));
+//     return @as(*const shape_field.type, @ptrCast(shape_default_value_aligned)).*;
+// }
+// fn unsafeGetStrides(comptime ndims: u8, comptime tensor_type: type) [ndims]usize {
+//     const info = @typeInfo(tensor_type);
+//     const strides_field = info.Struct.fields[2];
+//     const strides_default_value_aligned: *align(strides_field.alignment) const anyopaque = @alignCast(@ptrCast(strides_field.default_value));
+//     return @as(*const strides_field.type, @ptrCast(strides_default_value_aligned)).*;
+// }
 // Utility function for permuting an array (tensor shape or strides)
 // It runs in comptime to determine the return tensor shape/strides, and also at runtime to get the actual new shape/strides
 pub fn permuteArray(comptime ndims: u8, comptime array: [ndims]usize, perm: [ndims]usize) [ndims]usize {
@@ -77,13 +77,13 @@ pub fn isContiguous(comptime ndims: u8, comptime strides: [ndims]usize) bool {
 }
 // Gets the broadcast shape between two tensors if one exists
 // If the two tensors do not broadcast, the code won't compile
-pub fn shapeBroadcast(comptime tensor1_type: type, comptime tensor2_type: type) [@max(unsafeGetNdims(tensor1_type), unsafeGetNdims(tensor2_type))]usize {
+pub fn shapeBroadcast(comptime tensor1_t: type, comptime tensor2_t: type) [@max(@field(tensor1_t, "ndims"), @field(tensor2_t, "ndims"))]usize {
     return comptime ret: {
-        const tensor1_ndims = unsafeGetNdims(tensor1_type);
-        const tensor1_shape = unsafeGetShape(tensor1_ndims, tensor1_type);
+        const tensor1_ndims = @field(tensor1_t, "ndims");
+        const tensor1_shape = @field(tensor1_t, "shape");
 
-        const tensor2_ndims = unsafeGetNdims(tensor2_type);
-        const tensor2_shape = unsafeGetShape(tensor2_ndims, tensor2_type);
+        const tensor2_ndims = @field(tensor2_t, "ndims");
+        const tensor2_shape = @field(tensor2_t, "shape");
 
         const bc_ndims = @max(tensor1_ndims, tensor2_ndims);
         var bc_shape: [bc_ndims]usize = undefined;

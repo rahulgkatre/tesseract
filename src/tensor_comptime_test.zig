@@ -1,6 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const zeros = @import("tensor.zig").zeros;
+const lazy = @import("tensor.zig").lazy;
+const comptimePrint = std.fmt.comptimePrint;
 
 test "test_permute_compile" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -42,4 +44,12 @@ test "test_reduce_fn_compile" {
     // Reduce along axis 1. If reduce dim is outside the number of dimensions the tensor has then the code won't compile.
     const tensor2 = try tensor1.mock_reduce_fn(null, 1);
     std.debug.print("\n{any}\n.reduce_fn({any}) = \n{any}\n\n", .{ tensor1, 1, tensor2 });
+}
+
+test "test_lazy" {
+    comptime {
+        var tensor1 = lazy(i32, .{ 2, 3, 4 });
+        @compileLog(comptimePrint("{any}", .{tensor1}));
+    }
+    // std.debug.print("\n{any}\n", .{tensor1});
 }
