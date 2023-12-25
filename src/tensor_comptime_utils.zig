@@ -17,31 +17,6 @@ const comptimePrint = std.fmt.comptimePrint;
 //     break :id NextIdResult;
 // };
 
-// NOTE: These functions are a bit unsafe due to the usage of reflection to access fields of a tensor at compile time
-// Reflection is needed here because shapes are part of the type, but it seems like for generics the param info is lost
-// It makes 2 critical assumptions about the input objecret:
-// - ndims: u8 is the first field of the struct
-// - shape: [ndims]usize is the second field of the struct
-// As long as these assumptions are valid there should not be any problems as if they are not valid then the code will still fail to compile
-// It would be better if a compile error could be generated to explain that the code was attempting to operate on something that is not a tensor
-// fn unsafeGetNdims(comptime tensor_type: type) u8 {
-//     const info = @typeInfo(tensor_type);
-//     const ndims_field = info.Struct.fields[0];
-//     const ndims_default_value_aligned: *align(ndims_field.alignment) const anyopaque = @alignCast(@ptrCast(ndims_field.default_value));
-//     return @as(*const ndims_field.type, @ptrCast(ndims_default_value_aligned)).*;
-// }
-// fn unsafeGetShape(comptime ndims: u8, comptime tensor_type: type) [ndims]usize {
-//     const info = @typeInfo(tensor_type);
-//     const shape_field = info.Struct.fields[1];
-//     const shape_default_value_aligned: *align(shape_field.alignment) const anyopaque = @alignCast(@ptrCast(shape_field.default_value));
-//     return @as(*const shape_field.type, @ptrCast(shape_default_value_aligned)).*;
-// }
-// fn unsafeGetStrides(comptime ndims: u8, comptime tensor_type: type) [ndims]usize {
-//     const info = @typeInfo(tensor_type);
-//     const strides_field = info.Struct.fields[2];
-//     const strides_default_value_aligned: *align(strides_field.alignment) const anyopaque = @alignCast(@ptrCast(strides_field.default_value));
-//     return @as(*const strides_field.type, @ptrCast(strides_default_value_aligned)).*;
-// }
 // Utility function for permuting an array (tensor shape or strides)
 // It runs in comptime to determine the return tensor shape/strides, and also at runtime to get the actual new shape/strides
 pub fn permuteArray(comptime ndims: u8, comptime array: [ndims]usize, perm: [ndims]usize) [ndims]usize {
