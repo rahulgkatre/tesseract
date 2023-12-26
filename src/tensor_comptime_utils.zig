@@ -35,22 +35,19 @@ pub fn isContiguous(comptime ndims: u8, comptime strides: [ndims]usize) bool {
     return true;
 }
 
-pub fn shapeTypeBroadcast(comptime tensor1_t: type, comptime tensor2_t: type) [@max(@field(tensor1_t, "ndims"), @field(tensor2_t, "ndims"))]usize {
+pub fn shapeBroadcast(comptime tensor1_t: type, comptime tensor2_t: type) [@max(@field(tensor1_t, "ndims"), @field(tensor2_t, "ndims"))]usize {
     // Gets the broadcast shape between two tensors if one exists
     // If the two tensors do not broadcast, the code won't compile
     return comptime blk: {
         const tensor1_ndims = @field(tensor1_t, "ndims");
         const tensor1_shape = @field(tensor1_t, "shape");
-
         const tensor2_ndims = @field(tensor2_t, "ndims");
         const tensor2_shape = @field(tensor2_t, "shape");
-
         const bc_ndims = @max(tensor1_ndims, tensor2_ndims);
         var bc_shape: [bc_ndims]usize = undefined;
-
         var dim1: usize = undefined;
         var dim2: usize = undefined;
-        for (0..bc_ndims) |i| {
+        inline for (0..bc_ndims) |i| {
             dim1 = if (i >= tensor1_ndims) 1 else tensor1_shape[tensor1_ndims - i - 1];
             dim2 = if (i >= tensor2_ndims) 1 else tensor2_shape[tensor2_ndims - i - 1];
             if (dim1 != 1 and dim2 != 1 and dim1 != dim2) {
