@@ -8,8 +8,8 @@ pub fn TensorStorage(comptime dtype: type, comptime size: usize) type {
         data: []dtype,
         // This allocator is a placeholder for a Device struct that provides an allocator object
         // so that the tensor storage can be allocated on device memory
-        allocator: *const Allocator,
-        pub fn init(allocator: *const Allocator) !*Self {
+        allocator: Allocator,
+        pub fn init(allocator: Allocator) !*Self {
             const storage = try allocator.create(Self);
             storage.* = .{
                 .data = try allocator.alloc(dtype, size),
