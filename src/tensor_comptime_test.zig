@@ -20,11 +20,11 @@ test "zip operation shape check" {
         try expect(@reduce(.And, tensor3.shape == [_]usize{ 2, 3, 4 }));
         break :blk tensor3;
     };
-    _ = out;
-    // std.debug.print("\n{any}\n", .{out.history.?});
+    std.debug.print("\n{any}\n", .{out.graph_tensor.print_graph()});
+
 }
 
-// test "zip reduce operation shape check" {
+// test "reduce operation shape check" {
 //     var out = comptime blk: {
 //         const reduce_dim: usize = 1;
 //         var tensor1 = Tensor.tensor(i32, [_]usize{ 2, 3, 4 });
@@ -35,19 +35,16 @@ test "zip operation shape check" {
 //     std.debug.print("\n{any}\n", .{out.history.?});
 // }
 
-test "reduce operation shape check" {
+test "zip reduce operation shape check" {
     var out = comptime blk: {
         const reduce_dim: usize = 1;
         var tensor1 = Tensor.tensor(Tensor.Type.Int32, [_]usize{ 2, 1, 4 });
         var tensor2 = Tensor.tensor(Tensor.Type.Int32, [_]usize{ 2, 3, 1 });
         var tensor3 = tensor1.zip(Tensor.ZipOp.Add, &tensor2).reduce(Tensor.ReduceOp.Sum, reduce_dim);
         try expect(@reduce(.And, tensor3.shape == [_]usize{ 2, 1, 4 }));
-        var t2_1 = Tensor.getInput(tensor3.history.?.inputs[0]);
-        var t1  = Tensor.getInput(t2_1.history.?.inputs[0]);
-        var t2  = Tensor.getInput(t2_1.history.?.inputs[1]);
-        break :blk .{t2_1, t1, t2};
+        break :blk tensor3;
     };
-    std.debug.print("\n{any}\n", .{out});
+    std.debug.print("\n{any}\n", .{out.graph_tensor.print_graph()});
 }
 
 test "lazy with realization" {

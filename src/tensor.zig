@@ -19,7 +19,7 @@ pub fn tensor(comptime _dtype: Type, comptime shape: anytype) ret: {
     break :ret Tensor(_dtype, shape.len, shape, strides);
 } {
     const strides = comptime Utils.defaultStrides(shape.len, shape);
-    return comptime Tensor(_dtype, shape.len, shape, strides).lazyInit(null);
+    return comptime Tensor(_dtype, shape.len, shape, strides).lazyInit();
 }
 
 pub const MapOp = enum { Neg };
@@ -33,37 +33,43 @@ const Input = enum {
     Value,
 };
 
-fn OpInput(comptime ndims: u8) type {
-    return comptime union(Input) { 
-        Tensor: struct {
-            dtype: Type,
-            ndims: u8,
-            shape: [ndims]usize,
-            strides: [ndims]usize,
-            ptr: *const anyopaque,
-        }, 
-        Array: @Vector(ndims, usize), 
-        Value: usize 
-    };
-}
 
-pub fn getInput(comptime input: anytype) t: {
-    break :t switch (input) {
-        .Tensor => |tensor_input| *Tensor(tensor_input.dtype, tensor_input.ndims, tensor_input.shape[tensor_input.shape.len-tensor_input.ndims..tensor_input.shape.len].*, tensor_input.strides[tensor_input.shape.len-tensor_input.ndims..tensor_input.shape.len].*),
-        .Array => |array| [array.len]usize,
-        .Value => usize
-    };
-} {
-    return switch (input) {
-        .Tensor => |tensor_input| @constCast(@alignCast(@ptrCast(tensor_input.ptr))),
-        .Array => |array| array,
-        .Value => |value| value,
-    };
-}
+const MAX_NDIMS = 8;
+const OpInput = union(Input) { 
+    Tensor: *const GraphTensor,
+    Array: [MAX_NDIMS]usize, 
+    Value: usize 
+};
 
-fn History(comptime ndims: u8) type {
-    return struct { op: Op, inputs: [2]OpInput(ndims) };
-}
+// pub fn getInputComptime(comptime input: anytype) t: {
+//     break :t switch (input) {
+//         .Tensor => |_tensor| *Tensor(_tensor.dtype, _tensor.ndims, _tensor.shape[_tensor.shape.len-_tensor.ndims.._tensor.shape.len].*, _tensor.strides[_tensor.shape.len-_tensor.ndims.._tensor.shape.len].*),
+//         .Array => |array| [array.len]usize,
+//         .Value => usize
+//     };
+// } {
+//     return switch (input) {
+//         .Tensor => |_tensor| @constCast(@alignCast(@ptrCast(_tensor.ptr))),
+//         .Array => |array| array,
+//         .Value => |value| value,
+//     };
+// }
+
+// fn getInputRuntime(comptime ndims: u8, input: OpInput(ndims)) t: {
+//     break :t switch (input) {
+//         .Tensor => |_tensor| *Tensor(_tensor.dtype, _tensor.ndims, _tensor.shape[_tensor.shape.len-_tensor.ndims.._tensor.shape.len].*, _tensor.strides[_tensor.shape.len-_tensor.ndims.._tensor.shape.len].*),
+//         .Array => |array| [array.len]usize,
+//         .Value => usize
+//     };
+// } {
+//     return switch (input) {
+//         .Tensor => |_tensor| @constCast(@alignCast(@ptrCast(_tensor.ptr))),
+//         .Array => |array| array,
+//         .Value => |value| value,
+//     };
+// }
+
+const History = struct { op: Op, inputs: [2]OpInput };
 
 pub fn extendShape(comptime in_ndims: u8, in_shape: [in_ndims]usize, comptime out_ndims: u8) [out_ndims]usize {
     var out_shape: [out_ndims]usize = undefined;
@@ -79,14 +85,6 @@ pub fn extendStrides(comptime in_ndims: u8, in_strides: [in_ndims]usize, comptim
     return out_strides;
 }
 
-// pub fn History(comptime last_op: Op, comptime last_inputs: anytype) type {
-//     return struct { last_fn: Op = last_op, last_inputs: @TypeOf(last_inputs) = last_inputs };
-// }
-
-// fn History(comptime last_op: Op, comptime last_args: anytype) type {
-//     return struct { last_op = last_op, last_args = last_args };
-// }
-
 // Each history node will have a known size
 // This is because tensors of the same ndims will have the same size
 // And all tensors that are inputs to map, zip, reduce will have the same ndims
@@ -95,7 +93,45 @@ pub fn extendStrides(comptime in_ndims: u8, in_strides: [in_ndims]usize, comptim
 // TODO: Add a device type param here
 // Should be easy to add this type param everywhere as the device will remain the same unless a to(x)
 // method is called
-fn Tensor(comptime _dtype: Type, comptime _ndims: u8, comptime _shape: @Vector(_ndims, usize), comptime _strides: @Vector(_ndims, usize)) type {
+
+const GraphTensor = struct {
+    const Self = @This();
+    ndims: u8,
+    dtype: Type,
+    shape: []const usize,
+    strides:[]const usize,
+    history: ?History,
+    pub fn print_graph(self: *const Self) void {
+        if (self.history != null) {
+            const history = self.history.?;
+            std.debug.print("\n{any}", .{history.op});
+            var next_tensor: GraphTensor = undefined;
+            for (0..history.inputs.len) |i| {
+                switch (history.inputs[i]) {
+                    .Tensor => |_tensor| {
+                        const t: *GraphTensor = @constCast(@alignCast(@ptrCast(_tensor)));
+                        std.debug.print("\ttensor<", .{});
+                        for (t.shape) |s| {
+                            std.debug.print("{any}x", .{s});
+                        }
+                        std.debug.print("{any}>", .{t.dtype});
+                        next_tensor = t.*;
+                    },
+                    .Array => |array| {
+                        std.debug.print("\t{any}", .{array});
+                    },
+                    .Value => |value| {
+                        std.debug.print("\t{any}", .{value});
+                    },
+                }
+            }
+            std.debug.print("", .{});
+            next_tensor.print_graph();
+        }
+    }
+};
+
+fn Tensor(comptime _dtype: Type, comptime _ndims: u8, comptime _shape: [_ndims]usize, comptime _strides: [_ndims]usize) type {
     const dtype: type = switch(_dtype) {
         .Float16 => f16,
         .Float32 => f32,
@@ -121,12 +157,17 @@ fn Tensor(comptime _dtype: Type, comptime _ndims: u8, comptime _shape: @Vector(_
         ndims: u8 = ndims,
         shape: @Vector(ndims, usize) = shape,
         strides: @Vector(ndims, usize) = strides,
+        graph_tensor: GraphTensor = .{
+            .ndims = _ndims,
+            .dtype = _dtype,
+            .shape = _shape[0..],
+            .strides = _strides[0..],
+            .history = null,
+        },
         storage: ?*TensorStorage(dtype, size()),
         owns_storage: bool,
         real: bool,
         allocator: ?Allocator,
-        history:  ?History(ndims),
-
         pub fn size() usize {
             // Used to determine the size of the underlying storage
             return comptime blk: {
@@ -153,8 +194,8 @@ fn Tensor(comptime _dtype: Type, comptime _ndims: u8, comptime _shape: @Vector(_
             // The information for contiguous is in the type itself
             return comptime Utils.isContiguous(ndims, strides);
         }
-        pub inline fn lazyInit(history: ?History(ndims)) Self {
-            return .{ .storage = null, .owns_storage = false, .allocator = null, .real = false, .history = history };
+        pub inline fn lazyInit() Self {
+            return .{ .storage = null, .owns_storage = false, .allocator = null, .real = false, };
         }
         pub fn realize(self: *Self, storage: ?*TensorStorage(dtype, size()), allocator: Allocator) !void {
             // TODO: Make this async to block thread until tensor is computed
@@ -191,13 +232,14 @@ fn Tensor(comptime _dtype: Type, comptime _ndims: u8, comptime _shape: @Vector(_
         pub fn map(self: *const Self, map_op: MapOp) Self {
             // Mock implementations of three kinds of tensor ops
             // Map is 1 to 1 (neg, log, exp)
-            const out_history: History(ndims) = .{ 
+            var out = lazyInit();
+            out.graph_tensor.history = .{ 
                 .op = .{ .MapOp = map_op }, 
                 .inputs = .{
                     .{ .Tensor = .{ shape, strides, self } }
                 }
             };
-            return lazyInit(out_history);
+            return out;
         }
         pub fn zip(self: *const Self, zip_op: ZipOp, other: anytype) t: {
             // Zip is 2 to 1 (add, mul, xor)
@@ -206,36 +248,18 @@ fn Tensor(comptime _dtype: Type, comptime _ndims: u8, comptime _shape: @Vector(_
             const out_strides = Utils.defaultStrides(out_ndims, out_shape);
             break :t Tensor(_dtype, out_ndims, out_shape, out_strides);
         } {
-            const other_ndims = @field(other.*, "ndims");
-            const other_shape = @field(other.*, "shape");
-            const other_strides = @field(other.*, "strides");
             const out_shape = comptime Utils.shapeBroadcast(Self, @TypeOf(other.*));
             const out_ndims = out_shape.len;
             const out_strides = Utils.defaultStrides(out_ndims, out_shape);
-            const out_history: History(out_ndims) = .{ 
+            var out = Tensor(_dtype, out_ndims, out_shape, out_strides).lazyInit();
+            out.graph_tensor.history = .{ 
                 .op = .{ .ZipOp = zip_op }, 
                 .inputs = .{ 
-                    .{ 
-                        .Tensor = .{ 
-                            .dtype = _dtype,
-                            .ndims = ndims, 
-                            .shape = extendShape(ndims, shape, out_ndims), 
-                            .strides = extendStrides(ndims, strides, out_ndims), 
-                            .ptr = self 
-                        }
-                    }, 
-                    .{
-                        .Tensor = .{ 
-                            .dtype = _dtype,
-                            .ndims = other_ndims, 
-                            .shape = extendShape(other_ndims, other_shape, out_ndims), 
-                            .strides = extendStrides(other_ndims, other_strides, out_ndims), 
-                            .ptr = other 
-                        } 
-                    }
+                    .{ .Tensor = &self.graph_tensor }, 
+                    .{ .Tensor = &other.graph_tensor }
                 }
             };
-            return Tensor(_dtype, out_ndims, out_shape, out_strides).lazyInit(out_history);
+            return out;
         }
         pub fn reduce(self: *const Self, reduce_op: ReduceOp, comptime reduce_dim: usize) t: {
             // Reduce is many to 1 and collapses a dimension to 1 (sum, prod, max, etc.)
@@ -245,24 +269,16 @@ fn Tensor(comptime _dtype: Type, comptime _ndims: u8, comptime _shape: @Vector(_
         } {
             const out_shape = comptime Utils.getReducedShape(ndims, shape, reduce_dim);
             const out_strides = Utils.defaultStrides(ndims, out_shape);
-            const out_history: History(ndims) = .{ 
+            var out = Tensor(_dtype, out_shape.len, out_shape, out_strides).lazyInit();
+            out.graph_tensor.history =  .{ 
                 .op = .{ .ReduceOp = reduce_op }, 
                 .inputs = .{ 
-                    .{ 
-                        .Tensor = .{ 
-                            .dtype = _dtype,
-                            .ndims = ndims, 
-                            .shape = shape,
-                            .strides = strides, 
-                            .ptr = self 
-                        }
-                    }, 
-                    .{
-                        .Value = reduce_dim
-                    }
+                    .{ .Tensor = &self.graph_tensor }, 
+                    .{ .Value = reduce_dim }
                 }
             };
-            return Tensor(_dtype, out_shape.len, out_shape, out_strides).lazyInit(out_history);
+            return out;
         }
+        
     };
 }
