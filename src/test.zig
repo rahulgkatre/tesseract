@@ -13,6 +13,7 @@ test "permute shape check" {
     const tensor1 = tensor(i32, .{ 2, 3, 4 });
     const tensor2 = tensor1.permute([_]u8{ 0, 2, 1 });
     try expect(@reduce(.And, @as(@Vector(3, usize), tensor2.shape) == [_]usize{ 2, 4, 3 }));
+    std.debug.print("\n{any}\n", .{tensor2.graph_tensor.print_graph()});
 }
 
 test "zip operation shape check" {
@@ -20,7 +21,7 @@ test "zip operation shape check" {
     const tensor2 = tensor(i32, .{ 3, 1 });
     const tensor3 = tensor1.zip(ops.ZipOp.Add, &tensor2);
     try expect(@reduce(.And, @as(@Vector(3, usize), tensor3.shape) == [_]usize{ 2, 3, 4 }));
-    // std.debug.print("\n{any}\n", .{tensor3});
+    std.debug.print("\n{any}\n", .{tensor3.graph_tensor.print_graph()});
 
 }
 test "reduce operation shape check" {
@@ -28,14 +29,14 @@ test "reduce operation shape check" {
     const tensor1 = tensor(i32, .{ 2, 3, 4 });
     const tensor2 = tensor1.reduce(ops.ReduceOp.Sum, reduce_dim);
     try expect(@reduce(.And, @as(@Vector(3, usize), tensor2.shape) == [_]usize{ 2, 1, 4 }));
-    // std.debug.print("\n{any}\n", .{tensor2});
+    std.debug.print("\n{any}\n", .{tensor2.graph_tensor.print_graph()});
 }
 test "zip reduce operation shape check" {
     const tensor1 = tensor(i32, .{ 2, 1, 4 });
     const tensor2 = tensor(i32, .{ 2, 3, 1 });
     const tensor3 = tensor1.zip(ops.ZipOp.Add, &tensor2).reduce(ops.ReduceOp.Sum, 1);
     try expect(@reduce(.And, @as(@Vector(3, usize), tensor3.shape) == [_]usize{ 2, 1, 4 }));
-    // std.debug.print("\n{any}\n", .{tensor3});
+    std.debug.print("\n{any}\n", .{tensor3.graph_tensor.print_graph()});
 }
 // TODO: Test is currently broken because of comptime in GraphTensor
 // Will need fixes to realization logic too

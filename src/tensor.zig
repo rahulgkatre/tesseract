@@ -49,10 +49,10 @@ pub fn Tensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
 
         pub fn init() Self {
             const impl = struct {
-                pub fn permute(comptime ptr: *const GraphTensor, comptime perm: []u8) GraphTensor {
-                    const self = @fieldParentPtr(Self, "graph_tensor", ptr);
-                    return self.permute(perm[0..ndims]).graph_tensor;
-                }
+                // pub fn permute(comptime ptr: *const GraphTensor, comptime perm: []u8) GraphTensor {
+                //     const self = @fieldParentPtr(Self, "graph_tensor", ptr);
+                //     return self.permute(perm[0..ndims]).graph_tensor;
+                // }
                 pub fn map(comptime ptr: *const GraphTensor, comptime map_op: ops.MapOp) GraphTensor {
                     const self = @fieldParentPtr(Self, "graph_tensor", ptr);
                     return self.map(map_op).graph_tensor;
@@ -72,10 +72,11 @@ pub fn Tensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 .allocator = null, 
                 .real = false, 
                 .graph_tensor = .{
-                    .permute_fn = impl.permute,
+                    // .permute_fn = impl.permute,
                     .map_fn = impl.map,
                     .zip_fn = impl.zip,
                     .reduce_fn = impl.reduce,
+                    .history = null,
                 },
             };
         }
@@ -100,45 +101,43 @@ pub fn Tensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             return utils.permutedTensorType(Self, perm).init();
         }
         pub fn map(comptime self: *const Self, comptime map_op: ops.MapOp) Self {
-            _ = map_op;
-            _ = self;
             // Map is 1 to 1 (neg, log, exp) so return type is the same
             var out = init();
             // TODO: In the graph tensor object add a history field and populate it with the function and arguments
-            // out.graph_tensor.history = .{ 
-            //     .op = .{ .MapOp = map_op }, 
-            //     .inputs = .{
-            //         .{ .Tensor = .{ shape, strides, self } }
-            //     },
-            // };
+            out.graph_tensor.history = .{ 
+                .op = .{ .MapOp = map_op }, 
+                .args = .{
+                    .MapOp = .{ .self_ptr = &self.graph_tensor }
+                },
+            };
             return out;
         }
         pub fn zip(comptime self: *const Self, comptime zip_op: ops.ZipOp, comptime other: anytype) utils.broadcastedTensorType(Self, @TypeOf(other.*)) {
-            _ = zip_op;
-            _ = self;
             var out = utils.broadcastedTensorType(Self, @TypeOf(other.*)).init();
             // TODO: In the graph tensor object add a history field and populate it with the function and arguments
-            // out.graph_tensor.history = .{ 
-            //     .op = .{ .ZipOp = zip_op }, 
-            //     .inputs = .{ 
-            //         .{ .Tensor = &self.graph_tensor }, 
-            //         .{ .Tensor = &other.graph_tensor },
-            //     },
-            // };
+            out.graph_tensor.history = .{ 
+                .op = .{ .ZipOp = zip_op }, 
+                .args = .{
+                    .ZipOp = .{
+                        .self_ptr = &self.graph_tensor,
+                        .other_ptr = &other.graph_tensor,
+                    },
+                },
+            };
             return out;
         }
         pub fn reduce(comptime self: *const Self, comptime reduce_op: ops.ReduceOp, comptime reduce_dim: usize) utils.reducedTensorType(Self, reduce_dim) {
-            _ = reduce_op;
-            _ = self;
             var out = utils.reducedTensorType(Self, reduce_dim).init();
             // TODO: In the graph tensor object add a history field and populate it with the function and arguments
-            // out.graph_tensor.history =  .{ 
-            //     .op = .{ .ReduceOp = reduce_op }, 
-            //     .inputs = .{ 
-            //         .{ .Tensor = &self.graph_tensor }, 
-            //         .{ .Value = reduce_dim },
-            //     },
-            // };
+            out.graph_tensor.history =  .{ 
+                .op = .{ .ReduceOp = reduce_op }, 
+                .args = .{ 
+                    .ReduceOp = .{ 
+                        .self_ptr = &self.graph_tensor,
+                        .reduce_dim = reduce_dim,
+                    }, 
+                },
+            };
             return out;
         }
     };
