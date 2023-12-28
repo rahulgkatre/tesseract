@@ -19,11 +19,7 @@ pub fn tensor(comptime dtype: type, comptime shape: anytype) ret: {
 // method is called
 pub fn Tensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndims]usize, comptime _strides: [_ndims]usize) type {
     switch (@typeInfo(_dtype)) {
-        .Bool => {},
-        .ComptimeInt => {},
-        .Int => {},
-        .ComptimeFloat => {},
-        .Float => {},
+        .Bool,.ComptimeInt, .Int, .ComptimeFloat, .Float, => {},      
         else => @compileError("Non-numeric or non-bool tensor dtype not supported, received " ++ @typeName(_dtype)),
     }
     return struct {
