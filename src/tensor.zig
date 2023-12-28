@@ -53,6 +53,13 @@ pub fn Tensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 //     const self = @fieldParentPtr(Self, "graph_tensor", ptr);
                 //     return self.permute(perm[0..ndims]).graph_tensor;
                 // }
+                pub fn print_info(comptime ptr: *const GraphTensor) void {
+                    std.debug.print("tensor<",.{});
+                    inline for (0..ndims) |d| {
+                        std.debug.print("{any}x",.{_shape[d]});
+                    }
+                    std.debug.print("{any}>, id:{any}",.{_dtype, @intFromPtr(ptr)});
+                }
                 pub fn map(comptime ptr: *const GraphTensor, comptime map_op: ops.MapOp) GraphTensor {
                     const self = @fieldParentPtr(Self, "graph_tensor", ptr);
                     return self.map(map_op).graph_tensor;
@@ -73,6 +80,7 @@ pub fn Tensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 .real = false, 
                 .graph_tensor = .{
                     // .permute_fn = impl.permute,
+                    .print_info_fn = impl.print_info,
                     .map_fn = impl.map,
                     .zip_fn = impl.zip,
                     .reduce_fn = impl.reduce,
