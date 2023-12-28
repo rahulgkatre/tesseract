@@ -26,13 +26,15 @@ pub const GraphTensor = struct {
         return self.reduce_fn(self, reduce_op, reduce_dim);
     }
     pub fn print_graph(comptime self: *const Self) void {
+        std.debug.print("\ncurrent:", .{});
+        self.print_info();
+
         if (self.history != null) {
             switch (self.history.?.op) {
                 .MapOp => |op| {
                     const t1 = self.history.?.args.MapOp.self_ptr;
                     std.debug.print("\nop:{any}\ninput:", .{op});
                     t1.print_info();
-                    std.debug.print("\n", .{});
                     t1.print_graph();
                 },
                 .ZipOp => |op| {
@@ -42,7 +44,6 @@ pub const GraphTensor = struct {
                     t1.print_info();
                     std.debug.print("\ninput2:", .{});
                     t2.print_info();
-                    std.debug.print("\n", .{});
                     t1.print_graph();
                     t2.print_graph();
                 },
@@ -51,10 +52,11 @@ pub const GraphTensor = struct {
                     const rd = self.history.?.args.ReduceOp.reduce_dim;
                     std.debug.print("\nop:{any}\ndim:{any}\ninput:", .{op,rd});
                     t1.print_info();
-                    std.debug.print("\n", .{});
                     t1.print_graph();
                 },
             }
+        } else {
+            std.debug.print("\nreached leaf in graph", .{});
         }
     }
 };
