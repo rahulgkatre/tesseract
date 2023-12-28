@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 // Wrapper class for a reserved section of memory where the size is part of the type
 // This prevents the memory from being used with tensors with an incompatible shape.
+// TODO: Make this a normal struct (not a generic) so it can be stored in a GraphTensor.
 pub fn TensorStorage(comptime dtype: type, comptime size: usize) type {
     return struct {
         const Self = @This();

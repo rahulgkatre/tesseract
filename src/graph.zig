@@ -2,6 +2,7 @@ const ops = @import("ops.zig");
 
 pub const GraphTensor = struct {
     const Self = @This();
+    // TODO: Can we make the args of these not comptime?
     permute_fn: *const fn (comptime ptr: *const Self, comptime perm: []u8) Self,
     map_fn: *const fn (comptime ptr: *const Self, comptime map_op: ops.MapOp) Self,
     zip_fn: *const fn (comptime ptr: *const Self, comptime zip_op: ops.ZipOp, comptime other_ptr: anytype) Self,
@@ -20,7 +21,7 @@ pub const GraphTensor = struct {
     }
 };
 
-
+// TODO: Revise this and improve typing
 const Input = enum {
     Tensor,
     Array,
@@ -36,16 +37,3 @@ const OpInput = union(Input) {
 
 const History = struct { op: ops.Op, inputs: [2]OpInput };
 
-pub fn extendShape(comptime in_ndims: u8, in_shape: [in_ndims]usize, comptime out_ndims: u8) [out_ndims]usize {
-    var out_shape: [out_ndims]usize = undefined;
-    @memset(&out_shape, 1);
-    @memcpy(out_shape[(out_ndims - in_ndims)..], &in_shape);
-    return out_shape;
-}
-
-pub fn extendStrides(comptime in_ndims: u8, in_strides: [in_ndims]usize, comptime out_ndims: u8) [out_ndims]usize {
-    var out_strides: [out_ndims]usize = undefined;
-    @memset(&out_strides, 0);
-    @memcpy(out_strides[(out_ndims - in_ndims)..], &in_strides);
-    return out_strides;
-}

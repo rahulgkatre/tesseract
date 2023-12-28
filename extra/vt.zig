@@ -23,7 +23,6 @@ fn MyType1(comptime T: type) type {
             };
         }
         fn eval(self: *MyType1(T)) Interface {
-            std.debug.print("MyType1\n", .{});
             return self.interface;
         }
     };
@@ -46,7 +45,6 @@ fn MyType2(comptime T: type) type {
             };
         }
         fn eval(self: *MyType2(T)) Interface {
-            std.debug.print("MyType2\n", .{});
             return MyType1(T).init(self.field).interface;
         }
     };
@@ -61,6 +59,6 @@ test "vtab3_embedded_in_struct" {
     };
     for (mystuff) |o| {
         std.debug.print("{any}\n", .{o});
-        _ = o.eval();
+        std.debug.print("eval() = {any}\n", .{o.eval()});
     }
 }
