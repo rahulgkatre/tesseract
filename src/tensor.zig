@@ -19,12 +19,17 @@ pub fn tensor(comptime dtype: type, comptime shape: anytype) ret: {
 // method is called
 pub fn Tensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndims]usize, comptime _strides: [_ndims]usize) type {
     switch (@typeInfo(_dtype)) {
-        .Bool,.ComptimeInt, .Int, .ComptimeFloat, .Float, => {},      
+        .Bool,
+        .ComptimeInt,
+        .Int,
+        .ComptimeFloat,
+        .Float,
+        => {},
         else => @compileError("Non-numeric or non-bool tensor dtype not supported, received " ++ @typeName(_dtype)),
     }
     return struct {
         const Self = @This();
-        
+
         // These just take on the value of the generic arguments
         pub const dtype: type = _dtype;
         pub const ndims: u8 = _ndims;
@@ -50,11 +55,11 @@ pub fn Tensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 //     return self.permute(perm[0..ndims]).graph_tensor;
                 // }
                 pub fn print_info(comptime ptr: *const GraphTensor) void {
-                    std.debug.print("tensor<",.{});
+                    std.debug.print("tensor<", .{});
                     inline for (0..ndims) |d| {
-                        std.debug.print("{any}x",.{_shape[d]});
+                        std.debug.print("{any}x", .{_shape[d]});
                     }
-                    std.debug.print("{any}>, id:{any}",.{_dtype, @intFromPtr(ptr)});
+                    std.debug.print("{any}>, id:{any}", .{ _dtype, @intFromPtr(ptr) });
                 }
                 pub fn map(comptime ptr: *const GraphTensor, comptime map_op: ops.MapOp) GraphTensor {
                     const self = @fieldParentPtr(Self, "graph_tensor", ptr);
@@ -69,11 +74,11 @@ pub fn Tensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                     return self.reduce(reduce_op, reduce_dim).graph_tensor;
                 }
             };
-            return .{ 
-                .storage = null, 
-                .owns_storage = false, 
-                .allocator = null, 
-                .real = false, 
+            return .{
+                .storage = null,
+                .owns_storage = false,
+                .allocator = null,
+                .real = false,
                 .graph_tensor = .{
                     // .permute_fn = impl.permute,
                     .print_info_fn = impl.print_info,
@@ -108,19 +113,17 @@ pub fn Tensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             // Map is 1 to 1 (neg, log, exp) so return type is the same
             var out = init();
             // TODO: In the graph tensor object add a history field and populate it with the function and arguments
-            out.graph_tensor.history = .{ 
-                .op = .{ .MapOp = map_op }, 
-                .args = .{
-                    .MapOp = .{ .self_ptr = &self.graph_tensor }
-                },
+            out.graph_tensor.history = .{
+                .op = .{ .MapOp = map_op },
+                .args = .{ .MapOp = .{ .self_ptr = &self.graph_tensor } },
             };
             return out;
         }
         pub fn zip(comptime self: *const Self, comptime zip_op: ops.ZipOp, comptime other: anytype) utils.broadcastedTensorType(Self, @TypeOf(other.*)) {
             var out = utils.broadcastedTensorType(Self, @TypeOf(other.*)).init();
             // TODO: In the graph tensor object add a history field and populate it with the function and arguments
-            out.graph_tensor.history = .{ 
-                .op = .{ .ZipOp = zip_op }, 
+            out.graph_tensor.history = .{
+                .op = .{ .ZipOp = zip_op },
                 .args = .{
                     .ZipOp = .{
                         .self_ptr = &self.graph_tensor,
@@ -133,13 +136,13 @@ pub fn Tensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         pub fn reduce(comptime self: *const Self, comptime reduce_op: ops.ReduceOp, comptime reduce_dim: usize) utils.reducedTensorType(Self, reduce_dim) {
             var out = utils.reducedTensorType(Self, reduce_dim).init();
             // TODO: In the graph tensor object add a history field and populate it with the function and arguments
-            out.graph_tensor.history =  .{ 
-                .op = .{ .ReduceOp = reduce_op }, 
-                .args = .{ 
-                    .ReduceOp = .{ 
+            out.graph_tensor.history = .{
+                .op = .{ .ReduceOp = reduce_op },
+                .args = .{
+                    .ReduceOp = .{
                         .self_ptr = &self.graph_tensor,
                         .reduce_dim = reduce_dim,
-                    }, 
+                    },
                 },
             };
             return out;

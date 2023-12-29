@@ -27,14 +27,14 @@ pub const GraphTensor = struct {
     }
     // TODO: Remove after debugging is done
     pub fn print_graph(comptime self: *const Self) void {
-        std.debug.print("\ncurrent:", .{});
+        std.debug.print("\ncurrent: ", .{});
         self.print_info();
 
         if (self.history != null) {
             switch (self.history.?.op) {
                 .MapOp => |op| {
                     const t1 = self.history.?.args.MapOp.self_ptr;
-                    std.debug.print("\n\top:{any}\n\tinput:", .{op});
+                    std.debug.print("\n\top: {any}\n\tinput:", .{op});
                     t1.print_info();
                     std.debug.print("\n", .{});
                     t1.print_graph();
@@ -42,7 +42,7 @@ pub const GraphTensor = struct {
                 .ZipOp => |op| {
                     const t1 = self.history.?.args.ZipOp.self_ptr;
                     const t2 = self.history.?.args.ZipOp.other_ptr;
-                    std.debug.print("\n\top:{any}\n\tinput1:", .{op});
+                    std.debug.print("\n\top: {any}\n\tinput1:", .{op});
                     t1.print_info();
                     std.debug.print("\n\tinput2:", .{});
                     t2.print_info();
@@ -53,7 +53,7 @@ pub const GraphTensor = struct {
                 .ReduceOp => |op| {
                     const t1 = self.history.?.args.ReduceOp.self_ptr;
                     const rd = self.history.?.args.ReduceOp.reduce_dim;
-                    std.debug.print("\n\top:{any}\n\tdim:{any}\n\tinput:", .{op,rd});
+                    std.debug.print("\n\top: {any}\n\tdim: {any}\n\tinput:", .{ op, rd });
                     t1.print_info();
                     std.debug.print("\n", .{});
                     t1.print_graph();
@@ -66,4 +66,3 @@ pub const GraphTensor = struct {
 };
 
 const History = struct { op: ops.Op, args: ops.OpArgs };
-
