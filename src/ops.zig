@@ -5,19 +5,20 @@ pub const ZipOp = enum { Add, Mul, Maximum, Mod, Lt, Eq, Xor };
 pub const ReduceOp = enum { Sum, Max };
 pub const ShapeOp = enum { Reshape, Permute, Expand, Pad, Shrink, Stride, AsStrided };
 
-pub const OpTypes = enum { MapOp, ZipOp, ReduceOp };
-pub const Op = union(OpTypes) { MapOp: MapOp, ZipOp: ZipOp, ReduceOp: ReduceOp };
-
-pub const OpArgs = union(OpTypes) {
+pub const OpKinds = enum { MapOp, ZipOp, ReduceOp };
+pub const OpCall = union(OpKinds) { 
     MapOp: struct {
-        a_ptr: *const GraphTensor,
+        op: MapOp,
+        a: *const GraphTensor,
     },
     ZipOp: struct {
-        a_ptr: *const GraphTensor,
-        b_ptr: *const GraphTensor,
+        op: ZipOp,
+        a: *const GraphTensor,
+        b: *const GraphTensor,
     },
     ReduceOp: struct {
-        a_ptr: *const GraphTensor,
-        reduce_dim: u8,
+        op: ReduceOp,
+        a: *const GraphTensor,
+        reduce_dim: u8
     },
 };

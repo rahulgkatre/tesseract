@@ -2,8 +2,8 @@ const std = @import("std");
 const comptimePrint = std.fmt.comptimePrint;
 const Tensor = @import("tensor.zig").Tensor;
 
-pub fn defaultType(comptime dtype: type, comptime ndims: u8, comptime shape: [ndims]usize) type {
-    return Tensor(dtype, ndims, comptime shape, defaultStrides(ndims, shape));
+pub fn defaultStridedTensor(comptime dtype: type, comptime ndims: u8, comptime shape: [ndims]usize) type {
+    return Tensor(dtype, ndims, shape, defaultStrides(ndims, shape));
 }
 pub fn size(comptime ndims: u8, comptime shape: [ndims]usize) usize {
     // Used to determine the size of the underlying storage
@@ -21,7 +21,7 @@ pub fn permuteArray(comptime ndims: u8, comptime array: [ndims]usize, perm: [ndi
     }
     return new_array;
 }
-pub fn permutedTensorType(comptime tensor_t: type, comptime perm: [@field(tensor_t, "ndims")]u8) type {
+pub fn permutedTensor(comptime tensor_t: type, comptime perm: [@field(tensor_t, "ndims")]u8) type {
     const dtype = @field(tensor_t, "dtype");
     const ndims = @field(tensor_t, "ndims");
     const shape = @field(tensor_t, "shape");
@@ -81,7 +81,7 @@ pub fn shapeBroadcast(comptime tensor1_t: type, comptime tensor2_t: type) [@max(
     }
     return bc_shape;
 }
-pub fn broadcastedTensorType(comptime tensor1_t: type, comptime tensor2_t: type) type {
+pub fn broadcastedTensor(comptime tensor1_t: type, comptime tensor2_t: type) type {
     const shape = shapeBroadcast(tensor1_t, tensor2_t);
     return Tensor(@field(tensor1_t, "dtype"), shape.len, shape, defaultStrides(shape.len, shape));
 }   
@@ -101,7 +101,7 @@ pub fn reducedShape(comptime ndims: u8, comptime shape: [ndims]usize, comptime r
     out_shape[reduce_dim] = 1;
     return out_shape;
 }
-pub fn reducedTensorType(comptime tensor_t: type, comptime reduce_dim: usize) type {
+pub fn reducedTensor(comptime tensor_t: type, comptime reduce_dim: usize) type {
     const dtype = @field(tensor_t, "dtype");
     const ndims = @field(tensor_t, "ndims");
     const shape = reducedShape(ndims, @field(tensor_t, "shape"), reduce_dim);

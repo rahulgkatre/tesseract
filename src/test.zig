@@ -19,7 +19,7 @@ test "permute shape check" {
 test "zip operation shape check" {
     const tensor1 = tensor(i32, .{ 2, 1, 4 });
     const tensor2 = tensor(i32, .{ 3, 1 });
-    const tensor3 = tensor1.zip(ops.ZipOp.Add, &tensor2);
+    const tensor3 = tensor1.zip(ops.ZipOp.Add, tensor2);
     try expect(@reduce(.And, @as(@Vector(3, usize), tensor3.shape) == [_]usize{ 2, 3, 4 }));
     tensor3.graph_tensor.print_graph();
 }
@@ -33,7 +33,7 @@ test "reduce operation shape check" {
 test "zip reduce operation shape check" {
     const tensor1 = tensor(i32, .{ 2, 1, 4 });
     const tensor2 = tensor(i32, .{ 2, 3, 1 });
-    const tensor3 = tensor1.zip(ops.ZipOp.Add, &tensor2).reduce(ops.ReduceOp.Sum, 1);
+    const tensor3 = tensor1.zip(ops.ZipOp.Add, tensor2).reduce(ops.ReduceOp.Sum, 1);
     try expect(@reduce(.And, @as(@Vector(3, usize), tensor3.shape) == [_]usize{ 2, 1, 4 }));
     tensor3.graph_tensor.print_graph();
 }
@@ -58,14 +58,14 @@ test "extend shape" {
 fn fn1() Tensor(i32,3,.{ 2, 1, 4 },.{ 4, 4, 1 }) {
     const tensor1 = tensor(i32, .{ 2, 1, 4 });
     const tensor2 = tensor(i32, .{ 2, 3, 1 });
-    const tensor3 = tensor1.zip(ops.ZipOp.Add, &tensor2).reduce(ops.ReduceOp.Sum, 1);
+    const tensor3 = tensor1.zip(ops.ZipOp.Add, tensor2).reduce(ops.ReduceOp.Sum, 1);
     return tensor3;
 }
 
 fn fn2(comptime input: anytype) Tensor(i32,3,.{ 2, 1, 4 },.{ 4, 4, 1 }) {
     const tensor4 = tensor(i32, .{ 2, 1, 4 });
     const tensor5 = tensor(i32, .{ 2, 3, 1 });
-    const tensor6 = tensor4.zip(ops.ZipOp.Mul, &tensor5).reduce(ops.ReduceOp.Sum, 1).zip(ops.ZipOp.Add, &input);
+    const tensor6 = tensor4.zip(ops.ZipOp.Mul, tensor5).reduce(ops.ReduceOp.Sum, 1).zip(ops.ZipOp.Add, input);
     return tensor6;
 }
 
