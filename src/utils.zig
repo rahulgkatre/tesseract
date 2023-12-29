@@ -2,6 +2,9 @@ const std = @import("std");
 const comptimePrint = std.fmt.comptimePrint;
 const Tensor = @import("tensor.zig").Tensor;
 
+pub fn defaultType(comptime dtype: type, comptime ndims: u8, comptime shape: [ndims]usize) type {
+    return Tensor(dtype, ndims, comptime shape, defaultStrides(ndims, shape));
+}
 pub fn size(comptime ndims: u8, comptime shape: [ndims]usize) usize {
     // Used to determine the size of the underlying storage
     const shape_vec: @Vector(ndims, usize) = shape;

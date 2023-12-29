@@ -3,6 +3,7 @@ const expect = std.testing.expect;
 const Allocator = std.mem.Allocator;
 const tensor = @import("tensor.zig").tensor;
 const Tensor = @import("tensor.zig").Tensor;
+const GraphTensor = @import("graph.zig").GraphTensor;
 
 const comptimePrint = std.fmt.comptimePrint;
 const ops = @import("ops.zig");
@@ -52,4 +53,24 @@ test "extend shape" {
     var out_shape: @Vector(4, usize) = utils.extendShape(2, in_shape, 4);
     const expected_out_shape: @Vector(4, usize) = .{ 1, 1, 3, 1 };
     try expect(@reduce(.And, expected_out_shape == out_shape));
+}
+
+fn fn1() Tensor(i32,3,.{ 2, 1, 4 },.{ 4, 4, 1 }) {
+    const tensor1 = tensor(i32, .{ 2, 1, 4 });
+    const tensor2 = tensor(i32, .{ 2, 3, 1 });
+    const tensor3 = tensor1.zip(ops.ZipOp.Add, &tensor2).reduce(ops.ReduceOp.Sum, 1);
+    return tensor3;
+}
+
+fn fn2(comptime input: anytype) Tensor(i32,3,.{ 2, 1, 4 },.{ 4, 4, 1 }) {
+    const tensor4 = tensor(i32, .{ 2, 1, 4 });
+    const tensor5 = tensor(i32, .{ 2, 3, 1 });
+    const tensor6 = tensor4.zip(ops.ZipOp.Mul, &tensor5).reduce(ops.ReduceOp.Sum, 1).zip(ops.ZipOp.Add, &input);
+    return tensor6;
+}
+
+test "tensors with functions" {
+    const tensor3 = fn1();
+    const tensor6 = fn2(tensor3);
+    tensor6.graph_tensor.print_graph();
 }

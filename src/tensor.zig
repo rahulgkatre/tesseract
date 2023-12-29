@@ -6,12 +6,8 @@ const TensorStorage = @import("storage.zig").TensorStorage;
 const ops = @import("ops.zig");
 const GraphTensor = @import("graph.zig").GraphTensor;
 
-pub fn tensor(comptime dtype: type, comptime shape: anytype) ret: {
-    const strides = utils.defaultStrides(shape.len, shape);
-    break :ret Tensor(dtype, shape.len, shape, strides);
-} {
-    const strides = comptime utils.defaultStrides(shape.len, shape);
-    return comptime Tensor(dtype, shape.len, shape, strides).init();
+pub fn tensor(comptime dtype: type, comptime shape: anytype) utils.defaultType(dtype, shape.len, shape) {
+    return comptime utils.defaultType(dtype, shape.len, shape).init();
 }
 
 // TODO: Add a device type param here
@@ -65,9 +61,9 @@ pub fn Tensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                     const self = @fieldParentPtr(Self, "graph_tensor", ptr);
                     return self.map(map_op).graph_tensor;
                 }
-                pub fn zip(comptime ptr: *const GraphTensor, comptime zip_op: ops.ZipOp, comptime other_ptr: anytype) GraphTensor {
+                pub fn zip(comptime ptr: *const GraphTensor, comptime zip_op: ops.ZipOp, comptime b_ptr: anytype) GraphTensor {
                     const self = @fieldParentPtr(Self, "graph_tensor", ptr);
-                    return self.zip(zip_op, other_ptr).graph_tensor;
+                    return self.zip(zip_op, b_ptr).graph_tensor;
                 }
                 pub fn reduce(comptime ptr: *const GraphTensor, comptime reduce_op: ops.ReduceOp, comptime reduce_dim: u8) GraphTensor {
                     const self = @fieldParentPtr(Self, "graph_tensor", ptr);
@@ -112,22 +108,20 @@ pub fn Tensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         pub fn map(comptime self: *const Self, comptime map_op: ops.MapOp) Self {
             // Map is 1 to 1 (neg, log, exp) so return type is the same
             var out = init();
-            // TODO: In the graph tensor object add a history field and populate it with the function and arguments
             out.graph_tensor.history = .{
                 .op = .{ .MapOp = map_op },
-                .args = .{ .MapOp = .{ .self_ptr = &self.graph_tensor } },
+                .args = .{ .MapOp = .{ .a_ptr = &self.graph_tensor } },
             };
             return out;
         }
         pub fn zip(comptime self: *const Self, comptime zip_op: ops.ZipOp, comptime other: anytype) utils.broadcastedTensorType(Self, @TypeOf(other.*)) {
             var out = utils.broadcastedTensorType(Self, @TypeOf(other.*)).init();
-            // TODO: In the graph tensor object add a history field and populate it with the function and arguments
             out.graph_tensor.history = .{
                 .op = .{ .ZipOp = zip_op },
                 .args = .{
                     .ZipOp = .{
-                        .self_ptr = &self.graph_tensor,
-                        .other_ptr = &other.graph_tensor,
+                        .a_ptr = &self.graph_tensor,
+                        .b_ptr = &other.graph_tensor,
                     },
                 },
             };
@@ -140,7 +134,7 @@ pub fn Tensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 .op = .{ .ReduceOp = reduce_op },
                 .args = .{
                     .ReduceOp = .{
-                        .self_ptr = &self.graph_tensor,
+                        .a_ptr = &self.graph_tensor,
                         .reduce_dim = reduce_dim,
                     },
                 },
