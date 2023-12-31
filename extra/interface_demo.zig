@@ -1,51 +1,76 @@
 const Interface = struct {
     // field: anyopaque,
-    evalFn: *const fn (ptr: *Interface) Interface,
-    pub fn eval(self: *Interface) Interface {
+    const Self = @This();
+    evalFn: *const fn (ptr: *Self) Self,
+    myfuncFn: *const fn (ptr: *Self, other: i32) Self,
+    pub fn eval(self: *Self) Self {
         return self.evalFn(self);
+    }
+    pub fn myfunc(self: *Self, other: i32) Self {
+        return self.myfuncFn(self, other);
     }
 };
 
 fn MyType1(comptime T: type) type {
     return struct {
+        const Self = @This();
         field: T,
         interface: Interface,
-        pub fn init(val: T) MyType1(T) {
+        pub fn init(val: T) Self {
             const impl = struct {
                 pub fn eval(ptr: *Interface) Interface {
-                    const self = @fieldParentPtr(MyType1(T), "interface", ptr);
+                    const self = @fieldParentPtr(Self, "interface", ptr);
+                    return self.eval();
+                }
+                pub fn myfunc(ptr: *Interface, other: i32) Interface {
+                    _ = other;
+                    const self = @fieldParentPtr(Self, "interface", ptr);
                     return self.eval();
                 }
             };
             return .{
                 .field = val,
-                .interface = .{ .evalFn = impl.eval },
+                .interface = .{ .evalFn = impl.eval, .myfuncFn = impl.myfunc },
             };
         }
-        fn eval(self: *MyType1(T)) Interface {
+        fn eval(self: *Self) Interface {
             return self.interface;
+        }
+        fn myfunc(self: *Self, other: i32) Interface {
+            _ = other;
+            return self.eval();
         }
     };
 }
 
 fn MyType2(comptime T: type) type {
     return struct {
+        const Self = @This();
         field: T,
         interface: Interface,
-        pub fn init(val: T) MyType2(T) {
+        pub fn init(val: T) Self {
             const impl = struct {
                 pub fn eval(ptr: *Interface) Interface {
-                    const self = @fieldParentPtr(MyType2(T), "interface", ptr);
+                    const self = @fieldParentPtr(Self, "interface", ptr);
+                    return self.eval();
+                }
+                pub fn myfunc(ptr: *Interface, other: i32) Interface {
+                    _ = other;
+                    const self = @fieldParentPtr(Self, "interface", ptr);
                     return self.eval();
                 }
             };
             return .{
                 .field = val,
-                .interface = .{ .evalFn = impl.eval },
+                .interface = .{ .evalFn = impl.eval, .myfuncFn = impl.myfunc },
             };
         }
-        fn eval(self: *MyType2(T)) Interface {
+        fn eval(self: *Self) Interface {
             return MyType1(T).init(self.field).interface;
+        }
+        fn myfunc(self: *Self, other: i32) Interface {
+            _ = other;
+            return self.eval();
         }
     };
 }

@@ -1,33 +1,30 @@
 const ops = @import("ops.zig");
 const std = @import("std");
 
-
 pub const GraphTensor = struct {
     const Self = @This();
     // permute_fn: *const fn (comptime ptr: *const Self, comptime perm: []u8) Self,
-    print_info_fn: *const fn (comptime ptr: *const Self) void,
-    map_fn: *const fn (comptime ptr: *const Self, comptime map_op: ops.MapOp) Self,
-    zip_fn: *const fn (comptime ptr: *const Self, comptime zip_op: ops.ZipOp, comptime b: anytype) Self,
-    reduce_fn: *const fn (comptime ptr: *const Self, comptime reduce_op: ops.ReduceOp, comptime reduce_dim: u8) Self,
+    // tensor_type: type,
+    print_info_fn: *const fn (ptr: *const Self) void,
+    eval_map: *const fn (ptr: *const Self, op_call: ops.OpCall) void,
+    eval_zip: *const fn (ptr: *const Self, op_call: ops.OpCall) void,
+    eval_reduce: *const fn (ptr: *const Self, op_call: ops.OpCall) void,
     last_op: ?ops.OpCall = null,
-    // pub fn permute(comptime self: *const Self, comptime perm :[]u8) Self {
-    //     return self.permute_fn(self, perm);
-    // }
     // TODO: Remove after debugging is done
-    pub fn print_info(comptime self: *const Self) void {
+    pub fn print_info(self: *const Self) void {
         self.print_info_fn(self);
     }
-    pub fn map(comptime self: *const Self, comptime map_op: ops.MapOp) Self {
-        return self.map_fn(self, map_op);
+    pub fn map(self: *const Self, op_call: ops.OpCall) void {
+        return self.eval_map(self, op_call);
     }
-    pub fn zip(comptime self: *const Self, comptime zip_op: ops.ZipOp, comptime other: anytype) Self {
-        return self.zip_fn(self, zip_op, other);
+    pub fn zip(self: *const Self, op_call: ops.OpCall) void {
+        return self.eval_zip(self, op_call);
     }
-    pub fn reduce(comptime self: *const Self, comptime reduce_op: ops.ReduceOp, comptime reduce_dim: u8) Self {
-        return self.reduce_fn(self, reduce_op, reduce_dim);
+    pub fn reduce(self: *const Self, op_call: ops.OpCall) void {
+        return self.eval_reduce(self, op_call);
     }
     // TODO: Remove after debugging is done
-    pub fn print_graph(comptime self: *const Self) void {
+    pub fn print_graph(self: *const Self) void {
         std.debug.print("\ncurrent: ", .{});
         self.print_info();
 
@@ -60,4 +57,3 @@ pub const GraphTensor = struct {
         }
     }
 };
-
