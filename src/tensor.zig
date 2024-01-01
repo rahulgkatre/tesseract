@@ -37,8 +37,8 @@ pub fn Tensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         // These need to be populated during init()
         graph_tensor: GraphTensor,
         storage: ?*TensorStorage(dtype, size),
-        owns_storage: bool,
-        real: bool,
+        // owns_storage: bool,
+        // real: bool,
         allocator: ?Allocator,
 
         pub fn init() Self {
@@ -48,10 +48,10 @@ pub fn Tensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 //     const self = @fieldParentPtr(Self, "graph_tensor", ptr);
                 //     return self.permute(perm[0..ndims]).graph_tensor;
                 // }
-                pub fn print_info(ptr: *const GraphTensor) void {
+                pub fn debug_info(ptr: *const GraphTensor) void {
                     std.debug.print("tensor<", .{});
                     for (0..ndims) |d| {
-                        std.debug.print("{any},", .{_shape[d]});
+                        std.debug.print("{any},", .{shape[d]});
                     }
                     std.debug.print("{any}>, id: {any}", .{ _dtype, @intFromPtr(ptr) });
                 }
@@ -70,29 +70,30 @@ pub fn Tensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             };
             return .{
                 .storage = null,
-                .owns_storage = false,
+                // .owns_storage = false,
                 .allocator = null,
-                .real = false,
+                // .real = false,
                 .graph_tensor = .{
-                    .print_info_fn = impl.print_info,
-                    .eval_map = impl.eval_map,
-                    .eval_zip = impl.eval_zip,
-                    .eval_reduce = impl.reduce,
+                    .debug_info_fn = impl.debug_info,
+                    .eval_map_fn = impl.eval_map,
+                    .eval_zip_fn = impl.eval_zip,
+                    .eval_reduce_fn = impl.reduce,
                 },
             };
         }
-        pub fn realize(self: *Self, storage: ?*TensorStorage(dtype, size), allocator: Allocator) !void {
-            // TODO: Make this async to block thread until tensor is computed
-            // Current impl of realize does not trace back up its compute graph to actually get values
-            self.storage = storage orelse try TensorStorage(dtype, size).init(allocator);
-            self.allocator = allocator;
-            self.real = true;
-            self.owns_storage = storage == null;
-        }
+        // pub fn realize(self: *Self, storage: ?*TensorStorage(dtype, size), allocator: Allocator) !void {
+        //     // TODO: Make this async to block thread until tensor is computed
+        //     // Current impl of realize does not trace back up its compute graph to actually get values
+        //     self.storage = storage orelse try TensorStorage(dtype, size).init(allocator);
+        //     self.allocator = allocator;
+        //     self.real = true;
+        //     self.owns_storage = storage == null;
+        // }
         pub fn deinit(self: *const Self) void {
-            if (self.real and self.owns_storage) {
-                self.storage.?.deinit();
-            }
+            _ = self;
+            // if (self.real and self.owns_storage) {
+            //     self.storage.?.deinit();
+            // }
         }
         pub inline fn isContiguous(_: *const Self) bool {
             // The information for contiguous is in the type itself
@@ -135,9 +136,6 @@ pub fn Tensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 else => @panic("Invalid zip op call"),
             }
             _ = self;
-            // var out = BroadcastedTensor(Self, @TypeOf(other)).init();
-            // out.graph_tensor.last_op = .{ .ZipOp = .{ .op = op, .a = &self.graph_tensor, .b = &other.graph_tensor } };
-            // return out.graph_tensor;
         }
         pub fn reduce(self: *const Self, op: ops.ReduceOp, comptime reduce_dim: usize) ReducedTensor(Self, reduce_dim) {
             var out = ReducedTensor(Self, reduce_dim).init();
