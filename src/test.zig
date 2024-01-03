@@ -2,7 +2,7 @@ const std = @import("std");
 const expectEqual = std.testing.expectEqual;
 const Allocator = std.mem.Allocator;
 const Tensor = @import("tensor.zig").Tensor;
-const GraphTensor = @import("graph.zig").GraphTensor;
+// const GraphTensor = @import("graph.zig").GraphTensor;
 // const DType = @import("dtype.zig").DType;
 // const backend = @import("backend.zig");
 const comptimePrint = std.fmt.comptimePrint;
@@ -34,7 +34,8 @@ test "zip operation shape check" {
         break :blk tensor3;
     };
     try expectEqual([_]usize{ 2, 3, 4 }, out.shape);
-    out.graph_tensor.debug_graph();
+    out.eval();
+    std.debug.print("\n", .{});
 }
 test "reduce operation shape check" {
     const out = comptime blk: {
@@ -43,7 +44,8 @@ test "reduce operation shape check" {
         break :blk tensor2;
     };
     try expectEqual([_]usize{ 2, 1, 4 }, out.shape);
-    out.graph_tensor.debug_graph();
+    out.eval();
+    std.debug.print("\n", .{});
 }
 test "zip reduce operation shape check" {
     const out = comptime blk: {
@@ -55,7 +57,8 @@ test "zip reduce operation shape check" {
         break :blk tensor3;
     };
     try expectEqual([_]usize{ 2, 1, 4 }, out.shape);
-    out.graph_tensor.debug_graph();
+    out.eval();
+    std.debug.print("\n", .{});
 }
 // TODO: Reactivate test once a Zig Backend has been started
 // test "lazy with realization" {
@@ -92,5 +95,6 @@ test "tensors from functions" {
         const tensor6 = fn2(tensor3);
         break :blk tensor6;
     };
-    out.graph_tensor.debug_graph();
+    out.eval();
+    std.debug.print("\n", .{});
 }

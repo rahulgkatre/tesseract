@@ -4,7 +4,6 @@ const comptimePrint = std.fmt.comptimePrint;
 const utils = @import("utils.zig");
 const TensorStorage = @import("storage.zig").TensorStorage;
 const ops = @import("ops.zig");
-const GraphTensor = @import("graph.zig").GraphTensor;
 
 pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
     // Utility function to create a tensor from an input shape (tuple or array of usize)
@@ -38,61 +37,30 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         strides: [ndims]usize = strides,
         size: usize = size,
 
-        // These need to be populated during init()
-        graph_tensor: GraphTensor,
         storage: ?*TensorStorage(dtype, size),
-        // owns_storage: bool,
-        // real: bool,
         allocator: ?Allocator,
+        eval_fn: *const fn (self: *const Self) void,
 
         pub fn init() Self {
-            const impl = struct {
-                // TODO: Make a new function that takes a ShapeOp and executes it
-                // pub fn permute(comptime ptr: *const GraphTensor, comptime perm: []u8) GraphTensor {
-                //     const self = @fieldParentPtr(Self, "graph_tensor", ptr);
-                //     return self.permute(perm[0..ndims]).graph_tensor;
-                // }
-                pub fn debug_info(ptr: *const GraphTensor) void {
-                    std.debug.print("tensor<", .{});
-                    for (0..ndims) |d| {
-                        std.debug.print("{any},", .{shape[d]});
-                    }
-                    std.debug.print("{any}>, id: {any}", .{ _dtype, @intFromPtr(ptr) });
-                }
-                pub fn eval_map(ptr: *const GraphTensor, op_call: ops.OpCall) void {
-                    const self = @fieldParentPtr(Self, "graph_tensor", ptr);
-                    return self.eval_map(op_call);
-                }
-                pub fn eval_zip(ptr: *const GraphTensor, op_call: ops.OpCall) void {
-                    const self = @fieldParentPtr(Self, "graph_tensor", ptr);
-                    return self.eval_zip(op_call);
-                }
-                pub fn reduce(ptr: *const GraphTensor, op_call: ops.OpCall) void {
-                    const self = @fieldParentPtr(Self, "graph_tensor", ptr);
-                    return self.eval_reduce(op_call);
-                }
-            };
             return .{
                 .storage = null,
-                // .owns_storage = false,
                 .allocator = null,
-                // .real = false,
-                .graph_tensor = .{
-                    .debug_info_fn = impl.debug_info,
-                    .eval_map_fn = impl.eval_map,
-                    .eval_zip_fn = impl.eval_zip,
-                    .eval_reduce_fn = impl.reduce,
-                },
+                .eval_fn = struct {
+                    fn eval(self: *const Self) void {
+                        std.debug.print("\n{s}@{d} = init()", .{
+                            self.info(),
+                            @intFromPtr(self),
+                        });
+                    }
+                }.eval,
             };
         }
-        // pub fn realize(self: *Self, storage: ?*TensorStorage(dtype, size), allocator: Allocator) !void {
-        //     // TODO: Make this async to block thread until tensor is computed
-        //     // Current impl of realize does not trace back up its compute graph to actually get values
-        //     self.storage = storage orelse try TensorStorage(dtype, size).init(allocator);
-        //     self.allocator = allocator;
-        //     self.real = true;
-        //     self.owns_storage = storage == null;
-        // }
+        pub fn info(_: *const Self) @TypeOf(comptimePrint("tensor<{any}, {any}>", .{ shape, dtype })) {
+            return comptimePrint("tensor<{any}, {any}>", .{ shape, dtype });
+        }
+        pub fn eval(self: *const Self) void {
+            self.eval_fn(self);
+        }
         pub fn deinit(self: *const Self) void {
             _ = self;
             // if (self.real and self.owns_storage) {
@@ -108,58 +76,56 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         }
         pub fn map(self: *const Self, op: ops.MapOp) Self {
             var out = init();
-            out.graph_tensor.last_op = .{ .MapOp = .{
-                .op = op,
-                .a = &self.graph_tensor,
-            } };
+            out.eval_fn = struct {
+                fn eval(ptr: *const @TypeOf(out)) void {
+                    self.eval();
+                    std.debug.print("\n{s}@{d} = {any} {s}@{d} {s}@{d}", .{
+                        ptr.info(),
+                        @intFromPtr(ptr),
+                        op,
+                        self.info(),
+                        @intFromPtr(self),
+                    });
+                    return;
+                }
+            }.eval;
             return out;
-        }
-        fn eval_map(self: *const Self, op_call: ops.OpCall) void {
-            switch (op_call) {
-                .MapOp => |map_op_call| {
-                    // TODO: If the self Tensor is realized, execute the operation on its data using the args provided by the op_call
-                    // Add any extra args as necessary (e.g. output location)
-                    _ = map_op_call;
-                },
-                else => @panic("Invalid map op call"),
-            }
-            _ = self;
         }
         pub fn zip(self: *const Self, op: ops.ZipOp, other: anytype) BroadcastedTensor(Self, @TypeOf(other)) {
             var out = BroadcastedTensor(Self, @TypeOf(other)).init();
-            out.graph_tensor.last_op = .{ .ZipOp = .{ .op = op, .a = &self.graph_tensor, .b = &other.graph_tensor } };
+            out.eval_fn = struct {
+                fn eval(ptr: *const @TypeOf(out)) void {
+                    self.eval();
+                    other.eval();
+                    std.debug.print("\n{s}@{d} = {any} {s}@{d} {s}@{d}", .{
+                        ptr.info(),
+                        @intFromPtr(ptr),
+                        op,
+                        self.info(),
+                        @intFromPtr(self),
+                        other.info(),
+                        @intFromPtr(&other),
+                    });
+                }
+            }.eval;
             return out;
-        }
-        fn eval_zip(self: *const Self, op_call: ops.OpCall) void {
-            switch (op_call) {
-                .ZipOp => |zip_op_call| {
-                    // TODO: If the self Tensor is realized, execute the operation on its data using the args provided by the op_call
-                    // Add any extra args as necessary (e.g. output location)
-                    _ = zip_op_call;
-                },
-                else => @panic("Invalid zip op call"),
-            }
-            _ = self;
         }
         pub fn reduce(self: *const Self, op: ops.ReduceOp, comptime reduce_dim: usize) ReducedTensor(Self, reduce_dim) {
             var out = ReducedTensor(Self, reduce_dim).init();
-            out.graph_tensor.last_op = .{ .ReduceOp = .{
-                .op = op,
-                .a = &self.graph_tensor,
-                .reduce_dim = reduce_dim,
-            } };
+            out.eval_fn = struct {
+                fn eval(ptr: *const @TypeOf(out)) void {
+                    self.eval();
+                    std.debug.print("\n{s}@{d} = {any} {s}@{d} {d}", .{
+                        ptr.info(),
+                        @intFromPtr(ptr),
+                        op,
+                        self.info(),
+                        @intFromPtr(self),
+                        reduce_dim,
+                    });
+                }
+            }.eval;
             return out;
-        }
-        fn eval_reduce(self: *const Self, op_call: ops.OpCall) void {
-            _ = self;
-            switch (op_call) {
-                .ReduceOp => |reduce_op_call| {
-                    // TODO: If the self Tensor is realized, execute the operation on its data using the args provided by the op_call
-                    // Add any extra args as necessary (e.g. output location)
-                    _ = reduce_op_call;
-                },
-                else => @panic("Invalid reduce op call"),
-            }
         }
     };
 }
