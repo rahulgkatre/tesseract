@@ -32,7 +32,7 @@ test "zip operation shape check" {
         break :blk tensor3;
     };
     try expectEqual([_]usize{ 2, 3, 4 }, out.shape);
-    out.eval();
+    comptime out.eval();
     std.debug.print("\n", .{});
 }
 test "reduce operation shape check" {
@@ -42,7 +42,7 @@ test "reduce operation shape check" {
         break :blk tensor2;
     };
     try expectEqual([_]usize{ 2, 1, 4 }, out.shape);
-    out.eval();
+    comptime out.eval();
     std.debug.print("\n", .{});
 }
 test "zip reduce operation shape check" {
@@ -55,7 +55,7 @@ test "zip reduce operation shape check" {
         break :blk tensor3;
     };
     try expectEqual([_]usize{ 2, 1, 4 }, out.shape);
-    out.eval();
+    comptime out.eval();
     std.debug.print("\n", .{});
 }
 // TODO: Reactivate test once a Zig Backend has been started
@@ -93,6 +93,6 @@ test "tensors from functions" {
         const tensor6 = fn2(tensor3);
         break :blk tensor6;
     };
-    out.eval();
+    comptime out.eval();
     std.debug.print("\n", .{});
 }

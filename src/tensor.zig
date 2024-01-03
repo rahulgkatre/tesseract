@@ -47,11 +47,18 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 .allocator = null,
                 .eval_fn = struct {
                     fn eval(self: *const Self) void {
-                        std.debug.print("\n{s}@{d} = {s}.init()", .{
-                            self.info(),
-                            @intFromPtr(self),
-                            self.info(),
-                        });
+                        if (!@inComptime()) {
+                            std.debug.print("\n{s}@{d} = {s}.init()", .{
+                                self.info(),
+                                @intFromPtr(self),
+                                self.info(),
+                            });
+                        } else {
+                            @compileLog(comptimePrint("{s} = {s}.init()", .{
+                                self.info(),
+                                self.info(),
+                            }));
+                        }
                     }
                 }.eval,
             };
@@ -83,13 +90,21 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             out.eval_fn = struct {
                 fn eval(ptr: *const @TypeOf(out)) void {
                     self.eval();
-                    std.debug.print("\n{s}@{d} = {any} {s}@{d}", .{
-                        ptr.info(),
-                        @intFromPtr(ptr),
-                        op,
-                        self.info(),
-                        @intFromPtr(self),
-                    });
+                    if (!@inComptime()) {
+                        std.debug.print("\n{s}@{d} = {any} {s}@{d}", .{
+                            ptr.info(),
+                            @intFromPtr(ptr),
+                            op,
+                            self.info(),
+                            @intFromPtr(self),
+                        });
+                    } else {
+                        @compileLog(comptimePrint("{s} = {any} {s}", .{
+                            ptr.info(),
+                            op,
+                            self.info(),
+                        }));
+                    }
                     return;
                 }
             }.eval;
@@ -101,15 +116,24 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 fn eval(ptr: *const @TypeOf(out)) void {
                     self.eval();
                     other.eval();
-                    std.debug.print("\n{s}@{d} = {any} {s}@{d} {s}@{d}", .{
-                        ptr.info(),
-                        @intFromPtr(ptr),
-                        op,
-                        self.info(),
-                        @intFromPtr(self),
-                        other.info(),
-                        @intFromPtr(&other),
-                    });
+                    if (!@inComptime()) {
+                        std.debug.print("\n{s}@{d} = {any} {s}@{d} {s}@{d}", .{
+                            ptr.info(),
+                            @intFromPtr(ptr),
+                            op,
+                            self.info(),
+                            @intFromPtr(self),
+                            other.info(),
+                            @intFromPtr(&other),
+                        });
+                    } else {
+                        @compileLog(comptimePrint("{s} = {any} {s} {s}", .{
+                            ptr.info(),
+                            op,
+                            self.info(),
+                            other.info(),
+                        }));
+                    }
                 }
             }.eval;
             return out;
@@ -119,14 +143,23 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             out.eval_fn = struct {
                 fn eval(ptr: *const @TypeOf(out)) void {
                     self.eval();
-                    std.debug.print("\n{s}@{d} = {any} {s}@{d} {d}", .{
-                        ptr.info(),
-                        @intFromPtr(ptr),
-                        op,
-                        self.info(),
-                        @intFromPtr(self),
-                        reduce_dim,
-                    });
+                    if (!@inComptime()) {
+                        std.debug.print("\n{s}@{d} = {any} {s}@{d} {d}", .{
+                            ptr.info(),
+                            @intFromPtr(ptr),
+                            op,
+                            self.info(),
+                            @intFromPtr(self),
+                            reduce_dim,
+                        });
+                    } else {
+                        @compileLog(comptimePrint("{s} = {any} {s} {d}", .{
+                            ptr.info(),
+                            op,
+                            self.info(),
+                            reduce_dim,
+                        }));
+                    }
                 }
             }.eval;
             return out;
