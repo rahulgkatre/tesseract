@@ -1,13 +1,20 @@
 const std = @import("std");
 const comptimePrint = std.fmt.comptimePrint;
-const Tensor = @import("tensor.zig").Tensor;
+const Tensor = @import("tensor.zig").BaseTensor;
 
-pub fn size(comptime ndims: u8, comptime shape: [ndims]usize) usize {
+pub fn bufferSizeForTensor(comptime ndims: u8, shape: [ndims]usize, strides: [ndims]usize) usize {
     // Used to determine the size of the underlying storage
-    const shape_vec: @Vector(ndims, usize) = shape;
-    var _size: usize = @reduce(.Mul, shape_vec);
-    if (_size == 0) @compileError("Illegal tensor size of 0");
-    return _size;
+    if (isContiguous(ndims, strides)) {
+        var prod: usize = 1;
+        for (shape) |dim_size| prod *= dim_size;
+        return prod;
+    } else {
+        // If the stride is not contiguous then the buffer size is 1 + last index
+        // last index is the sum of the strides
+        var sum: usize = 1;
+        for (0..ndims) |d| sum += shape[d] * strides[d];
+        return sum + 1;
+    }
 }
 pub fn permuteArray(comptime ndims: u8, comptime array: [ndims]usize, perm: [ndims]u8) [ndims]usize {
     // Utility function for permuting an array (tensor shape or strides)
@@ -37,7 +44,7 @@ pub fn flatIndex(comptime ndims: u8, index: [ndims]usize, strides: [ndims]usize)
     for (0..ndims) |d| flat_index += index[d] * strides[d];
     return flat_index;
 }
-pub fn isContiguous(comptime ndims: u8, comptime strides: [ndims]usize) bool {
+pub fn isContiguous(comptime ndims: u8, strides: [ndims]usize) bool {
     // Check if the strides are contiguous (decreasing order)
     var prev = strides[0];
     for (strides[1..]) |s| {

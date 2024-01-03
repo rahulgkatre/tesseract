@@ -6,20 +6,24 @@ const TensorStorage = @import("storage.zig").TensorStorage;
 const ops = @import("ops.zig");
 const GraphTensor = @import("graph.zig").GraphTensor;
 
-pub fn tensor(comptime dtype: type, comptime shape: anytype) DefaultStridedTensor(dtype, shape.len, shape) {
+pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
     // Utility function to create a tensor from an input shape (tuple or array of usize)
+    // Most of the time, this is what you want to use
     // Infers strides from shape so it will be contiguous
     // Tensors created using this function must be realized manually as they are endpoints of the compute graph
-    return comptime DefaultStridedTensor(dtype, shape.len, shape).init();
+    return DefaultStridedTensor(dtype, shape.len, shape);
+}
+
+pub fn StridedTensor(comptime dtype: type, comptime shape: anytype, comptime strides: anytype) type {
+    if (shape.len != strides.len) {
+        @compileError("Provided shape != provided strides");
+    }
+    return BaseTensor(dtype, shape.len, shape, strides);
 }
 
 // TODO: Add a device type param here
 // Should be easy to add this type param everywhere as the device will remain the same unless a to_device() method is called
-pub fn Tensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndims]usize, comptime _strides: [_ndims]usize) type {
-    switch (@typeInfo(_dtype)) {
-        .Bool, .ComptimeInt, .Int, .ComptimeFloat, .Float => {},
-        else => @compileError("Non-numeric or non-bool tensor dtype not supported, received " ++ @typeName(_dtype)),
-    }
+fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndims]usize, comptime _strides: [_ndims]usize) type {
     return struct {
         const Self = @This();
         // These just take on the value of the generic arguments
@@ -28,7 +32,7 @@ pub fn Tensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         pub const ndims: u8 = _ndims;
         pub const shape: [ndims]usize = _shape;
         pub const strides: [ndims]usize = _strides;
-        pub const size = utils.size(ndims, shape);
+        pub const size = utils.bufferSizeForTensor(ndims, shape, strides);
         ndims: u8 = ndims,
         shape: [ndims]usize = shape,
         strides: [ndims]usize = strides,
@@ -160,29 +164,27 @@ pub fn Tensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
     };
 }
 
-pub fn DefaultStridedTensor(comptime dtype: type, comptime ndims: u8, comptime shape: [ndims]usize) type {
-    return Tensor(dtype, ndims, shape, utils.defaultStrides(ndims, shape));
+fn DefaultStridedTensor(comptime dtype: type, comptime ndims: u8, comptime shape: [ndims]usize) type {
+    return BaseTensor(dtype, ndims, shape, utils.defaultStrides(ndims, shape));
 }
 
-pub fn ReducedTensor(comptime tensor_t: type, comptime reduce_dim: usize) type {
+fn ReducedTensor(comptime tensor_t: type, comptime reduce_dim: usize) type {
     const dtype = @field(tensor_t, "dtype");
     const ndims = @field(tensor_t, "ndims");
     const shape = utils.reducedShape(ndims, @field(tensor_t, "shape"), reduce_dim);
-    const strides = utils.defaultStrides(ndims, shape);
-    return Tensor(dtype, ndims, shape, strides);
+    return DefaultStridedTensor(dtype, ndims, shape);
 }
 
-pub fn BroadcastedTensor(comptime tensor1_t: type, comptime tensor2_t: type) type {
-    const shape = utils.shapeBroadcast(tensor1_t, tensor2_t);
-    return Tensor(@field(tensor1_t, "dtype"), shape.len, shape, utils.defaultStrides(shape.len, shape));
+fn BroadcastedTensor(comptime tensor1_t: type, comptime tensor2_t: type) type {
+    return Tensor(@field(tensor1_t, "dtype"), utils.shapeBroadcast(tensor1_t, tensor2_t));
 }
 
-pub fn PermutedTensor(comptime tensor_t: type, comptime perm: [@field(tensor_t, "ndims")]u8) type {
+fn PermutedTensor(comptime tensor_t: type, comptime perm: [@field(tensor_t, "ndims")]u8) type {
     const dtype = @field(tensor_t, "dtype");
     const ndims = @field(tensor_t, "ndims");
     const shape = @field(tensor_t, "shape");
     const strides = @field(tensor_t, "strides");
     const permute_shape = utils.permuteArray(ndims, shape, perm);
     const permute_strides = utils.permuteArray(ndims, strides, perm);
-    return Tensor(dtype, ndims, permute_shape, permute_strides);
+    return BaseTensor(dtype, ndims, permute_shape, permute_strides);
 }
