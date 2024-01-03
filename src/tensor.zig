@@ -47,18 +47,23 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 .allocator = null,
                 .eval_fn = struct {
                     fn eval(self: *const Self) void {
-                        std.debug.print("\n{s}@{d} = init()", .{
+                        std.debug.print("\n{s}@{d} = {s}.init()", .{
                             self.info(),
                             @intFromPtr(self),
+                            self.info(),
                         });
                     }
                 }.eval,
             };
         }
-        pub fn info(_: *const Self) @TypeOf(comptimePrint("tensor<{any}, {any}>", .{ shape, dtype })) {
-            return comptimePrint("tensor<{any}, {any}>", .{ shape, dtype });
+        pub fn info(_: anytype) @TypeOf(comptimePrint("Tensor({any},.{any})", .{ dtype, shape })) {
+            return comptimePrint("Tensor({any},.{any})", .{ dtype, shape });
         }
         pub fn eval(self: *const Self) void {
+            // self.storage = storage orelse try TensorStorage(dtype, size).init(allocator);
+            // self.allocator = allocator;
+            // self.real = true;
+            // self.owns_storage = storage == null;
             self.eval_fn(self);
         }
         pub fn deinit(self: *const Self) void {
@@ -67,11 +72,10 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             //     self.storage.?.deinit();
             // }
         }
-        pub inline fn isContiguous(_: *const Self) bool {
-            // The information for contiguous is in the type itself
+        pub inline fn isContiguous(_: anytype) bool {
             return comptime utils.isContiguous(ndims, strides);
         }
-        pub fn permute(comptime _: *const Self, comptime perm: [ndims]u8) PermutedTensor(Self, perm) {
+        pub fn permute(_: anytype, comptime perm: [ndims]u8) PermutedTensor(Self, perm) {
             return PermutedTensor(Self, perm).init();
         }
         pub fn map(self: *const Self, op: ops.MapOp) Self {
@@ -79,7 +83,7 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             out.eval_fn = struct {
                 fn eval(ptr: *const @TypeOf(out)) void {
                     self.eval();
-                    std.debug.print("\n{s}@{d} = {any} {s}@{d} {s}@{d}", .{
+                    std.debug.print("\n{s}@{d} = {any} {s}@{d}", .{
                         ptr.info(),
                         @intFromPtr(ptr),
                         op,
