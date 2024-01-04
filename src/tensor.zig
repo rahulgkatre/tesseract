@@ -4,6 +4,8 @@ const comptimePrint = std.fmt.comptimePrint;
 const utils = @import("utils.zig");
 const TensorStorage = @import("storage.zig").TensorStorage;
 const ops = @import("ops.zig");
+const Backend = @import("backend.zig").Backend;
+const LazyBuffer = @import("buffer.zig").LazyBuffer;
 
 pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
     // Utility function to create a tensor from an input shape (tuple or array of usize)
@@ -34,17 +36,16 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         pub const size = utils.bufferSizeForTensor(ndims, shape, strides);
         ndims: u8 = ndims,
         shape: [ndims]usize = shape,
-        strides: [ndims]usize = strides,
         size: usize = size,
+        strides: [ndims]usize = strides,
 
-        storage: ?*TensorStorage(dtype, size),
-        allocator: ?Allocator,
+        backend: *const Backend,
+        buffer: ?*LazyBuffer(dtype),
         eval_fn: *const fn (self: *const Self) void,
-
-        pub fn init() Self {
+        pub fn init(backend: *const Backend) Self {
             return .{
-                .storage = null,
-                .allocator = null,
+                .backend = backend,
+                .buffer = null,
                 .eval_fn = struct {
                     fn eval(self: *const Self) void {
                         if (!@inComptime()) {
@@ -54,7 +55,7 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                                 self.info(),
                             });
                         } else {
-                            @compileLog(comptimePrint("{s} = {s}.init()", .{
+                            _ = (comptimePrint("{s} = {s}.init()", .{
                                 self.info(),
                                 self.info(),
                             }));
@@ -82,107 +83,51 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         pub inline fn isContiguous(_: anytype) bool {
             return comptime utils.isContiguous(ndims, strides);
         }
-        pub fn permute(_: anytype, comptime perm: [ndims]u8) PermutedTensor(Self, perm) {
-            return PermutedTensor(Self, perm).init();
+        pub fn broadcastIndex(comptime bc_ndims: u8, bc_index: [bc_ndims]usize) [ndims]usize {
+            // Determine the index in the current tensor given an index in the broadcasted tensor
+            // If the current tensor has size of 1 in a dimension, then the index must be 0
+            // Otherwise it will be what the broadcasted index is
+            const index: [ndims]usize = undefined;
+            inline for (0..ndims) |d| index[bc_ndims - d - 1] = if (shape[ndims - d - 1] == 1) 0 else bc_index[bc_ndims - d - 1];
+            return index;
+        }
+        pub fn flatIndex(index: [ndims]usize) usize {
+            // Convert a multidimensional index into a single dimensional index
+            var flat_index: usize = 0;
+            for (0..ndims) |d| flat_index += index[d] * strides[d];
+            return flat_index;
+        }
+        pub fn permute(self: *const Self, comptime perm: [ndims]u8) PermutedTensor(Self, perm) {
+            return PermutedTensor(Self, perm).init(self.backend);
         }
         pub fn map(self: *const Self, op: ops.MapOp) Self {
-            var out = init();
-            out.eval_fn = struct {
-                fn eval(ptr: *const @TypeOf(out)) void {
-                    self.eval();
-                    if (!@inComptime()) {
-                        std.debug.print("\n{s}@{d} = {any} {s}@{d}", .{
-                            ptr.info(),
-                            @intFromPtr(ptr),
-                            op,
-                            self.info(),
-                            @intFromPtr(self),
-                        });
-                    } else {
-                        @compileLog(comptimePrint("{s} = {any} {s}", .{
-                            ptr.info(),
-                            op,
-                            self.info(),
-                        }));
-                    }
-                    return;
-                }
-            }.eval;
-            return out;
+            return self.backend.lazy_map(op, self.*);
         }
         pub fn zip(self: *const Self, op: ops.ZipOp, other: anytype) BroadcastedTensor(Self, @TypeOf(other)) {
-            var out = BroadcastedTensor(Self, @TypeOf(other)).init();
-            out.eval_fn = struct {
-                fn eval(ptr: *const @TypeOf(out)) void {
-                    self.eval();
-                    other.eval();
-                    if (!@inComptime()) {
-                        std.debug.print("\n{s}@{d} = {any} {s}@{d} {s}@{d}", .{
-                            ptr.info(),
-                            @intFromPtr(ptr),
-                            op,
-                            self.info(),
-                            @intFromPtr(self),
-                            other.info(),
-                            @intFromPtr(&other),
-                        });
-                    } else {
-                        @compileLog(comptimePrint("{s} = {any} {s} {s}", .{
-                            ptr.info(),
-                            op,
-                            self.info(),
-                            other.info(),
-                        }));
-                    }
-                }
-            }.eval;
-            return out;
+            return self.backend.lazy_zip(op, self.*, other);
         }
         pub fn reduce(self: *const Self, op: ops.ReduceOp, comptime reduce_dim: usize) ReducedTensor(Self, reduce_dim) {
-            var out = ReducedTensor(Self, reduce_dim).init();
-            out.eval_fn = struct {
-                fn eval(ptr: *const @TypeOf(out)) void {
-                    self.eval();
-                    if (!@inComptime()) {
-                        std.debug.print("\n{s}@{d} = {any} {s}@{d} {d}", .{
-                            ptr.info(),
-                            @intFromPtr(ptr),
-                            op,
-                            self.info(),
-                            @intFromPtr(self),
-                            reduce_dim,
-                        });
-                    } else {
-                        @compileLog(comptimePrint("{s} = {any} {s} {d}", .{
-                            ptr.info(),
-                            op,
-                            self.info(),
-                            reduce_dim,
-                        }));
-                    }
-                }
-            }.eval;
-            return out;
+            return self.backend.lazy_reduce(op, self.*, reduce_dim);
         }
     };
 }
 
-fn DefaultStridedTensor(comptime dtype: type, comptime ndims: u8, comptime shape: [ndims]usize) type {
+pub fn DefaultStridedTensor(comptime dtype: type, comptime ndims: u8, comptime shape: [ndims]usize) type {
     return BaseTensor(dtype, ndims, shape, utils.defaultStrides(ndims, shape));
 }
 
-fn ReducedTensor(comptime tensor_t: type, comptime reduce_dim: usize) type {
+pub fn ReducedTensor(comptime tensor_t: type, comptime reduce_dim: usize) type {
     const dtype = @field(tensor_t, "dtype");
     const ndims = @field(tensor_t, "ndims");
     const shape = utils.reducedShape(ndims, @field(tensor_t, "shape"), reduce_dim);
     return DefaultStridedTensor(dtype, ndims, shape);
 }
 
-fn BroadcastedTensor(comptime tensor1_t: type, comptime tensor2_t: type) type {
+pub fn BroadcastedTensor(comptime tensor1_t: type, comptime tensor2_t: type) type {
     return Tensor(@field(tensor1_t, "dtype"), utils.shapeBroadcast(tensor1_t, tensor2_t));
 }
 
-fn PermutedTensor(comptime tensor_t: type, comptime perm: [@field(tensor_t, "ndims")]u8) type {
+pub fn PermutedTensor(comptime tensor_t: type, comptime perm: [@field(tensor_t, "ndims")]u8) type {
     const dtype = @field(tensor_t, "dtype");
     const ndims = @field(tensor_t, "ndims");
     const shape = @field(tensor_t, "shape");

@@ -38,12 +38,6 @@ pub fn defaultStrides(comptime ndims: u8, comptime shape: [ndims]usize) [ndims]u
     strides[ndims - 1] = 1;
     return strides;
 }
-pub fn flatIndex(comptime ndims: u8, index: [ndims]usize, strides: [ndims]usize) usize {
-    // Convert a multidimensional index into a single dimensional index
-    var flat_index: usize = 0;
-    for (0..ndims) |d| flat_index += index[d] * strides[d];
-    return flat_index;
-}
 pub fn isContiguous(comptime ndims: u8, strides: [ndims]usize) bool {
     // Check if the strides are contiguous (decreasing order)
     var prev = strides[0];
@@ -75,14 +69,6 @@ pub fn shapeBroadcast(comptime tensor1_t: type, comptime tensor2_t: type) [@max(
         bc_shape[bc_ndims - i - 1] = if (dim1 == dim2 or dim2 == 1) dim1 else dim2;
     }
     return bc_shape;
-}
-pub fn broadcastIndex(comptime ndims: u8, shape: [ndims]usize, comptime bc_ndims: u8, bc_index: [bc_ndims]usize) [ndims]usize {
-    // Determine the index in the current tensor given an index in the broadcasted tensor
-    // If the current tensor has size of 1 in a dimension, then the index must be 0
-    // Otherwise it will be what the broadcasted index is
-    const index: [ndims]usize = undefined;
-    for (0..ndims) |d| index[bc_ndims - d - 1] = if (shape[ndims - d - 1] == 1) 0 else bc_index[bc_ndims - d - 1];
-    return index;
 }
 pub fn reducedShape(comptime ndims: u8, comptime shape: [ndims]usize, comptime reduce_dim: usize) [ndims]usize {
     // Return a shape where the reduced dim is 1
