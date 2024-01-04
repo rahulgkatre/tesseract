@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+// TODO: Make this a union like Backend
 pub fn LazyBuffer(comptime dtype: type) type {
     _ = dtype;
     return struct {
@@ -21,7 +22,7 @@ pub fn ZigLazyBuffer(comptime dtype: type) type {
         pub fn init(size: usize, allocator: Allocator) !*Self {
             const Impl = struct {
                 pub fn deinit(ptr: *LazyBuffer) void {
-                    const self = @fieldParentPtr(Self, "graph_buffer", ptr);
+                    const self = @fieldParentPtr(Self, "lazy_buffer", ptr);
                     self.deinit();
                 }
             };

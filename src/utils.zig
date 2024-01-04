@@ -6,14 +6,18 @@ pub fn bufferSizeForTensor(comptime ndims: u8, shape: [ndims]usize, strides: [nd
     if (isContiguous(ndims, strides)) {
         // Size is the product of the shape for contiguous tensors
         var prod: usize = 1;
-        for (shape) |dim_size| prod *= dim_size;
+        for (shape) |dim_size| {
+            prod *= dim_size;
+        }
         return prod;
     } else {
         // TODO: Verify this is correct
         // If the stride is not contiguous then the buffer size is 1 + last index
         // last index is the sum of the strides
-        var sum: usize = 1;
-        for (0..ndims) |d| sum += shape[d] * strides[d];
+        var sum: usize = 0;
+        for (0..ndims) |d| {
+            sum += shape[d] * strides[d];
+        }
         return sum + 1;
     }
 }

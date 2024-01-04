@@ -15,12 +15,11 @@ pub const Backend = union(enum) {
     // ArrayFire: ArrayFireBackend
     // CUDA: CudaBackend
     // ...
-
-    // pub fn allocBuffer(self: *const Backend, comptime dtype: type, size: usize) !*LazyBuffer {
-    //     return switch (self.*) {
-    //         inline else => |*b| try b.allocBuffer(dtype, size),
-    //     };
-    // }
+    pub fn allocBuffer(self: *const Backend, comptime dtype: type, size: usize) !*LazyBuffer {
+        return switch (self.*) {
+            inline else => |*b| try b.allocBuffer(dtype, size),
+        };
+    }
     pub fn lazy_map(self: *const Backend, op: ops.MapOp, x: anytype) @TypeOf(x) {
         var out = @TypeOf(x).init(self);
         out.eval_fn = struct {
@@ -131,13 +130,13 @@ pub const ZigBackend = struct {
         // }
     }
 
-    // pub fn allocBuffer(self: *const ZigBackend, comptime dtype: type, size: usize) !*LazyBuffer {
-    //     if (self.allocator != null) {
-    //         const zigBuffer = try ZigLazyBuffer(dtype).init(size, self.allocator.?);
-    //         return &zigBuffer.graph_buffer;
-    //     }
-    //     @panic("No allocator provided");
-    // }
+    pub fn allocBuffer(self: *const ZigBackend, comptime dtype: type, size: usize) !*LazyBuffer {
+        if (self.allocator != null) {
+            const zig_buffer = try ZigLazyBuffer(dtype).init(size, self.allocator.?);
+            return &zig_buffer.lazy_buffer;
+        }
+        @panic("No allocator provided");
+    }
 
     // pub fn freeBuffer(_: *const ZigBackend, buffer: *LazyBuffer(comptime dtype: type)) void {
     //     buffer.deinit();
