@@ -78,7 +78,7 @@ const std = @import("std");
 test "vtab3_embedded_in_struct" {
     var o1 = MyType1(f32).init(3.14);
     var o2 = MyType2(i32).init(10);
-    var mystuff = [_]*Interface{
+    const mystuff = [_]*Interface{
         &o1.interface,
         &o2.interface,
     };

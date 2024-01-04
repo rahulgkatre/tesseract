@@ -2,7 +2,6 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const comptimePrint = std.fmt.comptimePrint;
 const utils = @import("utils.zig");
-const TensorStorage = @import("storage.zig").TensorStorage;
 const ops = @import("ops.zig");
 const Backend = @import("backend.zig").Backend;
 const LazyBuffer = @import("buffer.zig").LazyBuffer;
@@ -117,19 +116,54 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
     };
 }
 
-pub fn DefaultStridedTensor(comptime dtype: type, comptime ndims: u8, comptime shape: [ndims]usize) type {
-    return BaseTensor(dtype, ndims, shape, utils.defaultStrides(ndims, shape));
+fn DefaultStridedTensor(comptime dtype: type, comptime ndims: u8, comptime shape: [ndims]usize) type {
+    var stride: usize = undefined;
+    var offset: usize = 1;
+    var strides: [ndims]usize = undefined;
+    for (0..ndims - 1) |i| {
+        stride = shape[ndims - i - 1] * offset;
+        strides[ndims - i - 2] = stride;
+        offset = stride;
+    }
+    strides[ndims - 1] = 1;
+    return BaseTensor(dtype, ndims, shape, strides);
 }
 
 pub fn ReducedTensor(comptime tensor_t: type, comptime reduce_dim: usize) type {
     const dtype = @field(tensor_t, "dtype");
     const ndims = @field(tensor_t, "ndims");
-    const shape = utils.reducedShape(ndims, @field(tensor_t, "shape"), reduce_dim);
-    return DefaultStridedTensor(dtype, ndims, shape);
+    const shape = @field(tensor_t, "shape");
+    var reduced_shape: [ndims]usize = undefined;
+    @memcpy(&reduced_shape, &shape);
+    reduced_shape[reduce_dim] = 1;
+    return DefaultStridedTensor(dtype, ndims, reduced_shape);
 }
 
 pub fn BroadcastedTensor(comptime tensor1_t: type, comptime tensor2_t: type) type {
-    return Tensor(@field(tensor1_t, "dtype"), utils.shapeBroadcast(tensor1_t, tensor2_t));
+    // Gets the broadcast shape between two tensors if one exists
+    // If the two tensors do not broadcast, the code won't compile
+    const tensor1_dtype = @field(tensor1_t, "dtype");
+    const tensor1_ndims = @field(tensor1_t, "ndims");
+    const tensor1_shape = @field(tensor1_t, "shape");
+    const tensor2_dtype = @field(tensor2_t, "dtype");
+    const tensor2_ndims = @field(tensor2_t, "ndims");
+    const tensor2_shape = @field(tensor2_t, "shape");
+    if (tensor1_dtype != tensor2_dtype) {
+        @compileError("Cannot broadcast tensors as they do not have the same dtype, please cast first");
+    }
+    const bc_ndims = @max(tensor1_ndims, tensor2_ndims);
+    var bc_shape: [bc_ndims]usize = undefined;
+    var dim1: usize = undefined;
+    var dim2: usize = undefined;
+    inline for (0..bc_ndims) |i| {
+        dim1 = if (i >= tensor1_ndims) 1 else tensor1_shape[tensor1_ndims - i - 1];
+        dim2 = if (i >= tensor2_ndims) 1 else tensor2_shape[tensor2_ndims - i - 1];
+        if (dim1 != 1 and dim2 != 1 and dim1 != dim2) {
+            @compileError("Cannot broadcast tensors of shapes " ++ comptimePrint("{any}", .{tensor1_shape}) ++ " and " ++ comptimePrint("{any}", .{tensor2_shape}));
+        }
+        bc_shape[bc_ndims - i - 1] = if (dim1 == dim2 or dim2 == 1) dim1 else dim2;
+    }
+    return Tensor(tensor1_dtype, bc_shape);
 }
 
 pub fn PermutedTensor(comptime tensor_t: type, comptime perm: [@field(tensor_t, "ndims")]u8) type {

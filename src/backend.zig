@@ -50,7 +50,7 @@ pub const Backend = union(enum) {
                     @compileLog(comptimePrint("{s} = {any} {s} {s}", .{ ptr.info(), op, a.info(), b.info() }));
                 }
                 switch (self.*) {
-                    inline else => |*eval_backend| eval_backend.eval_map(op, a, b, ptr),
+                    inline else => |*eval_backend| eval_backend.eval_zip(op, a, b, ptr),
                 }
             }
         }.eval;
@@ -69,7 +69,7 @@ pub const Backend = union(enum) {
                 // TODO: Compute the start value for the accumulator based on the op, and the zip op used to accumulate
                 // by switching on the reduce op
                 // switch (self.*) {
-                //     inline else => |*eval_backend| eval_backend.eval_map(op, zip_op x, reduce_dim, acc_start, ptr),
+                //     inline else => |*eval_backend| eval_backend.eval_reduce(op, zip_op x, reduce_dim, acc_start, ptr),
                 // }
             }
         }.eval;
@@ -82,7 +82,7 @@ pub const ZigBackend = struct {
     const ZigLazyBuffer = @import("buffer.zig").ZigLazyBuffer;
     allocator: ?Allocator = null,
 
-    pub fn eval_map(self: *const ZigBackend, op: ops.MapOp, x: anytype, out: @TypeOf(x)) void {
+    pub fn eval_map(self: *const ZigBackend, op: ops.MapOp, x: anytype, out: *const @TypeOf(x)) void {
         _ = op;
         _ = out;
         _ = self;
@@ -94,7 +94,7 @@ pub const ZigBackend = struct {
         // }
     }
 
-    pub fn eval_zip(self: *const ZigBackend, op: ops.ZipOp, a: anytype, b: anytype, out: tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b))) void {
+    pub fn eval_zip(self: *const ZigBackend, op: ops.ZipOp, a: anytype, b: anytype, out: *const tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b))) void {
         _ = op;
         _ = out;
         _ = self;
@@ -109,7 +109,7 @@ pub const ZigBackend = struct {
         // }
     }
 
-    pub fn eval_reduce(self: *const Backend, op: ops.ReduceOp, zip_op: ops.ZipOp, x: anytype, reduce_dim: u8, acc_start: anytype, out: tensor.ReducedTensor(@TypeOf(x), reduce_dim)) void {
+    pub fn eval_reduce(self: *const Backend, op: ops.ReduceOp, zip_op: ops.ZipOp, x: anytype, reduce_dim: u8, acc_start: anytype, out: *const tensor.ReducedTensor(@TypeOf(x), reduce_dim)) void {
         _ = zip_op;
         _ = acc_start;
         _ = out;
