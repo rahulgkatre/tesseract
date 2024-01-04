@@ -22,13 +22,9 @@ pub fn StridedTensor(comptime dtype: type, comptime shape: anytype, comptime str
     return BaseTensor(dtype, shape.len, shape, strides);
 }
 
-// TODO: Add a device type param here
-// Should be easy to add this type param everywhere as the device will remain the same unless a to_device() method is called
 fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndims]usize, comptime _strides: [_ndims]usize) type {
     return struct {
         const Self = @This();
-        // These just take on the value of the generic arguments
-        // Save the dtype here as it is needed for some comptime functions, accessed via @field
         pub const dtype: type = _dtype;
         pub const ndims: u8 = _ndims;
         pub const shape: [ndims]usize = _shape;
@@ -91,11 +87,20 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             inline for (0..ndims) |d| index[bc_ndims - d - 1] = if (shape[ndims - d - 1] == 1) 0 else bc_index[bc_ndims - d - 1];
             return index;
         }
-        pub fn flatIndex(index: [ndims]usize) usize {
+        pub fn flattenIndex(index: [ndims]usize) usize {
             // Convert a multidimensional index into a single dimensional index
             var flat_index: usize = 0;
             for (0..ndims) |d| flat_index += index[d] * strides[d];
             return flat_index;
+        }
+        pub fn unflattenIndex(flat_index: usize) [ndims]usize {
+            var index: [ndims]usize = undefined;
+            var remainder = flat_index;
+            for (0..ndims) |d| {
+                index[d] = @divTrunc(remainder, strides[d]);
+                remainder = @mod(remainder, strides[d]);
+            }
+            return index;
         }
         pub fn permute(self: *const Self, comptime perm: [ndims]u8) PermutedTensor(Self, perm) {
             return PermutedTensor(Self, perm).init(self.backend);

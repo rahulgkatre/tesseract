@@ -3,12 +3,14 @@ const comptimePrint = std.fmt.comptimePrint;
 const Tensor = @import("tensor.zig").BaseTensor;
 
 pub fn bufferSizeForTensor(comptime ndims: u8, shape: [ndims]usize, strides: [ndims]usize) usize {
-    // Used to determine the size of the underlying storage
+    // Determine the size of the underlying storage
     if (isContiguous(ndims, strides)) {
+        // Size is the product of the shape
         var prod: usize = 1;
         for (shape) |dim_size| prod *= dim_size;
         return prod;
     } else {
+        // TODO: Verify this is correct
         // If the stride is not contiguous then the buffer size is 1 + last index
         // last index is the sum of the strides
         var sum: usize = 1;
@@ -26,7 +28,7 @@ pub fn permuteArray(comptime ndims: u8, comptime array: [ndims]usize, perm: [ndi
     return new_array;
 }
 pub fn defaultStrides(comptime ndims: u8, comptime shape: [ndims]usize) [ndims]usize {
-    // Used to infer the default (contiguous) strides for the shape
+    // Infer the default (contiguous) strides for the shape
     var stride: usize = undefined;
     var offset: usize = 1;
     var strides: [ndims]usize = undefined;
@@ -77,17 +79,18 @@ pub fn reducedShape(comptime ndims: u8, comptime shape: [ndims]usize, comptime r
     out_shape[reduce_dim] = 1;
     return out_shape;
 }
-pub fn extendShape(comptime in_ndims: u8, in_shape: [in_ndims]usize, comptime out_ndims: u8) [out_ndims]usize {
-    // Extend shape by 1 padding it in the new dimensions
-    var out_shape: [out_ndims]usize = undefined;
-    @memset(&out_shape, 1);
-    @memcpy(out_shape[(out_ndims - in_ndims)..], &in_shape);
-    return out_shape;
-}
-pub fn extendStrides(comptime in_ndims: u8, in_strides: [in_ndims]usize, comptime out_ndims: u8) [out_ndims]usize {
-    // Extend strides by 0 padding it in the new dimensions
-    var out_strides: [out_ndims]usize = undefined;
-    @memset(&out_strides, 0);
-    @memcpy(out_strides[(out_ndims - in_ndims)..], &in_strides);
-    return out_strides;
-}
+// TODO: Add functions to expand along one dim, I don't think we need extend
+// pub fn extendShape(comptime in_ndims: u8, in_shape: [in_ndims]usize, comptime out_ndims: u8) [out_ndims]usize {
+//     // Extend shape by 1 padding it in the new dimensions
+//     var out_shape: [out_ndims]usize = undefined;
+//     @memset(&out_shape, 1);
+//     @memcpy(out_shape[(out_ndims - in_ndims)..], &in_shape);
+//     return out_shape;
+// }
+// pub fn extendStrides(comptime in_ndims: u8, in_strides: [in_ndims]usize, comptime out_ndims: u8) [out_ndims]usize {
+//     // Extend strides by 0 padding it in the new dimensions
+//     var out_strides: [out_ndims]usize = undefined;
+//     @memset(&out_strides, 0);
+//     @memcpy(out_strides[(out_ndims - in_ndims)..], &in_strides);
+//     return out_strides;
+// }
