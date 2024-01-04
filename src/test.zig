@@ -8,7 +8,16 @@ const ops = @import("ops.zig");
 const utils = @import("utils.zig");
 
 const TestBackend = &backend.Backend{ .Zig = .{ .allocator = null } };
-const TEST_COMPTIME = false;
+const run_in_comptime = false;
+fn runEval(comptime test_name: anytype, comptime out: anytype) void {
+    if (run_in_comptime) {
+        @compileLog(test_name);
+        comptime out.eval();
+    } else {
+        out.eval();
+        std.debug.print("\n", .{});
+    }
+}
 
 test "same tensors assignable" {
     const tensor1 = Tensor(i32, .{ 2, 3, 4 }).init(TestBackend);
@@ -16,7 +25,7 @@ test "same tensors assignable" {
     tensor2 = tensor1;
 }
 
-test "permute shape check" {
+test "permute" {
     const out = comptime blk: {
         const tensor1 = Tensor(i32, .{ 2, 3, 4 }).init(TestBackend);
         const tensor2 = tensor1.permute([_]u8{ 0, 2, 1 });
@@ -25,7 +34,7 @@ test "permute shape check" {
     try expectEqual([_]usize{ 2, 4, 3 }, out.shape);
     try expectEqual([_]usize{ 12, 1, 4 }, out.strides);
 }
-test "zip operation shape check" {
+test "zip" {
     const out = comptime blk: {
         const tensor1 = Tensor(i32, .{ 2, 1, 4 }).init(TestBackend);
         const tensor2 = Tensor(i32, .{ 3, 1 }).init(TestBackend);
@@ -33,28 +42,18 @@ test "zip operation shape check" {
         break :blk tensor3;
     };
     try expectEqual([_]usize{ 2, 3, 4 }, out.shape);
-    if (TEST_COMPTIME) {
-        comptime out.eval();
-    } else {
-        out.eval();
-    }
-    std.debug.print("\n", .{});
+    runEval("zip", out);
 }
-test "reduce operation shape check" {
+test "reduce" {
     const out = comptime blk: {
         const tensor1 = Tensor(i32, .{ 2, 3, 4 }).init(TestBackend);
         const tensor2 = tensor1.reduce(ops.ReduceOp.Sum, 1);
         break :blk tensor2;
     };
     try expectEqual([_]usize{ 2, 1, 4 }, out.shape);
-    if (TEST_COMPTIME) {
-        comptime out.eval();
-    } else {
-        out.eval();
-    }
-    std.debug.print("\n", .{});
+    runEval("reduce", out);
 }
-test "zip reduce operation shape check" {
+test "zip reduce" {
     const out = comptime blk: {
         const tensor1 = Tensor(i32, .{ 2, 1, 4 }).init(TestBackend);
         const tensor2 = Tensor(i32, .{ 2, 3, 1 }).init(TestBackend);
@@ -64,12 +63,7 @@ test "zip reduce operation shape check" {
         break :blk tensor3;
     };
     try expectEqual([_]usize{ 2, 1, 4 }, out.shape);
-    if (TEST_COMPTIME) {
-        comptime out.eval();
-    } else {
-        out.eval();
-    }
-    std.debug.print("\n", .{});
+    runEval("zip reduce", out);
 }
 // TODO: Reactivate test once a Zig Backend has been started
 // test "lazy with realization" {
@@ -106,10 +100,5 @@ test "tensors from functions" {
         const tensor6 = fn2(tensor3);
         break :blk tensor6;
     };
-    if (TEST_COMPTIME) {
-        comptime out.eval();
-    } else {
-        out.eval();
-    }
-    std.debug.print("\n", .{});
+    runEval("tensors from functions", out);
 }
