@@ -31,6 +31,7 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         shape: [ndims]usize = shape,
         size: usize = size,
         strides: [ndims]usize = strides,
+        str: @TypeOf(str) = str,
 
         backend: *const Backend,
         buffer: ?*LazyBuffer(dtype),
@@ -40,31 +41,30 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 .backend = backend,
                 .buffer = null,
                 .eval_fn = struct {
+                    // TODO: The default eval_fn must check if the tensor is initialiazed and panic if it is not
                     fn eval(self: *const Self) void {
                         if (!@inComptime()) {
                             std.debug.print(
                                 "\n{s}@{d} = {s}.init()",
-                                .{ self.info(), @intFromPtr(self), self.info() },
+                                .{ self.str, @intFromPtr(self), self.str },
                             );
                         } else {
                             @compileLog(comptimePrint(
                                 "{s} = {s}.init()",
-                                .{ self.info(), self.info() },
+                                .{ self.str, self.str },
                             ));
                         }
                     }
                 }.eval,
             };
         }
-        pub fn info(_: anytype) @TypeOf(str) {
-            return str;
-        }
         pub fn eval(self: *const Self) void {
             self.eval_fn(self);
         }
-        pub fn deinit(self: *const Self) void {
-            _ = self;
-        }
+        // TODO: Don't deinit individual tensors, the backend should deinit everything it allocated
+        // pub fn deinit(self: *const Self) void {
+        //     _ = self;
+        // }
         pub inline fn isContiguous(_: anytype) bool {
             return comptime utils.isContiguous(ndims, strides);
         }

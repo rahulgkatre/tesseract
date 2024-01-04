@@ -5,10 +5,6 @@ const ops = @import("ops.zig");
 const comptimePrint = std.fmt.comptimePrint;
 const tensor = @import("tensor.zig");
 
-// TODO: Make a backend struct
-// Backends provide APIS for performing various computations and management of buffers in memory
-// Backends are not limited to CPU backend, they can run on other devices (GPU, TPU, etc.)
-// In the case of the Zig CPU backend the buffer will be an anyopaque slice
 pub const Backend = union(enum) {
     Zig: ZigBackend,
     // TODO: Other backends
@@ -26,9 +22,9 @@ pub const Backend = union(enum) {
             fn eval(ptr: *const @TypeOf(out)) void {
                 x.eval();
                 if (!@inComptime()) {
-                    std.debug.print("\n{s}@{d} = {any} {s}@{d}", .{ ptr.info(), @intFromPtr(ptr), op, x.info(), @intFromPtr(x) });
+                    std.debug.print("\n{s}@{d} = {any} {s}@{d}", .{ ptr.str, @intFromPtr(ptr), op, x.str, @intFromPtr(x) });
                 } else {
-                    @compileLog(comptimePrint("{s} = {any} {s}", .{ ptr.info(), op, x.info() }));
+                    @compileLog(comptimePrint("{s} = {any} {s}", .{ ptr.str, op, x.str }));
                 }
                 switch (self.*) {
                     inline else => |*eval_backend| eval_backend.eval_map(op, x, ptr),
@@ -44,9 +40,9 @@ pub const Backend = union(enum) {
                 a.eval();
                 b.eval();
                 if (!@inComptime()) {
-                    std.debug.print("\n{s}@{d} = {any} {s}@{d} {s}@{d}", .{ ptr.info(), @intFromPtr(ptr), op, a.info(), @intFromPtr(&a), b.info(), @intFromPtr(&b) });
+                    std.debug.print("\n{s}@{d} = {any} {s}@{d} {s}@{d}", .{ ptr.str, @intFromPtr(ptr), op, a.str, @intFromPtr(&a), b.str, @intFromPtr(&b) });
                 } else {
-                    @compileLog(comptimePrint("{s} = {any} {s} {s}", .{ ptr.info(), op, a.info(), b.info() }));
+                    @compileLog(comptimePrint("{s} = {any} {s} {s}", .{ ptr.str, op, a.str, b.str }));
                 }
                 switch (self.*) {
                     inline else => |*eval_backend| eval_backend.eval_zip(op, a, b, ptr),
@@ -61,14 +57,14 @@ pub const Backend = union(enum) {
             fn eval(ptr: *const @TypeOf(out)) void {
                 x.eval();
                 if (!@inComptime()) {
-                    std.debug.print("\n{s}@{d} = {any} {s}@{d} {d}", .{ ptr.info(), @intFromPtr(ptr), op, x.info(), @intFromPtr(&x), reduce_dim });
+                    std.debug.print("\n{s}@{d} = {any} {s}@{d} {d}", .{ ptr.str, @intFromPtr(ptr), op, x.str, @intFromPtr(&x), reduce_dim });
                 } else {
-                    @compileLog(comptimePrint("{s} = {any} {s} {d}", .{ ptr.info(), op, x.info(), reduce_dim }));
+                    @compileLog(comptimePrint("{s} = {any} {s} {d}", .{ ptr.str, op, x.str, reduce_dim }));
                 }
                 // TODO: Compute the start value for the accumulator based on the op, and the zip op used to accumulate
                 // by switching on the reduce op
                 // switch (self.*) {
-                //     inline else => |*eval_backend| eval_backend.eval_reduce(op, zip_op x, reduce_dim, acc_start, ptr),
+                //     inline else => |*eval_backend| eval_backend.eval_reduce(op, zip_op, x, reduce_dim, acc_start, ptr),
                 // }
             }
         }.eval;

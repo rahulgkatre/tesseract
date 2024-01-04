@@ -27,7 +27,7 @@ pub fn permuteArray(comptime ndims: u8, array: [ndims]usize, perm: [ndims]u8) [n
         if (p < ndims and !used[p]) {
             used[p] = true;
         } else {
-            const msg = "Invalid permutation: " ++ comptimePrint("{any}", .{perm});
+            const msg = comptimePrint("Invalid permutation {any}", .{perm});
             if (@inComptime()) {
                 @compileError(msg);
             } else {
