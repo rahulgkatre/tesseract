@@ -72,10 +72,11 @@ test "lazy with realization" {
     const allocator = gpa.allocator();
 
     var tensor1 = Tensor(i32, .{ 2, 3, 4 }).init(&NewBackend);
-    NewBackend.init(.{ .allocator = allocator });
-    try tensor1.realize();
+    NewBackend.init(.{ .allocator = &allocator });
+
+    try tensor1.empty();
     try expectEqual(true, tensor1.buffer != null);
-    std.debug.print("{any}", .{tensor1.buffer.?});
+    std.debug.print("\n{any}\n", .{tensor1.buffer.?});
 }
 
 fn fn1() Tensor(i32, .{ 2, 1, 4 }) {

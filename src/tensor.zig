@@ -4,7 +4,7 @@ const comptimePrint = std.fmt.comptimePrint;
 const utils = @import("utils.zig");
 const ops = @import("ops.zig");
 const Backend = @import("backend.zig").Backend;
-const LazyBuffer = @import("buffer.zig").LazyBuffer;
+const LazyBuffer = @import("buffer.zig").Buffer;
 
 pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
     return DefaultStridedTensor(dtype, shape);
@@ -74,7 +74,8 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         pub fn eval(self: *const Self) void {
             self.eval_fn(self);
         }
-        pub fn realize(self: *Self) !void {
+        // TODO: Add more functions to realize tensors (e.g. ones, full, zeros, _like)
+        pub fn empty(self: *Self) !void {
             self.buffer = try self.backend.allocBuffer(dtype, size);
         }
         // TODO: Don't deinit individual tensors, the backend should deinit everything it allocated

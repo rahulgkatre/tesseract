@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const LazyBuffer = @import("buffer.zig").LazyBuffer;
+const LazyBuffer = @import("buffer.zig").Buffer;
 const ops = @import("ops.zig");
 const comptimePrint = std.fmt.comptimePrint;
 const tensor = @import("tensor.zig");
@@ -83,8 +83,8 @@ pub const Backend = union(BackendTypes) {
 
 // TODO: Move this to its own file in a directory called backends
 pub const ZigBackend = struct {
-    const ZigLazyBuffer = @import("buffer.zig").ZigLazyBuffer;
-    allocator: ?Allocator = null,
+    const ZigLazyBuffer = @import("buffer.zig").ZigBuffer;
+    allocator: ?*const Allocator = null,
 
     pub fn init(self: *ZigBackend, args: anytype) void {
         self.allocator = args.allocator;
