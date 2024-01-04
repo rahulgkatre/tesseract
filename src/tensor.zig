@@ -7,7 +7,20 @@ const Backend = @import("backend.zig").Backend;
 const LazyBuffer = @import("buffer.zig").LazyBuffer;
 
 pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
-    return DefaultStridedTensor(dtype, shape.len, shape);
+    return DefaultStridedTensor(dtype, shape);
+}
+
+fn DefaultStridedTensor(comptime dtype: type, comptime shape: anytype) type {
+    const ndims = shape.len;
+    var offset: usize = 1;
+    var strides: [ndims]usize = undefined;
+    for (0..ndims - 1) |i| {
+        const stride = shape[ndims - i - 1] * offset;
+        strides[ndims - i - 2] = stride;
+        offset = stride;
+    }
+    strides[ndims - 1] = 1;
+    return StridedTensor(dtype, shape, strides);
 }
 
 pub fn StridedTensor(comptime dtype: type, comptime shape: anytype, comptime strides: anytype) type {
@@ -61,6 +74,9 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         pub fn eval(self: *const Self) void {
             self.eval_fn(self);
         }
+        pub fn realize(self: *Self) !void {
+            self.buffer = try self.backend.allocBuffer(dtype, size);
+        }
         // TODO: Don't deinit individual tensors, the backend should deinit everything it allocated
         // pub fn deinit(self: *const Self) void {
         //     _ = self;
@@ -99,30 +115,17 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             return PermutedTensor(Self, perm).init(self.backend);
         }
         pub fn map(self: *const Self, op: ops.MapOp) Self {
-            return self.backend.lazy_map(op, self.*);
+            return self.backend.mapLazy(op, self.*);
         }
         pub fn zip(self: *const Self, op: ops.ZipOp, other: anytype) BroadcastedTensor(Self, @TypeOf(other)) {
-            return self.backend.lazy_zip(op, self.*, other);
+            return self.backend.zipLazy(op, self.*, other);
         }
         pub fn reduce(self: *const Self, op: ops.ReduceOp, comptime reduce_dim: usize) ReducedTensor(Self, reduce_dim) {
-            return self.backend.lazy_reduce(op, self.*, reduce_dim);
+            return self.backend.reduceLazy(op, self.*, reduce_dim);
         }
         // We can add the tensor functions using "pub usingnamespace"
         // That way the tensor struct definition is cleaner
     };
-}
-
-fn DefaultStridedTensor(comptime dtype: type, comptime ndims: u8, comptime shape: [ndims]usize) type {
-    var stride: usize = undefined;
-    var offset: usize = 1;
-    var strides: [ndims]usize = undefined;
-    for (0..ndims - 1) |i| {
-        stride = shape[ndims - i - 1] * offset;
-        strides[ndims - i - 2] = stride;
-        offset = stride;
-    }
-    strides[ndims - 1] = 1;
-    return StridedTensor(dtype, shape, strides);
 }
 
 pub fn ReducedTensor(comptime tensor_t: type, comptime reduce_dim: u8) type {
@@ -143,7 +146,6 @@ pub fn ReducedTensor(comptime tensor_t: type, comptime reduce_dim: u8) type {
     reduced_shape[reduce_dim] = 1;
     return DefaultStridedTensor(
         @field(tensor_t, "dtype"),
-        ndims,
         reduced_shape,
     );
 }
@@ -164,11 +166,9 @@ pub fn BroadcastedTensor(comptime tensor1_t: type, comptime tensor2_t: type) typ
 
     const bc_ndims = @max(tensor1_ndims, tensor2_ndims);
     var bc_shape: [bc_ndims]usize = undefined;
-    var dim1: usize = undefined;
-    var dim2: usize = undefined;
     inline for (0..bc_ndims) |i| {
-        dim1 = if (i >= tensor1_ndims) 1 else tensor1_shape[tensor1_ndims - i - 1];
-        dim2 = if (i >= tensor2_ndims) 1 else tensor2_shape[tensor2_ndims - i - 1];
+        const dim1 = if (i >= tensor1_ndims) 1 else tensor1_shape[tensor1_ndims - i - 1];
+        const dim2 = if (i >= tensor2_ndims) 1 else tensor2_shape[tensor2_ndims - i - 1];
         if (dim1 != 1 and dim2 != 1 and dim1 != dim2) {
             @compileError(comptimePrint(
                 "Cannot broadcast tensors of shapes {any} and {any}",
@@ -181,12 +181,11 @@ pub fn BroadcastedTensor(comptime tensor1_t: type, comptime tensor2_t: type) typ
 }
 
 pub fn PermutedTensor(comptime tensor_t: type, comptime perm: [@field(tensor_t, "ndims")]u8) type {
-    const ndims = @field(tensor_t, "ndims");
     const shape = @field(tensor_t, "shape");
     const strides = @field(tensor_t, "strides");
     return StridedTensor(
         @field(tensor_t, "dtype"),
-        utils.permuteArray(ndims, shape, perm),
-        utils.permuteArray(ndims, strides, perm),
+        utils.permuteArray(shape.len, shape, perm),
+        utils.permuteArray(strides.len, strides, perm),
     );
 }

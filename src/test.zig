@@ -65,15 +65,18 @@ test "zip reduce" {
     try expectEqual([_]usize{ 2, 1, 4 }, out.shape);
     runEval("zip reduce", out);
 }
-// TODO: Reactivate test once a Zig Backend has been started
-// test "lazy with realization" {
-//     var tensor1 = Tensor(i32, .{ 2, 3, 4 });
-// var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-// const allocator = gpa.allocator();
-//     try tensor1.realize(null, allocator);
-//     try expectEqual(tensor1.allocator != null);
-//     try expectEqual(tensor1.storage != null);
-// }
+
+test "lazy with realization" {
+    var NewBackend = backend.Backend{ .Zig = .{ .allocator = null } };
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+
+    var tensor1 = Tensor(i32, .{ 2, 3, 4 }).init(&NewBackend);
+    NewBackend.init(.{ .allocator = allocator });
+    try tensor1.realize();
+    try expectEqual(true, tensor1.buffer != null);
+    std.debug.print("{any}", .{tensor1.buffer.?});
+}
 
 fn fn1() Tensor(i32, .{ 2, 1, 4 }) {
     const tensor1 = Tensor(i32, .{ 2, 1, 4 }).init(TestBackend);

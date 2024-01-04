@@ -1,12 +1,13 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const BackendTypes = @import("backend.zig").BackendTypes;
 
 // TODO: Make this a union like Backend
 pub fn LazyBuffer(comptime dtype: type) type {
-    _ = dtype;
-    return struct {
+    return union(BackendTypes) {
         const Self = @This();
-        deinitFn: *const fn (self: *Self) void,
+        Zig: ZigLazyBuffer(dtype),
+
         pub fn deinit(self: *Self) void {
             return self.deinitFn(self);
         }
@@ -18,24 +19,16 @@ pub fn ZigLazyBuffer(comptime dtype: type) type {
         const Self = @This();
         data: []dtype,
         allocator: Allocator,
-        lazy_buffer: LazyBuffer(dtype),
-        pub fn init(size: usize, allocator: Allocator) !*Self {
-            const Impl = struct {
-                pub fn deinit(ptr: *LazyBuffer) void {
-                    const self = @fieldParentPtr(Self, "lazy_buffer", ptr);
-                    self.deinit();
-                }
-            };
+        pub fn init(size: usize, allocator: Allocator) !*LazyBuffer(dtype) {
             const data = try allocator.alloc(dtype, size);
-            const zigBuffer = try allocator.create(Self);
-            zigBuffer.* = .{
-                .data = data,
-                .allocator = allocator,
-                .graph_buffer = .{
-                    .deinitFn = Impl.deinit,
+            const lazyBuffer = try allocator.create(LazyBuffer(dtype));
+            lazyBuffer.* = .{
+                .Zig = .{
+                    .data = data,
+                    .allocator = allocator,
                 },
             };
-            return zigBuffer;
+            return lazyBuffer;
         }
         pub fn deinit(self: *Self) void {
             self.allocator.free(self.data);
