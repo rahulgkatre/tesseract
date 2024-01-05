@@ -105,6 +105,35 @@ pub const ZigBackend = struct {
         self.allocator = args.allocator;
     }
 
+    inline fn scalarMapEval(op: ops.MapOp, x: anytype) @TypeOf(x) {
+        return switch (op) {
+            .Neg => -x, // TODO: if x is a boolean then this should be !x
+            .Log2 => @log2(x),
+            .Exp2 => @exp2(x),
+            .Sqrt => @sqrt(x),
+            .Recip => @divExact(1, x),
+        };
+    }
+
+    inline fn scalarZipEval(op: ops.ZipOp, a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+        return switch (op) {
+            .Add => a + b,
+            .Mul => a * b,
+            .Maximum => @max(a, b),
+            .Mod => @mod(a, b),
+            .Lt => a < b,
+            .Eq => a == b,
+            .Xor => a ^ b,
+        };
+    }
+
+    inline fn reduceAccZipOp(op: ops.ReduceOp) ops.ZipOp {
+        return switch (op) {
+            .Sum => ops.ZipOp.Add,
+            .Max => ops.ZipOp.Maximum,
+        };
+    }
+
     pub fn mapEval(self: *const ZigBackend, op: ops.MapOp, x: anytype, out: *const @TypeOf(x)) void {
         _ = op;
         _ = out;

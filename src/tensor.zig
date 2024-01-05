@@ -63,6 +63,9 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                     // TODO: The default eval_fn must check if the tensor is initialiazed and panic if it is not
                     var done = false;
                     fn eval(self: *const Self) void {
+                        if (self.init_type == .NotDefined) {
+                            @panic("The initialization type of this tensor is not defined");
+                        }
                         if (!@inComptime()) {
                             if (done) {
                                 return;

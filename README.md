@@ -37,14 +37,28 @@ The goal of this project is to write a deep learning library in Zig. Name is WIP
 
 ### In progress
 - Using the compute graph to perform operations on some data
-- Automated kernel fusion
+- Automated operator fusion to reduce memory bandwidth usage
  
-
 ### Not started
-- Implementing forward and backward functions for operations supported by StableHLO and ONNX
-- Running ONNX models (YOLO and Llama2 for now)
-- Generating StableHLO programs as a compilation output
-- Generating CUDA kernel code, compiling it, and running it on a CUDA device
+- Backpropagation and gradients
+    - Backward functions take advantage of the ops and fusion
+- Running a model (e.g. CNN for MNIST)
+    - Training and inference
+- Support for ONNX
+    - Implement ONNX operators using our ops (subset is ok)
+    - Run an ONNX model (e.g. Llama2)
+    - Export model as ONNX, run with ONNX runtime
+- StableHLO as an output target
+    - This will allow for taking advantage of XLA compiler
+    - Implement StableHLO functions
+    - Generate StableHLO programs
+    - Maybe also support other IRs? (e.g. Triton-IR)
+- CUDA support
+    - Generate CUDA kernels from fused operations
+    - Compile CUDA kernels and run on device
+- WebGPU, Metal, HIP support
+    - Same steps as CUDA
+
 
 ## Rambling
 
@@ -76,3 +90,4 @@ I was playing around with a few languages (Nim, Cython) to determine the best la
 - Alternative names
     - tenzor
     - tensorzig
+    - tenzorflux
