@@ -55,12 +55,17 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 .buffer = null,
                 .eval_fn = struct {
                     // TODO: The default eval_fn must check if the tensor is initialiazed and panic if it is not
+                    var done = false;
                     fn eval(self: *const Self) void {
                         if (!@inComptime()) {
+                            if (done) {
+                                return;
+                            }
                             std.debug.print(
                                 "\n{s}@{d} = {s}.init()",
                                 .{ self.str, @intFromPtr(self), self.str },
                             );
+                            done = true;
                         } else {
                             @compileLog(comptimePrint(
                                 "{s} = {s}.init()",
@@ -102,6 +107,7 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 flat_index += index[d] * strides[d];
             }
             return flat_index;
+            // return @reduce(.Sum, @mulAdd([ndims]usize, index, strides, [_]usize{0} ** ndims));
         }
         pub fn unflattenIndex(flat_index: usize) [ndims]usize {
             var index: [ndims]usize = undefined;
@@ -121,7 +127,7 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         pub fn zip(self: *const Self, op: ops.ZipOp, other: anytype) BroadcastedTensor(Self, @TypeOf(other)) {
             return self.backend.zipLazy(op, self.*, other);
         }
-        pub fn reduce(self: *const Self, op: ops.ReduceOp, comptime reduce_dim: usize) ReducedTensor(Self, reduce_dim) {
+        pub fn reduce(self: *const Self, op: ops.ReduceOp, comptime reduce_dim: ?u8) ReducedTensor(Self, reduce_dim) {
             return self.backend.reduceLazy(op, self.*, reduce_dim);
         }
         // We can add the tensor functions using "pub usingnamespace"
@@ -129,14 +135,18 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
     };
 }
 
-pub fn ReducedTensor(comptime tensor_t: type, comptime reduce_dim: u8) type {
+pub fn ReducedTensor(comptime tensor_t: type, comptime reduce_dim: ?u8) type {
     const ndims = @field(tensor_t, "ndims");
     const shape = @field(tensor_t, "shape");
-    if (reduce_dim >= ndims) {
+    if (reduce_dim == null) {
+        return DefaultStridedTensor(@field(tensor_t, "dtype"), [_]usize{1} ** ndims);
+    }
+
+    if (reduce_dim.? >= ndims) {
         @compileError(comptimePrint(
             "Reduce dim {d} is out of bounds for tensor {s} with ndims={d} ",
             .{
-                reduce_dim,
+                reduce_dim.?,
                 @field(tensor_t, "str"),
                 ndims,
             },
@@ -144,7 +154,7 @@ pub fn ReducedTensor(comptime tensor_t: type, comptime reduce_dim: u8) type {
     }
     var reduced_shape: [ndims]usize = undefined;
     @memcpy(&reduced_shape, &shape);
-    reduced_shape[reduce_dim] = 1;
+    reduced_shape[reduce_dim.?] = 1;
     return DefaultStridedTensor(
         @field(tensor_t, "dtype"),
         reduced_shape,

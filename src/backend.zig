@@ -28,10 +28,15 @@ pub const Backend = union(BackendTypes) {
     pub fn mapLazy(self: *const Backend, op: ops.MapOp, x: anytype) @TypeOf(x) {
         var out = @TypeOf(x).init(self);
         out.eval_fn = struct {
+            var done = false;
             fn eval(ptr: *const @TypeOf(out)) void {
                 x.eval();
                 if (!@inComptime()) {
-                    std.debug.print("\n{s}@{d} = {any} {s}@{d}", .{ ptr.str, @intFromPtr(ptr), op, x.str, @intFromPtr(x) });
+                    if (done) {
+                        return;
+                    }
+                    std.debug.print("\n{s}@{d} = {any} {s}@{d}", .{ ptr.str, @intFromPtr(ptr), op, x.str, @intFromPtr(&x) });
+                    done = true;
                 } else {
                     @compileLog(comptimePrint("{s} = {any} {s}", .{ ptr.str, op, x.str }));
                 }
@@ -45,11 +50,16 @@ pub const Backend = union(BackendTypes) {
     pub fn zipLazy(self: *const Backend, op: ops.ZipOp, a: anytype, b: anytype) tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b)) {
         var out = tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b)).init(self);
         out.eval_fn = struct {
+            var done = false;
             fn eval(ptr: *const @TypeOf(out)) void {
                 a.eval();
                 b.eval();
                 if (!@inComptime()) {
+                    if (done) {
+                        return;
+                    }
                     std.debug.print("\n{s}@{d} = {any} {s}@{d} {s}@{d}", .{ ptr.str, @intFromPtr(ptr), op, a.str, @intFromPtr(&a), b.str, @intFromPtr(&b) });
+                    done = true;
                 } else {
                     @compileLog(comptimePrint("{s} = {any} {s} {s}", .{ ptr.str, op, a.str, b.str }));
                 }
@@ -60,15 +70,20 @@ pub const Backend = union(BackendTypes) {
         }.eval;
         return out;
     }
-    pub fn reduceLazy(self: *const Backend, op: ops.ReduceOp, x: anytype, reduce_dim: u8) tensor.ReducedTensor(@TypeOf(x), reduce_dim) {
+    pub fn reduceLazy(self: *const Backend, op: ops.ReduceOp, x: anytype, reduce_dim: ?u8) tensor.ReducedTensor(@TypeOf(x), reduce_dim) {
         var out = tensor.ReducedTensor(@TypeOf(x), reduce_dim).init(self);
         out.eval_fn = struct {
+            var done = false;
             fn eval(ptr: *const @TypeOf(out)) void {
                 x.eval();
                 if (!@inComptime()) {
-                    std.debug.print("\n{s}@{d} = {any} {s}@{d} {d}", .{ ptr.str, @intFromPtr(ptr), op, x.str, @intFromPtr(&x), reduce_dim });
+                    if (done) {
+                        return;
+                    }
+                    std.debug.print("\n{s}@{d} = {any} {s}@{d} {?}", .{ ptr.str, @intFromPtr(ptr), op, x.str, @intFromPtr(&x), reduce_dim });
+                    done = true;
                 } else {
-                    @compileLog(comptimePrint("{s} = {any} {s} {d}", .{ ptr.str, op, x.str, reduce_dim }));
+                    @compileLog(comptimePrint("{s} = {any} {s} {?}", .{ ptr.str, op, x.str, reduce_dim }));
                 }
                 // TODO: Compute the start value for the accumulator based on the op, and the zip op used to accumulate
                 // by switching on the reduce op
@@ -86,7 +101,7 @@ pub const ZigBackend = struct {
     const ZigLazyBuffer = @import("buffer.zig").ZigBuffer;
     allocator: ?*const Allocator = null,
 
-    pub fn init(self: *ZigBackend, args: anytype) void {
+    pub fn init(self: *ZigBackend, args: struct { allocator: *const Allocator }) void {
         self.allocator = args.allocator;
     }
 
@@ -114,12 +129,15 @@ pub const ZigBackend = struct {
         // }
     }
 
-    pub fn reduceEval(self: *const Backend, op: ops.ReduceOp, zip_op: ops.ZipOp, x: anytype, reduce_dim: u8, acc_start: anytype, out: *const tensor.ReducedTensor(@TypeOf(x), reduce_dim)) void {
+    pub fn reduceEval(self: *const Backend, op: ops.ReduceOp, zip_op: ops.ZipOp, x: anytype, reduce_dim: ?u8, acc_start: anytype, out: *const tensor.ReducedTensor(@TypeOf(x), reduce_dim)) void {
         _ = zip_op;
         _ = acc_start;
         _ = out;
         _ = self;
         _ = op;
+        // if (reduce_dim == null) {
+        //     reduce across the entire input
+        // }
         // inline for (0..out.size) |out_flat_index| {
         //     const out_index = out.unflattenIndex(out_flat_index);
         //     const x_start = x.flattenIndex(out_index);

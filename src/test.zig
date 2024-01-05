@@ -106,3 +106,20 @@ test "tensors from functions" {
     };
     runEval("tensors from functions", out);
 }
+
+fn softmax(x: anytype, comptime dim: u8) @TypeOf(x) {
+    const max = x.reduce(ops.ReduceOp.Max, null);
+    const x_minus_max = x.zip(ops.ZipOp.Add, max.map(ops.MapOp.Neg));
+    const exp = x_minus_max.map(ops.MapOp.Exp2);
+    const sumexp = exp.reduce(ops.ReduceOp.Sum, dim);
+    const sm = x_minus_max.zip(ops.ZipOp.Mul, sumexp.map(ops.MapOp.Recip));
+    return sm;
+}
+
+test "softmax" {
+    const out = comptime blk: {
+        const x = Tensor(f16, .{ 2, 16 }).init(TestBackend);
+        break :blk softmax(x, 1);
+    };
+    runEval("softmax", out);
+}
