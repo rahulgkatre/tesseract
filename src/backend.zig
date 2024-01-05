@@ -26,7 +26,7 @@ pub const Backend = union(BackendTypes) {
         };
     }
     pub fn mapLazy(self: *const Backend, op: ops.MapOp, x: anytype) @TypeOf(x) {
-        var out = @TypeOf(x).init(self);
+        var out = @TypeOf(x).result(self);
         out.eval_fn = struct {
             var done = false;
             fn eval(ptr: *const @TypeOf(out)) void {
@@ -48,7 +48,7 @@ pub const Backend = union(BackendTypes) {
         return out;
     }
     pub fn zipLazy(self: *const Backend, op: ops.ZipOp, a: anytype, b: anytype) tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b)) {
-        var out = tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b)).init(self);
+        var out = tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b)).result(self);
         out.eval_fn = struct {
             var done = false;
             fn eval(ptr: *const @TypeOf(out)) void {
@@ -71,7 +71,7 @@ pub const Backend = union(BackendTypes) {
         return out;
     }
     pub fn reduceLazy(self: *const Backend, op: ops.ReduceOp, x: anytype, dim: ?u8) tensor.ReducedTensor(@TypeOf(x), dim) {
-        var out = tensor.ReducedTensor(@TypeOf(x), dim).init(self);
+        var out = tensor.ReducedTensor(@TypeOf(x), dim).result(self);
         out.eval_fn = struct {
             var done = false;
             fn eval(ptr: *const @TypeOf(out)) void {

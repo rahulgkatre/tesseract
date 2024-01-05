@@ -6,6 +6,8 @@ const ops = @import("ops.zig");
 const Backend = @import("backend.zig").Backend;
 const Storage = @import("storage.zig").Storage;
 
+const InitType = enum { NotDefined, Input, Constant, Result };
+
 pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
     return DefaultStridedTensor(dtype, shape);
 }
@@ -45,12 +47,16 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         size: usize = size,
         strides: [ndims]usize = strides,
         str: @TypeOf(str) = str,
-
+        // TODO: Add an enum flag to indicate whether the tensor data will be provided by already
+        // existing data in the storage (INPUT) or it is a constant tensor (CONSTANT). Constant
+        // tensors will not have gradients calculated.
+        init_type: InitType,
         backend: *const Backend,
         storage: ?*Storage(dtype),
         eval_fn: *const fn (self: *const Self) void,
-        pub fn init(backend: *const Backend) Self {
+        fn init(backend: *const Backend) Self {
             return .{
+                .init_type = .NotDefined,
                 .backend = backend,
                 .storage = null,
                 .eval_fn = struct {
@@ -62,8 +68,8 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                                 return;
                             }
                             std.debug.print(
-                                "\n{s}@{d} = {s}.init()",
-                                .{ self.str, @intFromPtr(self), self.str },
+                                "\n{s}@{d} = {s} {s}",
+                                .{ self.str, @intFromPtr(self), @tagName(self.init_type), self.str },
                             );
                             done = true;
                         } else {
@@ -76,6 +82,21 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 }.eval,
             };
         }
+        pub fn input(backend: *const Backend) Self {
+            var tensor = init(backend);
+            tensor.init_type = .Input;
+            return tensor;
+        }
+        pub fn constant(backend: *const Backend) Self {
+            var tensor = init(backend);
+            tensor.init_type = .Constant;
+            return tensor;
+        }
+        pub fn result(backend: *const Backend) Self {
+            var tensor = init(backend);
+            tensor.init_type = .Result;
+            return tensor;
+        }
         pub fn eval(self: *const Self) void {
             self.eval_fn(self);
         }
@@ -87,13 +108,14 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         // pub fn deinit(self: *const Self) void {
         //     _ = self;
         // }
-        pub inline fn isContiguous(_: anytype) bool {
+        pub inline fn isContiguous(_: *const Self) bool {
             return comptime utils.isContiguous(ndims, strides);
         }
-        pub fn broadcastIndex(comptime bc_ndims: u8, bc_index: [bc_ndims]usize) [ndims]usize {
+        pub fn broadcastIndex(bc_index: anytype) [ndims]usize {
             // Determine the index in the current tensor given an index in the broadcasted tensor
             // If the current tensor has size of 1 in a dimension, then the index must be 0
             // Otherwise it will be what the broadcasted index is
+            const bc_ndims = bc_index.len;
             const index: [ndims]usize = undefined;
             inline for (0..ndims) |d| {
                 index[bc_ndims - d - 1] = if (shape[ndims - d - 1] == 1) 0 else bc_index[bc_ndims - d - 1];
@@ -124,8 +146,8 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         pub fn map(self: *const Self, op: ops.MapOp) Self {
             return self.backend.mapLazy(op, self.*);
         }
-        pub fn zip(self: *const Self, op: ops.ZipOp, other: anytype) BroadcastedTensor(Self, @TypeOf(other)) {
-            return self.backend.zipLazy(op, self.*, other);
+        pub fn zip(self: *const Self, op: ops.ZipOp, x: anytype) BroadcastedTensor(Self, @TypeOf(x)) {
+            return self.backend.zipLazy(op, self.*, x);
         }
         pub fn reduce(self: *const Self, op: ops.ReduceOp, comptime dim: ?u8) ReducedTensor(Self, dim) {
             return self.backend.reduceLazy(op, self.*, dim);

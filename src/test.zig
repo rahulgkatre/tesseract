@@ -8,9 +8,13 @@ const ops = @import("ops.zig");
 const utils = @import("utils.zig");
 
 const TestBackend = &backend.Backend{ .Zig = .{ .allocator = null } };
-const run_in_comptime = false;
+const logging = false;
+const compile_log = true;
 fn runEval(comptime test_name: anytype, comptime out: anytype) void {
-    if (run_in_comptime) {
+    if (!logging) {
+        return;
+    }
+    if (compile_log) {
         @compileLog(test_name);
         comptime out.eval();
     } else {
@@ -20,14 +24,14 @@ fn runEval(comptime test_name: anytype, comptime out: anytype) void {
 }
 
 test "same tensors assignable" {
-    const tensor1 = Tensor(i32, .{ 2, 3, 4 }).init(TestBackend);
-    var tensor2 = Tensor(i32, .{ 2, 3, 4 }).init(TestBackend);
+    const tensor1 = Tensor(i32, .{ 2, 3, 4 }).input(TestBackend);
+    var tensor2 = Tensor(i32, .{ 2, 3, 4 }).input(TestBackend);
     tensor2 = tensor1;
 }
 
 test "permute" {
     const out = comptime blk: {
-        const tensor1 = Tensor(i32, .{ 2, 3, 4 }).init(TestBackend);
+        const tensor1 = Tensor(i32, .{ 2, 3, 4 }).input(TestBackend);
         const tensor2 = tensor1.permute([_]u8{ 0, 2, 1 });
         break :blk tensor2;
     };
@@ -36,8 +40,8 @@ test "permute" {
 }
 test "zip" {
     const out = comptime blk: {
-        const tensor1 = Tensor(i32, .{ 2, 1, 4 }).init(TestBackend);
-        const tensor2 = Tensor(i32, .{ 3, 1 }).init(TestBackend);
+        const tensor1 = Tensor(i32, .{ 2, 1, 4 }).input(TestBackend);
+        const tensor2 = Tensor(i32, .{ 3, 1 }).input(TestBackend);
         const tensor3 = tensor1.zip(ops.ZipOp.Add, tensor2);
         break :blk tensor3;
     };
@@ -46,7 +50,7 @@ test "zip" {
 }
 test "reduce" {
     const out = comptime blk: {
-        const tensor1 = Tensor(i32, .{ 2, 3, 4 }).init(TestBackend);
+        const tensor1 = Tensor(i32, .{ 2, 3, 4 }).input(TestBackend);
         const tensor2 = tensor1.reduce(ops.ReduceOp.Sum, 1);
         break :blk tensor2;
     };
@@ -55,8 +59,8 @@ test "reduce" {
 }
 test "zip reduce" {
     const out = comptime blk: {
-        const tensor1 = Tensor(i32, .{ 2, 1, 4 }).init(TestBackend);
-        const tensor2 = Tensor(i32, .{ 2, 3, 1 }).init(TestBackend);
+        const tensor1 = Tensor(i32, .{ 2, 1, 4 }).input(TestBackend);
+        const tensor2 = Tensor(i32, .{ 2, 3, 1 }).input(TestBackend);
         const tensor3 = tensor1
             .zip(ops.ZipOp.Add, tensor2)
             .reduce(ops.ReduceOp.Sum, 1);
@@ -71,17 +75,19 @@ test "lazy with realization" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
-    var tensor1 = Tensor(i32, .{ 2, 3, 4 }).init(&NewBackend);
+    var tensor1 = Tensor(i32, .{ 2, 3, 4 }).input(&NewBackend);
     NewBackend.init(.{ .allocator = &allocator });
 
     try tensor1.empty();
     try expectEqual(true, tensor1.storage != null);
-    std.debug.print("\n{any}\n", .{tensor1.storage.?});
+    if (logging) {
+        std.debug.print("\n{any}\n", .{tensor1.storage.?});
+    }
 }
 
 fn fn1() Tensor(i32, .{ 2, 1, 4 }) {
-    const tensor1 = Tensor(i32, .{ 2, 1, 4 }).init(TestBackend);
-    const tensor2 = Tensor(i32, .{ 2, 3, 1 }).init(TestBackend);
+    const tensor1 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend);
+    const tensor2 = Tensor(i32, .{ 2, 3, 1 }).constant(TestBackend);
     const tensor3 = tensor1
         .zip(ops.ZipOp.Add, tensor2)
         .reduce(ops.ReduceOp.Sum, 1);
@@ -89,8 +95,8 @@ fn fn1() Tensor(i32, .{ 2, 1, 4 }) {
 }
 
 fn fn2(input: anytype) Tensor(i32, .{ 2, 1, 4 }) {
-    const tensor4 = Tensor(i32, .{ 2, 1, 4 }).init(TestBackend);
-    const tensor5 = Tensor(i32, .{ 2, 3, 1 }).init(TestBackend);
+    const tensor4 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend);
+    const tensor5 = Tensor(i32, .{ 2, 3, 1 }).constant(TestBackend);
     const tensor6 = tensor4
         .zip(ops.ZipOp.Mul, tensor5)
         .reduce(ops.ReduceOp.Sum, 1)
@@ -118,7 +124,7 @@ fn softmax(x: anytype, comptime dim: u8) @TypeOf(x) {
 
 test "softmax" {
     const out = comptime blk: {
-        const x = Tensor(f16, .{ 2, 16 }).init(TestBackend);
+        const x = Tensor(f16, .{ 2, 16 }).input(TestBackend);
         break :blk softmax(x, 1);
     };
     runEval("softmax", out);
