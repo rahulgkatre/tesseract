@@ -4,7 +4,7 @@ const comptimePrint = std.fmt.comptimePrint;
 const utils = @import("utils.zig");
 const ops = @import("ops.zig");
 const Backend = @import("backend.zig").Backend;
-const LazyBuffer = @import("buffer.zig").Buffer;
+const Storage = @import("storage.zig").Storage;
 
 pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
     return DefaultStridedTensor(dtype, shape);
@@ -35,7 +35,7 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         pub const ndims: u8 = _ndims;
         pub const shape: [ndims]usize = _shape;
         pub const strides: [ndims]usize = _strides;
-        pub const size = utils.bufferSizeForTensor(ndims, shape, strides);
+        pub const size = utils.storageSizeForTensor(ndims, shape, strides);
         pub const str = comptimePrint(
             "Tensor({any},.{any})",
             .{ dtype, shape },
@@ -47,12 +47,12 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         str: @TypeOf(str) = str,
 
         backend: *const Backend,
-        buffer: ?*LazyBuffer(dtype),
+        storage: ?*Storage(dtype),
         eval_fn: *const fn (self: *const Self) void,
         pub fn init(backend: *const Backend) Self {
             return .{
                 .backend = backend,
-                .buffer = null,
+                .storage = null,
                 .eval_fn = struct {
                     // TODO: The default eval_fn must check if the tensor is initialiazed and panic if it is not
                     var done = false;
@@ -81,7 +81,7 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         }
         // TODO: Add more functions to realize tensors (e.g. ones, full, zeros, _like)
         pub fn empty(self: *Self) !void {
-            self.buffer = try self.backend.allocBuffer(dtype, size);
+            self.storage = try self.backend.alloc(dtype, size);
         }
         // TODO: Don't deinit individual tensors, the backend should deinit everything it allocated
         // pub fn deinit(self: *const Self) void {
@@ -127,26 +127,26 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         pub fn zip(self: *const Self, op: ops.ZipOp, other: anytype) BroadcastedTensor(Self, @TypeOf(other)) {
             return self.backend.zipLazy(op, self.*, other);
         }
-        pub fn reduce(self: *const Self, op: ops.ReduceOp, comptime reduce_dim: ?u8) ReducedTensor(Self, reduce_dim) {
-            return self.backend.reduceLazy(op, self.*, reduce_dim);
+        pub fn reduce(self: *const Self, op: ops.ReduceOp, comptime dim: ?u8) ReducedTensor(Self, dim) {
+            return self.backend.reduceLazy(op, self.*, dim);
         }
         // We can add the tensor functions using "pub usingnamespace"
         // That way the tensor struct definition is cleaner
     };
 }
 
-pub fn ReducedTensor(comptime tensor_t: type, comptime reduce_dim: ?u8) type {
+pub fn ReducedTensor(comptime tensor_t: type, comptime dim: ?u8) type {
     const ndims = @field(tensor_t, "ndims");
     const shape = @field(tensor_t, "shape");
-    if (reduce_dim == null) {
+    if (dim == null) {
         return DefaultStridedTensor(@field(tensor_t, "dtype"), [_]usize{1} ** ndims);
     }
 
-    if (reduce_dim.? >= ndims) {
+    if (dim.? >= ndims) {
         @compileError(comptimePrint(
             "Reduce dim {d} is out of bounds for tensor {s} with ndims={d} ",
             .{
-                reduce_dim.?,
+                dim.?,
                 @field(tensor_t, "str"),
                 ndims,
             },
@@ -154,7 +154,7 @@ pub fn ReducedTensor(comptime tensor_t: type, comptime reduce_dim: ?u8) type {
     }
     var reduced_shape: [ndims]usize = undefined;
     @memcpy(&reduced_shape, &shape);
-    reduced_shape[reduce_dim.?] = 1;
+    reduced_shape[dim.?] = 1;
     return DefaultStridedTensor(
         @field(tensor_t, "dtype"),
         reduced_shape,

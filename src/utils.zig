@@ -2,7 +2,7 @@ const std = @import("std");
 const comptimePrint = std.fmt.comptimePrint;
 const Tensor = @import("tensor.zig").BaseTensor;
 
-pub fn bufferSizeForTensor(comptime ndims: u8, shape: [ndims]usize, strides: [ndims]usize) usize {
+pub fn storageSizeForTensor(comptime ndims: u8, shape: [ndims]usize, strides: [ndims]usize) usize {
     if (isContiguous(ndims, strides)) {
         // Size is the product of the shape for contiguous tensors
         var prod: usize = 1;
@@ -12,7 +12,7 @@ pub fn bufferSizeForTensor(comptime ndims: u8, shape: [ndims]usize, strides: [nd
         return prod;
     } else {
         // TODO: Verify this is correct
-        // If the stride is not contiguous then the buffer size is 1 + last index
+        // If the stride is not contiguous then the storage size is 1 + last index
         // last index is the sum of the strides
         var sum: usize = 0;
         for (0..ndims) |d| {

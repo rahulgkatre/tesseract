@@ -75,8 +75,8 @@ test "lazy with realization" {
     NewBackend.init(.{ .allocator = &allocator });
 
     try tensor1.empty();
-    try expectEqual(true, tensor1.buffer != null);
-    std.debug.print("\n{any}\n", .{tensor1.buffer.?});
+    try expectEqual(true, tensor1.storage != null);
+    std.debug.print("\n{any}\n", .{tensor1.storage.?});
 }
 
 fn fn1() Tensor(i32, .{ 2, 1, 4 }) {

@@ -1,6 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const LazyBuffer = @import("buffer.zig").Buffer;
+const Storage = @import("storage.zig").Storage;
 const ops = @import("ops.zig");
 const comptimePrint = std.fmt.comptimePrint;
 const tensor = @import("tensor.zig");
@@ -20,9 +20,9 @@ pub const Backend = union(BackendTypes) {
             inline else => |*b| b.init(args),
         };
     }
-    pub fn allocBuffer(self: *const Backend, comptime dtype: type, size: usize) !*LazyBuffer(dtype) {
+    pub fn alloc(self: *const Backend, comptime dtype: type, size: usize) !*Storage(dtype) {
         return switch (self.*) {
-            inline else => |*b| try b.allocBuffer(dtype, size),
+            inline else => |*b| try b.alloc(dtype, size),
         };
     }
     pub fn mapLazy(self: *const Backend, op: ops.MapOp, x: anytype) @TypeOf(x) {
@@ -70,8 +70,8 @@ pub const Backend = union(BackendTypes) {
         }.eval;
         return out;
     }
-    pub fn reduceLazy(self: *const Backend, op: ops.ReduceOp, x: anytype, reduce_dim: ?u8) tensor.ReducedTensor(@TypeOf(x), reduce_dim) {
-        var out = tensor.ReducedTensor(@TypeOf(x), reduce_dim).init(self);
+    pub fn reduceLazy(self: *const Backend, op: ops.ReduceOp, x: anytype, dim: ?u8) tensor.ReducedTensor(@TypeOf(x), dim) {
+        var out = tensor.ReducedTensor(@TypeOf(x), dim).init(self);
         out.eval_fn = struct {
             var done = false;
             fn eval(ptr: *const @TypeOf(out)) void {
@@ -80,15 +80,15 @@ pub const Backend = union(BackendTypes) {
                     if (done) {
                         return;
                     }
-                    std.debug.print("\n{s}@{d} = {any} {s}@{d} {?}", .{ ptr.str, @intFromPtr(ptr), op, x.str, @intFromPtr(&x), reduce_dim });
+                    std.debug.print("\n{s}@{d} = {any} {s}@{d} {?}", .{ ptr.str, @intFromPtr(ptr), op, x.str, @intFromPtr(&x), dim });
                     done = true;
                 } else {
-                    @compileLog(comptimePrint("{s} = {any} {s} {?}", .{ ptr.str, op, x.str, reduce_dim }));
+                    @compileLog(comptimePrint("{s} = {any} {s} {?}", .{ ptr.str, op, x.str, dim }));
                 }
                 // TODO: Compute the start value for the accumulator based on the op, and the zip op used to accumulate
                 // by switching on the reduce op
                 // switch (self.*) {
-                //     inline else => |*eval_backend| eval_backend.reduceEval(op, zip_op, x, reduce_dim, acc_start, ptr),
+                //     inline else => |*eval_backend| eval_backend.reduceEval(op, zip_op, x, dim, acc_start, ptr),
                 // }
             }
         }.eval;
@@ -98,7 +98,7 @@ pub const Backend = union(BackendTypes) {
 
 // TODO: Move this to its own file in a directory called backends
 pub const ZigBackend = struct {
-    const ZigLazyBuffer = @import("buffer.zig").ZigBuffer;
+    const ZigStorage = @import("storage.zig").ZigStorage;
     allocator: ?*const Allocator = null,
 
     pub fn init(self: *ZigBackend, args: struct { allocator: *const Allocator }) void {
@@ -113,7 +113,7 @@ pub const ZigBackend = struct {
         // Something like this:
         // Also in minitorch, map can broadcast, which I'm not exactly sure why because its 1-1 anyways
         // inline for (0..out.size) |flat_index| {
-        //     out.buffer.data[flat_index] = @call(.always_inline, op, .{x[flat_index]});
+        //     out.storage.data[flat_index] = @call(.always_inline, op, .{x[flat_index]});
         // }
     }
 
@@ -125,39 +125,39 @@ pub const ZigBackend = struct {
         //     const out_index = out.unflattenIndex(out_flat_index);
         //     const a_index = a.broadcastIndex(out.ndims, out_index);
         //     const b_index = b.broadcastIndex(out.ndims, out.index);
-        //     out.buffer.data[out_flat_index] = @call(.always_inline, op, .{ a.buffer.data[a.flattenIndex(a_index)], b.buffer.data[b.flattenIndex(b_index)] });
+        //     out.storage.data[out_flat_index] = @call(.always_inline, op, .{ a.storage.data[a.flattenIndex(a_index)], b.storage.data[b.flattenIndex(b_index)] });
         // }
     }
 
-    pub fn reduceEval(self: *const Backend, op: ops.ReduceOp, zip_op: ops.ZipOp, x: anytype, reduce_dim: ?u8, acc_start: anytype, out: *const tensor.ReducedTensor(@TypeOf(x), reduce_dim)) void {
+    pub fn reduceEval(self: *const Backend, op: ops.ReduceOp, zip_op: ops.ZipOp, x: anytype, dim: ?u8, acc_start: anytype, out: *const tensor.ReducedTensor(@TypeOf(x), dim)) void {
         _ = zip_op;
         _ = acc_start;
         _ = out;
         _ = self;
         _ = op;
-        // if (reduce_dim == null) {
+        // if (dim == null) {
         //     reduce across the entire input
         // }
         // inline for (0..out.size) |out_flat_index| {
         //     const out_index = out.unflattenIndex(out_flat_index);
         //     const x_start = x.flattenIndex(out_index);
         //     var acc = acc_start;
-        //     for (0..x.shape[reduce_dim]) |i| {
-        //         x_flat_index = x_start + i * x.strides[reduce_dim];
-        //         acc = @call(.always_inline, zip_op, .{ acc, x.buffer.data[x_flat_index] });
+        //     for (0..x.shape[dim]) |i| {
+        //         x_flat_index = x_start + i * x.strides[dim];
+        //         acc = @call(.always_inline, zip_op, .{ acc, x.storage.data[x_flat_index] });
         //     }
-        //     out.buffer.data[out_flat_index] = acc;
+        //     out.storage.data[out_flat_index] = acc;
         // }
     }
 
-    pub fn allocBuffer(self: *const ZigBackend, comptime dtype: type, size: usize) !*LazyBuffer(dtype) {
+    pub fn alloc(self: *const ZigBackend, comptime dtype: type, size: usize) !*Storage(dtype) {
         if (self.allocator != null) {
-            return try ZigLazyBuffer(dtype).init(size, self.allocator.?);
+            return try ZigStorage(dtype).init(size, self.allocator.?);
         }
         @panic("No allocator provided");
     }
 
-    // pub fn freeBuffer(_: *const ZigBackend, buffer: *LazyBuffer(comptime dtype: type)) void {
-    //     buffer.deinit();
+    // pub fn freeStorage(_: *const ZigBackend, storage: *Storage(comptime dtype: type)) void {
+    //     storage.deinit();
     // }
 };
