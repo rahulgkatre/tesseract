@@ -105,9 +105,25 @@ pub const ZigBackend = struct {
         self.allocator = args.allocator;
     }
 
-    inline fn scalarMapEval(op: ops.MapOp, x: anytype) @TypeOf(x) {
+    pub fn MapOpReturnType(op: ops.MapOp, x: anytype) type {
+        return switch (op) {
+            .Neg => @TypeOf(x),
+            // TODO: Determine which float type to return: f16, f32, f64
+            .Log2, .Exp2, .Sqrt, .Recip => f32,
+        };
+    }
+
+    pub fn ZipOpReturnType(op: ops.ZipOp, x: anytype) type {
+        return switch (op) {
+            .Add, .Mul, .Maximum, .Mod, .Xor => @TypeOf(x),
+            .Lt, .Eq => bool,
+        };
+    }
+
+    inline fn scalarMapEval(op: ops.MapOp, x: anytype) MapOpReturnType(op, x) {
         return switch (op) {
             .Neg => -x, // TODO: if x is a boolean then this should be !x
+            // TODO: If x is an int, then use @floatFromInt to cast it before applying the function
             .Log2 => @log2(x),
             .Exp2 => @exp2(x),
             .Sqrt => @sqrt(x),
@@ -115,7 +131,8 @@ pub const ZigBackend = struct {
         };
     }
 
-    inline fn scalarZipEval(op: ops.ZipOp, a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+    inline fn scalarZipEval(op: ops.ZipOp, a: anytype, b: anytype) ZipOpReturnType(op, a) {
+        // TODO: Try to cast a and b to the same type
         return switch (op) {
             .Add => a + b,
             .Mul => a * b,
@@ -123,7 +140,7 @@ pub const ZigBackend = struct {
             .Mod => @mod(a, b),
             .Lt => a < b,
             .Eq => a == b,
-            .Xor => a ^ b,
+            .Xor => a ^ b, // TODO: if a and b are
         };
     }
 
@@ -133,6 +150,13 @@ pub const ZigBackend = struct {
             .Max => ops.ZipOp.Maximum,
         };
     }
+
+    // inline fn reduceAccStart(op: ops.ReduceOp, x: anytype) ZipOpReturnType(reduceAccZipOp(op), x) {
+    //     return switch (op) {
+    //         .Sum => 0,
+    //         .Max => x.storage.data[0],
+    //     };
+    // }
 
     pub fn mapEval(self: *const ZigBackend, op: ops.MapOp, x: anytype, out: *const @TypeOf(x)) void {
         _ = op;
