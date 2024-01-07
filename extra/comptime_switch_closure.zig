@@ -1,90 +1,84 @@
-const MapOp = enum { Neg, Log2, Exp2 };
-const ZipOp = enum { Add, Mul };
-// const ReduceOp = enum { Sum, Max };
-const OpTypes = enum { MapOp, ZipOp };
-const Op = union(OpTypes) {
-    MapOp: MapOp,
-    ZipOp: ZipOp,
-    // ReduceOp: ReduceOp,
-};
+pub const MapOp = enum { Neg, Log2, Exp2, Sqrt, Recip };
+pub const ZipOp = enum { Add, Mul, Maximum, Mod, Lt, Eq, Xor };
+pub const ReduceOp = enum { Sum, Max };
+pub const TypeOp = enum { Reshape, Permute, Expand, Pad, Shrink, Stride, AsStrided, AsType };
+pub const OpTypes = enum { MapOp, ZipOp, ReduceOp, TypeOp };
+pub const Op = union(OpTypes) { MapOp: MapOp, ZipOp: ZipOp, ReduceOp: ReduceOp, TypeOp: TypeOp };
 
-fn MapOpReturn(comptime map_op: MapOp, comptime x: anytype) type {
+fn ScalarMapOpReturnType(comptime map_op: MapOp, comptime x: anytype) type {
     return switch (map_op) {
         .Neg => @TypeOf(x), // Neg can apply to any numeric type (or boolean)
         else => @TypeOf(x + 0.0), // Other
     };
 }
 
-fn OpImpl(comptime op: Op) type {
-    return @TypeOf(switch (op) {
-        .MapOp => |map_op| struct {
-            inline fn f(x: anytype) MapOpReturn(map_op, x) {
-                return x;
-            }
-        },
-        .ZipOp => struct {
-            // Use a +
-            inline fn f(a: anytype, b: anytype) @TypeOf(a + b) {
-                return a + b;
-            }
-        },
-    }.f);
+fn scalarMapOpEval(comptime map_op: MapOp, x: anytype) ScalarMapOpReturnType(map_op, x) {
+    return comptime switch (map_op) {
+        .Neg => if (@typeInfo(@TypeOf(x)) == .Bool) !x else -x,
+        .Log2 => @log2(x + 0.0),
+        .Exp2 => @exp2(x + 0.0),
+        .Sqrt => @sqrt(x + 0.0),
+        .Recip => @divExact(1.0, x + 0.0),
+    };
 }
 
-fn impl(comptime op: Op) OpImpl(op) {
-    // TODO: Will comptime switch collapse to just a function body containing the chosen branch?
-    return switch (op) {
+fn ScalarZipOpReturnType(comptime zip_op: ZipOp, comptime a: anytype, comptime b: anytype) type {
+    return switch (zip_op) {
+        .Lt, .Eq => bool,
+        .Xor => @TypeOf(a ^ b),
+        else => @TypeOf(a + b),
+    };
+}
+
+fn scalarZipOpEval(comptime zip_op: ZipOp, a: anytype, b: anytype) ScalarZipOpReturnType(zip_op, a, b) {
+    return comptime switch (zip_op) {
+        .Add => a + b,
+        .Mul => a * b,
+        .Maximum => @max(a, b),
+        .Lt => a < b,
+        .Eq => a == b,
+        .Xor => a ^ b,
+        else => @compileError("Not implemented"),
+    };
+}
+
+fn ScalarOpReturnType(comptime op: Op) type {
+    return @TypeOf(switch (op) {
         .MapOp => |map_op| struct {
-            inline fn f(x: anytype) MapOpReturn(map_op, x) {
-                return comptime switch (map_op) {
-                    .Neg => -x,
-                    .Exp2 => @exp2(x + 0.0),
-                    .Log2 => @log2(x + 0.0),
-                };
+            inline fn f(x: anytype) ScalarMapOpReturnType(map_op, x) {
+                return comptime scalarMapOpEval(map_op, x);
             }
         },
         .ZipOp => |zip_op| struct {
-            inline fn f(a: anytype, b: anytype) @TypeOf(a + b) {
-                return comptime switch (zip_op) {
-                    .Add => a + b,
-                    .Mul => a * b,
-                };
+            inline fn f(a: anytype, b: anytype) ScalarZipOpReturnType(zip_op, a, b) {
+                return comptime scalarZipOpEval(zip_op, a, b);
             }
         },
-    }.f;
-    // Alternative: a closure for every op
-    //     switch (map_op) {
-    //         .Log2 => struct {
-    //             fn f(x: anytype) @TypeOf(x) {
-    //                 return @log2(x);
-    //             }
-    //         },
-    //         .Exp2 => struct {
-    //             fn f(x: anytype) @TypeOf(x) {
-    //                 return @exp2(x);
-    //             }
-    //         },
-    //     }.f,
-    //     .ZipOp => |zip_op| switch (zip_op) {
-    //         .Add => struct {
-    //             fn f(a: anytype, b: anytype) @TypeOf(a + b) {
-    //                 return a + b;
-    //             }
-    //         },
-    //         .Mul => struct {
-    //             fn f(a: anytype, b: anytype) @TypeOf(a + b) {
-    //                 return a * b;
-    //             }
-    //         },
-    //     }.f,
-    // };
+        else => @compileError("Not implemented"),
+    }.f);
 }
 
-const exp2 = impl(.{ .MapOp = .Exp2 });
-const log2 = impl(.{ .MapOp = .Log2 });
-const add = impl(.{ .ZipOp = .Add });
-const mul = impl(.{ .ZipOp = .Mul });
-const neg = impl(.{ .MapOp = .Neg });
+pub fn EvalFunc(comptime op: Op) ScalarOpReturnType(op) {
+    return comptime switch (op) {
+        .MapOp => |map_op| struct {
+            inline fn f(x: anytype) ScalarMapOpReturnType(map_op, x) {
+                return comptime scalarMapOpEval(map_op, x);
+            }
+        },
+        .ZipOp => |zip_op| struct {
+            inline fn f(a: anytype, b: anytype) ScalarZipOpReturnType(zip_op, a, b) {
+                return comptime scalarZipOpEval(zip_op, a, b);
+            }
+        },
+        else => @compileError("Not implemented"),
+    }.f;
+}
+
+const exp2 = EvalFunc(.{ .MapOp = .Exp2 });
+const log2 = EvalFunc(.{ .MapOp = .Log2 });
+const add = EvalFunc(.{ .ZipOp = .Add });
+const mul = EvalFunc(.{ .ZipOp = .Mul });
+const neg = EvalFunc(.{ .MapOp = .Neg });
 
 test "test impl" {
     const a = 2;

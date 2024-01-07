@@ -15,6 +15,14 @@ pub const Backend = union(BackendTypes) {
     // ArrayFire: ArrayFireBackend
     // CUDA: CudaBackend
     // ...
+    pub fn impl(self: *Backend, comptime op: ops.Op) void {
+        return switch (self.*) {
+            inline else => |b| @TypeOf(b).impl(op),
+        };
+    }
+
+    // const lazyFnGenerator(comptime op: ops.Op)
+
     pub fn init(self: *Backend, args: anytype) void {
         return switch (self.*) {
             inline else => |*b| b.init(args),
@@ -101,62 +109,77 @@ pub const ZigBackend = struct {
     const ZigStorage = @import("storage.zig").ZigStorage;
     allocator: ?*const Allocator = null,
 
-    pub fn init(self: *ZigBackend, args: struct { allocator: *const Allocator }) void {
-        self.allocator = args.allocator;
-    }
-
-    pub fn MapOpReturnType(op: ops.MapOp, x: anytype) type {
-        return switch (op) {
-            .Neg => @TypeOf(x),
-            // TODO: Determine which float type to return: f16, f32, f64
-            .Log2, .Exp2, .Sqrt, .Recip => f32,
+    fn ScalarMapOpReturnType(comptime map_op: ops.MapOp, comptime x: anytype) type {
+        return switch (map_op) {
+            .Neg => @TypeOf(x), // Neg can apply to any numeric type (or boolean)
+            else => @TypeOf(x + 0.0), // Other
         };
     }
 
-    pub fn ZipOpReturnType(op: ops.ZipOp, x: anytype) type {
-        return switch (op) {
-            .Add, .Mul, .Maximum, .Mod, .Xor => @TypeOf(x),
+    fn scalarMapOpEval(comptime map_op: ops.MapOp, x: anytype) ScalarMapOpReturnType(map_op, x) {
+        return comptime switch (map_op) {
+            .Neg => if (@typeInfo(@TypeOf(x)) == .Bool) !x else -x,
+            .Log2 => @log2(x + 0.0),
+            .Exp2 => @exp2(x + 0.0),
+            .Sqrt => @sqrt(x + 0.0),
+            .Recip => @divExact(1.0, x + 0.0),
+        };
+    }
+
+    fn ScalarZipOpReturnType(comptime zip_op: ops.ZipOp, comptime a: anytype, comptime b: anytype) type {
+        return switch (zip_op) {
             .Lt, .Eq => bool,
+            .Xor => @TypeOf(a ^ b),
+            else => @TypeOf(a + b),
         };
     }
 
-    inline fn scalarMapEval(op: ops.MapOp, x: anytype) MapOpReturnType(op, x) {
-        return switch (op) {
-            .Neg => -x, // TODO: if x is a boolean then this should be !x
-            // TODO: If x is an int, then use @floatFromInt to cast it before applying the function
-            .Log2 => @log2(x),
-            .Exp2 => @exp2(x),
-            .Sqrt => @sqrt(x),
-            .Recip => @divExact(1, x),
-        };
-    }
-
-    inline fn scalarZipEval(op: ops.ZipOp, a: anytype, b: anytype) ZipOpReturnType(op, a) {
-        // TODO: Try to cast a and b to the same type
-        return switch (op) {
+    fn scalarZipOpEval(comptime zip_op: ops.ZipOp, a: anytype, b: anytype) ScalarZipOpReturnType(zip_op, a, b) {
+        return comptime switch (zip_op) {
             .Add => a + b,
             .Mul => a * b,
             .Maximum => @max(a, b),
-            .Mod => @mod(a, b),
             .Lt => a < b,
             .Eq => a == b,
-            .Xor => a ^ b, // TODO: if a and b are
+            .Xor => a ^ b,
+            else => @panic("Not implemented"),
         };
     }
 
-    inline fn reduceAccZipOp(op: ops.ReduceOp) ops.ZipOp {
-        return switch (op) {
-            .Sum => ops.ZipOp.Add,
-            .Max => ops.ZipOp.Maximum,
-        };
+    fn ScalarOpReturnType(comptime op: ops.Op) type {
+        return @TypeOf(switch (op) {
+            .MapOp => |map_op| struct {
+                inline fn f(x: anytype) ScalarMapOpReturnType(map_op, x) {
+                    return comptime scalarMapOpEval(map_op, x);
+                }
+            },
+            .ZipOp => |zip_op| struct {
+                inline fn f(a: anytype, b: anytype) ScalarZipOpReturnType(zip_op, a, b) {
+                    return comptime scalarZipOpEval(zip_op, a, b);
+                }
+            },
+            else => @panic("Not implemented"),
+        }.f);
     }
 
-    // inline fn reduceAccStart(op: ops.ReduceOp, x: anytype) ZipOpReturnType(reduceAccZipOp(op), x) {
-    //     return switch (op) {
-    //         .Sum => 0,
-    //         .Max => x.storage.data[0],
-    //     };
-    // }
+    pub fn scalarOpEval(comptime op: ops.Op) ScalarOpReturnType(op) {
+        return comptime switch (op) {
+            .MapOp => |map_op| struct {
+                inline fn f(x: anytype) ScalarMapOpReturnType(map_op, x) {
+                    return comptime scalarMapOpEval(map_op, x);
+                }
+            },
+            .ZipOp => |zip_op| struct {
+                inline fn f(a: anytype, b: anytype) ScalarZipOpReturnType(zip_op, a, b) {
+                    return comptime scalarZipOpEval(zip_op, a, b);
+                }
+            },
+        }.f;
+    }
+
+    pub fn init(self: *ZigBackend, args: struct { allocator: *const Allocator }) void {
+        self.allocator = args.allocator;
+    }
 
     pub fn mapEval(self: *const ZigBackend, op: ops.MapOp, x: anytype, out: *const @TypeOf(x)) void {
         _ = op;
@@ -166,7 +189,7 @@ pub const ZigBackend = struct {
         // Something like this:
         // Also in minitorch, map can broadcast, which I'm not exactly sure why because its 1-1 anyways
         // inline for (0..out.size) |flat_index| {
-        //     out.storage.data[flat_index] = @call(.always_inline, op, .{x[flat_index]});
+        //     out.storage.data[flat_index] = @call(.always_inline, scalarOpEval(op), .{x[flat_index]});
         // }
     }
 
@@ -178,7 +201,7 @@ pub const ZigBackend = struct {
         //     const out_index = out.unflattenIndex(out_flat_index);
         //     const a_index = a.broadcastIndex(out.ndims, out_index);
         //     const b_index = b.broadcastIndex(out.ndims, out.index);
-        //     out.storage.data[out_flat_index] = @call(.always_inline, op, .{ a.storage.data[a.flattenIndex(a_index)], b.storage.data[b.flattenIndex(b_index)] });
+        //     out.storage.data[out_flat_index] = @call(.always_inline, scalarOpEval(op), .{ a.storage.data[a.flattenIndex(a_index)], b.storage.data[b.flattenIndex(b_index)] });
         // }
     }
 

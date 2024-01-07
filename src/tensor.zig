@@ -30,7 +30,7 @@ pub fn StridedTensor(comptime dtype: type, comptime shape: anytype, comptime str
     return BaseTensor(dtype, shape.len, shape, strides);
 }
 
-fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndims]usize, comptime _strides: [_ndims]usize) type {
+pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndims]usize, comptime _strides: [_ndims]usize) type {
     return struct {
         const Self = @This();
         pub const dtype: type = _dtype;
@@ -146,17 +146,9 @@ fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         pub fn permute(self: *const Self, comptime perm: [ndims]u8) PermutedTensor(Self, perm) {
             return PermutedTensor(Self, perm).init(self.backend);
         }
-        pub fn map(self: *const Self, op: ops.MapOp) Self {
-            return self.backend.mapLazy(op, self.*);
-        }
-        pub fn zip(self: *const Self, op: ops.ZipOp, x: anytype) BroadcastedTensor(Self, @TypeOf(x)) {
-            return self.backend.zipLazy(op, self.*, x);
-        }
-        pub fn reduce(self: *const Self, op: ops.ReduceOp, comptime dim: ?u8) ReducedTensor(Self, dim) {
-            return self.backend.reduceLazy(op, self.*, dim);
-        }
         // We can add the tensor functions using "pub usingnamespace"
         // That way the tensor struct definition is cleaner
+        pub usingnamespace @import("functions.zig");
     };
 }
 
@@ -186,6 +178,8 @@ pub fn ReducedTensor(comptime tensor_t: type, comptime dim: ?u8) type {
     );
 }
 
+// TODO: The broadcasted tensor's dtype might be different based on the operation
+// It will always be one of the two input tensor's dtypes
 pub fn BroadcastedTensor(comptime tensor1_t: type, comptime tensor2_t: type) type {
     // Gets the broadcast shape between two tensors if one exists
     // If the two tensors do not broadcast, the code won't compile
