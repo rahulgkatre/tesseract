@@ -1,93 +1,110 @@
 # deepzig
 
-The goal of this project is to write a deep learning library in Zig. Name is WIP. 
+A deep learning library written in Zig that features compile time verification of all tensor operations and advanced acceleration and optimization. 
 
-### Compile time verification of all tensor operations
-- If the code compiles, there will be no issues with shaping and broadcasting.
-- Zig compiler will generate simplified functions computing index, size, etc. for each tensor shape and stride in the program.
+## Core Principles
 
-### Tensors are immutable and lazy 
-- Any operation on a tensor will return a new Tensor object (immutable) but no data will be modified yet (laziness)
-- Employ kernel fusing techniques to optimize operations, so that extra intermediate tensor storage does not need to be allocated
+### Do as much as possible at compile time
+
+- Take advantage of Zig's compile time evaluation to evaluate tensor operations
+- Verify that all shapes and dtypes for inputs/outputs are valid using Zig's type system and generics
+- Errors involving broadcasting between two tensors will no longer exist at runtime
+
+### Laziness
+
+- Tensors are lazy, no data is modified until later
+- This is a side effect of compile time evaluation, as data does not exist at compile time 
+- The operations still "run" to produce output tensor metadata
 - A function can be called on the output tensor to evaluate the compute graph
 
-###  Direct compilation or codegen to run on accelerators
-- Direct compilation depends heavily on the Zig language's support. 
-- Codegen will emit C code that will be compiled by an external compiler
-- Calls compiler a C API to compile and run on the device.
+### Efficiency
+- Avoid heap allocation as much as possible
+- The compute graph will be static and storage for batches of training data can be allocated once. 
+- Fuse operations to reduce memory bandwidth requirements
 
-### Zero dependencies outside of accelerator libraries
-- If Zig can run on a machine, it can run deepzig
+### Acceleration
+- Interface with high performance hardware by compiling Zig code or through codegen
+- Direct compilation depends heavily on the Zig language's support through LLVM
+- Codegen will emit code that will be compiled by an external compiler
+- Calls compiler a C API to compile and run on the device
 
-## Current state / checklist
-
-### Done
-
-- Compile time verification of shapes and strides
-    - Permuting a tensor yields a tensor with the same underlying storage, but a different Tensor type (different shape and strides)
-    - Contiguousness of strides is checked to prevent calls of .view() as it is not valid for non-contiguous tensors
-    - Check if a broadcast between two arrays of different shapes are valid, used for zip/binary functions
-    - Reducing a tensor along a dim yields a new Tensor type where the reduce dim is now 1
-
-- Building the compute graph at compile time
-    - When a function is called, the output tensor receives a closure to evaluate itself
-    - The closure contains pointers to the inputs of the function, and a call to the evaluate function of the inputs
-    - The evaluate function will eventually read the underlying data and operate on it to calculate the new data
-    - The recursive traversal (calling of input evaluate functions) can happen at compile time
-
-### In progress
-- Using the compute graph to perform operations on some data
-- Automated operator fusion to reduce memory bandwidth usage
- 
-### Not started
-- Backpropagation and gradients
-    - Backward functions take advantage of the ops and fusion
-- Running a model (e.g. CNN for MNIST)
-    - Training and inference
-- Support for ONNX
-    - Implement ONNX operators using our ops (subset is ok)
-    - Run an ONNX model (e.g. Llama2)
-    - Export model as ONNX, run with ONNX runtime
-- StableHLO as an output target
-    - This will allow for taking advantage of XLA compiler
-    - Implement StableHLO functions
-    - Generate StableHLO programs
-    - Maybe also support other IRs? (e.g. Triton-IR)
-- CUDA support
-    - Generate CUDA kernels from fused operations
-    - Compile CUDA kernels and run on device
-- WebGPU, Metal, HIP support
-    - Same steps as CUDA
-
-
-## Rambling
+### Run anywhere
+- No dependencies required, unless targeting a specific accelerator
+- The library ships with a Zig backend for tensor operations that only uses builtins
+- If Zig can compile for a device, code written with this library can run on it
 
 ### Why Zig?
 
-I was playing around with a few languages (Nim, Cython) to determine the best language to write this library in. 
+I tried a few languages (Nim, Cython) but ultimately chose Zig
 
 - **Compile time code execution via comptime** 
-    - Enables simplification, verification, and optimization.
+    - Enables simplification, verification, and optimization
 - **SIMD via @Vector**
-    - Simple API for SIMD that is built into the langugage. 
+    - Simple API for SIMD that is built into the langugage
 - **C interop via @cImport** 
-    - Zig can natively import C/C++ files and compile with them. 
-    - This is useful for importing headers for GPUs and calling functions to compile and run emitted code.
+    - Zig can natively import C/C++ files and compile with them
+    - This is useful for importing neural accelrator C APIs
 
-### Other notes
+## Structure
 
-- Minibatch training has a fixed batch size.
-    - Data can be loaded as a slice, from which arrays of the batch size can be extracted and passed to the model. 
-    - Slightly related, I have no idea if deepzig will work for variable length inputs such as for chat models. In my work with NLP we had set a max tokens parameter and used padding and masking to keep tensor shapes the same. 
-- Ideally, there should be no heap allocation. 
-    - The entire compute graph can be kept in CPU memory while the actual data buffers will be kept on device memory (GPU, etc.). 
-    - The compute graph is static and buffers for batches of training data can be pre allocated. 
-    - This will make deepzig usable in environments where heap memory is not available (e.g. embedded).
+The library consists of a few prevailing structures: ops, backends, storage, and tensors.
+
+### Ops 
+- Enums for unary (map), binary (zip), reduce ops, and others
+- Defines the core set of operations that any backend must implement
+- To make it easy to write a backend, the number of ops is kept small
+- Can be mapped to a function to actually perform the computation
+
+### Backends 
+- Provide implementations of ops, and higher level functions that are composed of multiple ops
+- Use device specific APIs to provide an interface for managing memory (allocation, freeing)
+- The implementations of ops will directly manipulate data in the storage
+
+For example, when writing a CUDA backend, the ops might be implemented as CUDA kernels that manipulate data in the CUDA device's memory. 
+
+### Storage
+- A reserved section of memory that contains the data for a tensor in a 1D format
+- Highly associated with a backend, each backend must provide a Storage implementation
+- Storage does not exist at compile time, as no memory can be allocated during compile time evaluation
+
+### Tensor
+- Generic type defined by the element type, shape, and strides
+- Contains a backend and the backend's associated storage 
+- Provides a multidimensional view into the 1 dimensional storage using shape and strides
+- Contains functions to perform operations using the backend
+- Makes up the computation graph defined by input tensor(s) and the op applied to them
+
+## Roadmap
+
+### First Milestone
+
+- [x] Compile time verification of shapes and strides
+    - [x] Contiguousness of strides is checked
+    - [x] Check if a broadcast between two arrays of different shapes are valid
+    - [x] Reducing a tensor along a dim yields a new tensor type where the reduce dim is now 1
+    - [ ] Operations for reshaping, permuting, flattening, etc. a tensor
+- [x] Building the compute graph at compile time
+    - [x] When a function is called, the output tensor receives a closure to evaluate itself
+    - [x] The recursive traversal (calling of input evaluate functions) can happen at compile time
+    - [ ] Automated fusion of operators to reduce memory bandwidth requirements
+- [ ] Using the compute graph to perform computations on tensors
+    - [ ] Implementations of ops for the Zig backend
+    - [ ] Implement matrix multiplication (GEMM)
+    - [ ] Use SIMD via @Vector and multithreading as needed to accelerate the Zig backend
+- [ ] Backpropagation and calculatation of gradients
+- [ ] Model definition, traning, and inference and purely using this library
+    - [ ] Implementations of gradient descent based optimizers
+    - [ ] Convolutional neural network for the MNIST dataset
+
+### Future Goals
+ 
 - Python interface
-    - Support the buffer protocol in order to load in data from Numpy arrays
-    - Mainly for OpenCV and Pandas support, since those are easier to use from Python than C
-    - To create models using Zig tensors, codegen + JIT might need to be used to compile a Zig file to take advantage of comptime
-- Alternative names
-    - tenzor
-    - tensorzig
-    - tenzorflux
+    - Use JIT compilation to take advantage of type guards in this library
+    - Use Python buffer protocol to load and unload data
+    - Support existing deep learning codebases and pipelines 
+- Support existing neural network formats like ONNX, PyTorch
+    - Make it easy to import models and weights 
+- Support for accelerator frameworks like CUDA, Metal, WebGPU, etc.
+    - Use codegen or LLVM targets to generate device specific code
+- Support for other deep learning compiler IRs like StableHLO, Triton-IR
+    - Take advantage of optimizations implemented by teams developing XLA, etc.
