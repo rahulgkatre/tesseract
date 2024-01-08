@@ -32,7 +32,7 @@ fn FuncType(comptime op: ops.Op) type {
                 return reduce(x_ptr, op.ReduceOp, dim);
             }
         },
-        else => @compileError("Not implemented"),
+        else => @compileError("Operation cannot run lazily"),
     }.f);
 }
 
@@ -61,7 +61,7 @@ fn Func(comptime op: ops.Op) FuncType(op) {
                 return reduce(x_ptr, op.ReduceOp, dim);
             }
         },
-        else => @compileError("Not implemented"),
+        else => @compileError("Operation cannot run lazily"),
     }.f;
 }
 
@@ -72,8 +72,3 @@ pub const mul = Func(.{ .ZipOp = .Mul });
 pub const sum = Func(.{ .ReduceOp = .Sum });
 pub const max = Func(.{ .ReduceOp = .Max });
 pub const div = MapZipFunc(.Recip, .Mul);
-
-// comptime {
-//     @compileLog(@typeInfo(@This()).Struct.decls);
-//     @compileLog(@Type(.{decls}));
-// }

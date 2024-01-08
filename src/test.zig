@@ -24,37 +24,77 @@ fn runEval(comptime test_name: anytype, comptime out: anytype) void {
 }
 
 test "same tensors assignable" {
+    // This test catches regressions caused by comptime slices with the same values not being
+    // equal to teach other, which would cause this test to not compile
     const tensor1 = Tensor(i32, .{ 2, 3, 4 }).input(TestBackend);
     var tensor2 = Tensor(i32, .{ 2, 3, 4 }).input(TestBackend);
     tensor2 = tensor1;
 }
 
 test "permute" {
-    const out = comptime blk: {
+    comptime {
         const tensor1 = Tensor(i32, .{ 2, 3, 4 }).input(TestBackend);
-        const tensor2 = tensor1.permute([_]u8{ 0, 2, 1 });
-        break :blk tensor2;
-    };
-    try expectEqual([_]usize{ 2, 4, 3 }, out.shape);
-    try expectEqual([_]usize{ 12, 1, 4 }, out.strides);
+        const tensor2 = tensor1.permute(.{ 0, 2, 1 });
+        try expectEqual([_]usize{ 2, 4, 3 }, tensor2.shape);
+        try expectEqual([_]usize{ 12, 1, 4, 0 }, tensor2.strides);
+    }
+}
+test "view" {
+    comptime {
+        const tensor1 = Tensor(i32, .{ 2, 3, 4 }).input(TestBackend);
+        const tensor2 = tensor1.view(.{ 12, 2 });
+        const tensor3 = tensor2.view(.{24});
+
+        try expectEqual([_]usize{ 12, 2 }, tensor2.shape);
+        try expectEqual([_]usize{ 2, 1, 0 }, tensor2.strides);
+        try expectEqual([_]usize{24}, tensor3.shape);
+        try expectEqual([_]usize{ 1, 0 }, tensor3.strides);
+    }
+}
+test "as strided" {
+    // Based on example from https://pytorch.org/docs/stable/generated/torch.as_strided.html
+    comptime {
+        const tensor1 = Tensor(i32, .{ 3, 3 }).input(TestBackend);
+        const tensor2 = tensor1.asStrided(.{ 2, 2 }, .{ 1, 2, 0 });
+
+        try expectEqual([_]usize{ 2, 2 }, tensor2.shape);
+        try expectEqual(false, tensor2.isContiguous());
+
+        const test_indices = [_][2]usize{ .{ 0, 0 }, .{ 0, 1 }, .{ 1, 0 }, .{ 1, 1 } };
+        const expected_flat_indices1 = [_]usize{ 0, 2, 1, 3 };
+        for (expected_flat_indices1, test_indices) |expected_flat_i, test_i| {
+            try expectEqual(expected_flat_i, tensor2.flattenIndex(test_i));
+        }
+
+        const tensor3 = tensor1.asStrided(.{ 2, 2 }, .{ 1, 2, 1 });
+        try expectEqual([_]usize{ 2, 2 }, tensor2.shape);
+        try expectEqual(false, tensor2.isContiguous());
+
+        const expected_flat_indices2 = [_]usize{ 1, 3, 2, 4 };
+        for (expected_flat_indices2, test_indices) |expected_flat_i, test_i| {
+            try expectEqual(expected_flat_i, tensor3.flattenIndex(test_i));
+        }
+    }
 }
 test "zip" {
     const out = comptime blk: {
         const tensor1 = Tensor(i32, .{ 2, 1, 4 }).input(TestBackend);
         const tensor2 = Tensor(i32, .{ 3, 1 }).input(TestBackend);
         const tensor3 = tensor1.add(tensor2);
+        try expectEqual([_]usize{ 2, 3, 4 }, tensor3.shape);
         break :blk tensor3;
     };
-    try expectEqual([_]usize{ 2, 3, 4 }, out.shape);
+
     runEval("zip", out);
 }
 test "reduce" {
     const out = comptime blk: {
         const tensor1 = Tensor(i32, .{ 2, 3, 4 }).input(TestBackend);
         const tensor2 = tensor1.sum(1);
+        try expectEqual([_]usize{ 2, 1, 4 }, tensor2.shape);
         break :blk tensor2;
     };
-    try expectEqual([_]usize{ 2, 1, 4 }, out.shape);
+
     runEval("reduce", out);
 }
 test "zip reduce" {
@@ -64,9 +104,9 @@ test "zip reduce" {
         const tensor3 = tensor1
             .add(tensor2)
             .sum(1);
+        try expectEqual([_]usize{ 2, 1, 4 }, tensor3.shape);
         break :blk tensor3;
     };
-    try expectEqual([_]usize{ 2, 1, 4 }, out.shape);
     runEval("zip reduce", out);
 }
 

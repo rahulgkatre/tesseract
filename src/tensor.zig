@@ -13,30 +13,21 @@ pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
 }
 
 fn DefaultStridedTensor(comptime dtype: type, comptime shape: anytype) type {
-    const ndims = shape.len;
-    var offset: usize = 1;
-    var strides: [ndims]usize = undefined;
-    for (0..ndims - 1) |i| {
-        const stride = shape[ndims - i - 1] * offset;
-        strides[ndims - i - 2] = stride;
-        offset = stride;
-    }
-    strides[ndims - 1] = 1;
-    return StridedTensor(dtype, shape, strides);
+    return StridedTensor(dtype, shape, utils.stridesFromShape(shape));
 }
 
 pub fn StridedTensor(comptime dtype: type, comptime shape: anytype, comptime strides: anytype) type {
-    if (shape.len != strides.len) @compileError("Provided shape ndims != provided strides ndims");
+    if (shape.len + 1 != strides.len) @compileError("Provided shape ndims not compatible provided strides ndims");
     return BaseTensor(dtype, shape.len, shape, strides);
 }
 
-pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndims]usize, comptime _strides: [_ndims]usize) type {
+pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndims]usize, comptime _strides: [_ndims + 1]usize) type {
     return struct {
         const Self = @This();
         pub const dtype: type = _dtype;
         pub const ndims: u8 = _ndims;
         pub const shape: [ndims]usize = _shape;
-        pub const strides: [ndims]usize = _strides;
+        pub const strides: [ndims + 1]usize = _strides;
         pub const size = utils.storageSizeForTensor(ndims, shape, strides);
         pub const str = comptimePrint(
             "Tensor({any},.{any})",
@@ -45,7 +36,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         ndims: u8 = ndims,
         shape: [ndims]usize = shape,
         size: usize = size,
-        strides: [ndims]usize = strides,
+        strides: [ndims + 1]usize = strides,
         str: @TypeOf(str) = str,
         // TODO: Add an enum flag to indicate whether the tensor data will be provided by already
         // existing data in the storage (INPUT) or it is a constant tensor (CONSTANT). Constant
@@ -54,11 +45,11 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         backend: *const Backend,
         storage: ?*Storage(dtype),
         eval_fn: *const fn (self: *const Self) void,
-        fn init(backend: *const Backend) Self {
+        fn init(backend: *const Backend, storage: ?*Storage(dtype)) Self {
             return .{
                 .init_type = .NotDefined,
                 .backend = backend,
-                .storage = null,
+                .storage = storage,
                 .eval_fn = struct {
                     // TODO: The default eval_fn must check if the tensor is initialiazed and panic if it is not
                     var done = false;
@@ -86,24 +77,24 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             };
         }
         pub fn input(backend: *const Backend) Self {
-            var tensor = init(backend);
+            var tensor = init(backend, null);
             tensor.init_type = .Input;
             return tensor;
         }
         pub fn constant(backend: *const Backend) Self {
-            var tensor = init(backend);
+            var tensor = init(backend, null);
             tensor.init_type = .Constant;
             return tensor;
         }
         pub fn result(backend: *const Backend) Self {
-            var tensor = init(backend);
+            var tensor = init(backend, null);
             tensor.init_type = .Result;
             return tensor;
         }
         pub fn eval(self: *const Self) void {
             self.eval_fn(self);
         }
-        // TODO: Add more functions to realize tensors (e.g. ones, full, zeros, _like)
+        // TODO: Add more functions to realize tensors (e.g. ones, full, zeros)
         pub fn empty(self: *Self) !void {
             self.storage = try self.backend.alloc(dtype, size);
         }
@@ -125,18 +116,20 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             }
             return index;
         }
-        pub fn flattenIndex(index: [ndims]usize) usize {
+        pub fn flattenIndex(_: anytype, index: [ndims]usize) usize {
             // Convert a multidimensional index into a single dimensional index
-            var flat_index: usize = 0;
+            // Start by adding the storage offset
+            var flat_index: usize = strides[ndims];
             for (0..ndims) |d| {
                 flat_index += index[d] * strides[d];
             }
             return flat_index;
             // return @reduce(.Sum, @mulAdd([ndims]usize, index, strides, [_]usize{0} ** ndims));
         }
-        pub fn unflattenIndex(flat_index: usize) [ndims]usize {
+        pub fn unflattenIndex(_: anytype, flat_index: usize) [ndims]usize {
             var index: [ndims]usize = undefined;
-            var remainder = flat_index;
+            // Subtract storage offset first
+            var remainder = flat_index - strides[ndims];
             for (0..ndims) |d| {
                 index[d] = @divTrunc(remainder, strides[d]);
                 remainder = @mod(remainder, strides[d]);
@@ -144,7 +137,26 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             return index;
         }
         pub fn permute(self: *const Self, comptime perm: [ndims]u8) PermutedTensor(Self, perm) {
-            return PermutedTensor(Self, perm).init(self.backend);
+            // TODO: Store a TypeOps.Permute in the output tensor for backprop
+            var tensor = PermutedTensor(Self, perm).result(self.backend);
+            tensor.storage = self.storage;
+            return tensor;
+        }
+        pub fn view(self: *const Self, comptime new_shape: anytype) Tensor(dtype, new_shape) {
+            // TODO: Store a TypeOps.View in the output tensor for backprop
+            if (self.isContiguous()) {
+                var tensor = Tensor(dtype, new_shape).result(self.backend);
+                tensor.storage = self.storage;
+                return tensor;
+            } else {
+                @compileError("Must be contiguous to view");
+            }
+        }
+        pub fn asStrided(self: *const Self, comptime new_shape: anytype, comptime new_strides: anytype) StridedTensor(dtype, new_shape, new_strides) {
+            // TODO: Store a TypeOps.Strided in the output tensor for backprop
+            var tensor = StridedTensor(dtype, new_shape, new_strides).result(self.backend);
+            tensor.storage = self.storage;
+            return tensor;
         }
         // We can add the tensor functions using "pub usingnamespace"
         // That way the tensor struct definition is cleaner
@@ -213,9 +225,13 @@ pub fn BroadcastedTensor(comptime tensor1_t: type, comptime tensor2_t: type) typ
 pub fn PermutedTensor(comptime tensor_t: type, comptime perm: [@field(tensor_t, "ndims")]u8) type {
     const shape = @field(tensor_t, "shape");
     const strides = @field(tensor_t, "strides");
+
+    var strides_perm: [strides.len]u8 = undefined;
+    @memcpy(strides_perm[0 .. strides.len - 1], &perm);
+    strides_perm[strides.len - 1] = strides.len - 1;
     return StridedTensor(
         @field(tensor_t, "dtype"),
         utils.permuteArray(shape.len, shape, perm),
-        utils.permuteArray(strides.len, strides, perm),
+        utils.permuteArray(strides.len, strides, strides_perm),
     );
 }
