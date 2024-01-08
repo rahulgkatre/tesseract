@@ -75,17 +75,19 @@ pub fn EvalFunc(comptime op: Op) ScalarOpReturnType(op) {
 }
 
 const exp2 = EvalFunc(.{ .MapOp = .Exp2 });
-const log2 = EvalFunc(.{ .MapOp = .Log2 });
 const add = EvalFunc(.{ .ZipOp = .Add });
-const mul = EvalFunc(.{ .ZipOp = .Mul });
 const neg = EvalFunc(.{ .MapOp = .Neg });
 
+const print = @import("std").debug.print;
+// TODO: Test fails because Zig does not automatically cast during arithmetic
+// We can handle this by doing the following:
+// To keep the size requirements the same, use @sizeOf
+// to find the number of bits for the int data, and use the same number of bits
+// for the floating point representation
 test "test impl" {
-    const a = 2;
-    const b = 3;
-    _ = neg(a);
-    _ = exp2(b);
-    _ = log2(a);
-    _ = add(a, b);
-    _ = mul(a, b);
+    const a: i32 = 2;
+    const b: i32 = 3;
+    print("\n-a = {any}", .{neg(a)});
+    print("\nexp2(b) = {any}", .{exp2(b)});
+    print("\na+b = {any}\n", .{add(a, b)});
 }

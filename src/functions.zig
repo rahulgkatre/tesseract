@@ -4,15 +4,15 @@ const Backend = @import("backend.zig").Backend;
 
 // Higher order functions
 pub fn map(x_ptr: anytype, op: ops.MapOp) @TypeOf(x_ptr.*) {
-    return x_ptr.backend.mapLazy(op, x_ptr.*);
+    return x_ptr.backend.map(op, x_ptr.*);
 }
 
 pub fn zip(a_ptr: anytype, op: ops.ZipOp, b: anytype) tensor.BroadcastedTensor(@TypeOf(a_ptr.*), @TypeOf(b)) {
-    return a_ptr.backend.zipLazy(op, a_ptr.*, b);
+    return a_ptr.backend.zip(op, a_ptr.*, b);
 }
 
 pub fn reduce(x_ptr: anytype, op: ops.ReduceOp, comptime dim: ?u8) tensor.ReducedTensor(@TypeOf(x_ptr.*), dim) {
-    return x_ptr.backend.reduceLazy(op, x_ptr.*, dim);
+    return x_ptr.backend.reduce(op, x_ptr.*, dim);
 }
 
 fn FuncType(comptime op: ops.Op) type {

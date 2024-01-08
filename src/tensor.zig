@@ -119,7 +119,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             // If the current tensor has size of 1 in a dimension, then the index must be 0
             // Otherwise it will be what the broadcasted index is
             const bc_ndims = bc_index.len;
-            const index: [ndims]usize = undefined;
+            var index: [ndims]usize = undefined;
             inline for (0..ndims) |d| {
                 index[bc_ndims - d - 1] = if (shape[ndims - d - 1] == 1) 0 else bc_index[bc_ndims - d - 1];
             }

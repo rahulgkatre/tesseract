@@ -15,14 +15,11 @@ pub const Backend = union(BackendTypes) {
     // ArrayFire: ArrayFireBackend
     // CUDA: CudaBackend
     // ...
-    pub fn impl(self: *Backend, comptime op: ops.Op) void {
-        return switch (self.*) {
-            inline else => |b| @TypeOf(b).impl(op),
-        };
-    }
-
-    // const lazyFnGenerator(comptime op: ops.Op)
-
+    // pub fn impl(self: *Backend, comptime op: ops.Op) void {
+    //     return switch (self.*) {
+    //         inline else => |b| @TypeOf(b).impl(op),
+    //     };
+    // }
     pub fn init(self: *Backend, args: anytype) void {
         return switch (self.*) {
             inline else => |*b| b.init(args),
@@ -33,7 +30,7 @@ pub const Backend = union(BackendTypes) {
             inline else => |*b| try b.alloc(dtype, size),
         };
     }
-    pub fn mapLazy(self: *const Backend, op: ops.MapOp, x: anytype) @TypeOf(x) {
+    pub fn map(self: *const Backend, op: ops.MapOp, x: anytype) @TypeOf(x) {
         var out = @TypeOf(x).result(self);
         out.eval_fn = struct {
             var done = false;
@@ -55,7 +52,7 @@ pub const Backend = union(BackendTypes) {
         }.eval;
         return out;
     }
-    pub fn zipLazy(self: *const Backend, op: ops.ZipOp, a: anytype, b: anytype) tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b)) {
+    pub fn zip(self: *const Backend, op: ops.ZipOp, a: anytype, b: anytype) tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b)) {
         var out = tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b)).result(self);
         out.eval_fn = struct {
             var done = false;
@@ -78,7 +75,7 @@ pub const Backend = union(BackendTypes) {
         }.eval;
         return out;
     }
-    pub fn reduceLazy(self: *const Backend, op: ops.ReduceOp, x: anytype, dim: ?u8) tensor.ReducedTensor(@TypeOf(x), dim) {
+    pub fn reduce(self: *const Backend, op: ops.ReduceOp, x: anytype, dim: ?u8) tensor.ReducedTensor(@TypeOf(x), dim) {
         var out = tensor.ReducedTensor(@TypeOf(x), dim).result(self);
         out.eval_fn = struct {
             var done = false;
@@ -174,6 +171,7 @@ pub const ZigBackend = struct {
                     return comptime scalarZipOpEval(zip_op, a, b);
                 }
             },
+            else => @panic("Not implemented"),
         }.f;
     }
 
@@ -181,27 +179,28 @@ pub const ZigBackend = struct {
         self.allocator = args.allocator;
     }
 
-    pub fn mapEval(self: *const ZigBackend, op: ops.MapOp, x: anytype, out: *const @TypeOf(x)) void {
+    pub fn mapEval(self: *const ZigBackend, comptime op: ops.MapOp, x: anytype, out: *const @TypeOf(x)) void {
         _ = op;
         _ = out;
+
         _ = self;
-        // TODO: Iterate over each of the output elements and compute op(x)
-        // Something like this:
-        // Also in minitorch, map can broadcast, which I'm not exactly sure why because its 1-1 anyways
-        // inline for (0..out.size) |flat_index| {
-        //     out.storage.data[flat_index] = @call(.always_inline, scalarOpEval(op), .{x[flat_index]});
+        // inline for (0..@field(@TypeOf(out.*), "size")) |flat_index| {
+        //     out.storage.?.Zig.data[flat_index] = @call(.always_inline, scalarOpEval(.{ .MapOp = op }), .{x.storage.?.Zig.data[flat_index]});
         // }
     }
 
-    pub fn zipEval(self: *const ZigBackend, op: ops.ZipOp, a: anytype, b: anytype, out: *const tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b))) void {
+    pub fn zipEval(self: *const ZigBackend, comptime op: ops.ZipOp, a: anytype, b: anytype, out: *const tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b))) void {
         _ = op;
         _ = out;
         _ = self;
-        // inline for (0..out.size) |out_flat_index| {
-        //     const out_index = out.unflattenIndex(out_flat_index);
-        //     const a_index = a.broadcastIndex(out.ndims, out_index);
-        //     const b_index = b.broadcastIndex(out.ndims, out.index);
-        //     out.storage.data[out_flat_index] = @call(.always_inline, scalarOpEval(op), .{ a.storage.data[a.flattenIndex(a_index)], b.storage.data[b.flattenIndex(b_index)] });
+        // inline for (0..@field(@TypeOf(out.*), "size")) |out_flat_index| {
+        //     const out_index = @TypeOf(out.*).unflattenIndex(out_flat_index);
+        //     const a_index = @TypeOf(a).broadcastIndex(out_index);
+        //     const b_index = @TypeOf(b).broadcastIndex(out_index);
+        //     out.storage.?.Zig.data[out_flat_index] = @call(.always_inline, scalarOpEval(.{ .ZipOp = op }), .{
+        //         a.storage.?.Zig.data[@TypeOf(a).flattenIndex(a_index)],
+        //         b.storage.?.Zig.data[@TypeOf(b).flattenIndex(b_index)],
+        //     });
         // }
     }
 
@@ -233,7 +232,7 @@ pub const ZigBackend = struct {
         @panic("No allocator provided");
     }
 
-    // pub fn freeStorage(_: *const ZigBackend, storage: *Storage(comptime dtype: type)) void {
-    //     storage.deinit();
-    // }
+    pub fn deinitStorage(_: *const ZigBackend, storage: anytype) void {
+        storage.deinit();
+    }
 };
