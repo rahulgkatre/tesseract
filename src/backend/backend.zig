@@ -3,7 +3,7 @@ const Allocator = std.mem.Allocator;
 const ops = @import("../ops.zig");
 const comptimePrint = std.fmt.comptimePrint;
 const tensor = @import("../tensor.zig");
-const ZigBackend = @import("zig_backend.zig").ZigBackend;
+const ZigBackend = @import("ZigBackend.zig");
 
 pub const BackendTypes = enum {
     Zig,
@@ -11,10 +11,7 @@ pub const BackendTypes = enum {
 
 pub const Backend = union(BackendTypes) {
     Zig: ZigBackend,
-    // TODO: Other backends
-    // ArrayFire: ArrayFireBackend
-    // CUDA: CudaBackend
-    // ...
+
     pub fn Storage(comptime dtype: type) type {
         return union(BackendTypes) {
             const Self = @This();

@@ -8,17 +8,28 @@ pub const Op = union(OpTypes) { MapOp: MapOp, ZipOp: ZipOp, ReduceOp: ReduceOp, 
 fn ScalarMapOpReturnType(comptime map_op: MapOp, comptime x: anytype) type {
     return switch (map_op) {
         .Neg => @TypeOf(x), // Neg can apply to any numeric type (or boolean)
-        else => @TypeOf(x + 0.0), // Other
+        else => t: {
+            const size = @sizeOf(@TypeOf(x));
+            if (size <= 2) {
+                break :t f16;
+            } else if (size <= 4) {
+                break :t f32;
+            } else if (size <= 8) {
+                break :t f64;
+            } else {
+                break :t f128;
+            }
+        },
     };
 }
 
 fn scalarMapOpEval(comptime map_op: MapOp, x: anytype) ScalarMapOpReturnType(map_op, x) {
     return comptime switch (map_op) {
         .Neg => if (@typeInfo(@TypeOf(x)) == .Bool) !x else -x,
-        .Log2 => @log2(x + 0.0),
-        .Exp2 => @exp2(x + 0.0),
-        .Sqrt => @sqrt(x + 0.0),
-        .Recip => @divExact(1.0, x + 0.0),
+        .Log2 => @log2(x),
+        .Exp2 => @exp2(x),
+        .Sqrt => @sqrt(x),
+        .Recip => if (@typeInfo(@TypeOf(x)) == .Float) 1.0 / x else @compileError("Input to RECIP must be a float"),
     };
 }
 
@@ -26,7 +37,7 @@ fn ScalarZipOpReturnType(comptime zip_op: ZipOp, comptime a: anytype, comptime b
     return switch (zip_op) {
         .Lt, .Eq => bool,
         .Xor => @TypeOf(a ^ b),
-        else => @TypeOf(a + b),
+        else => @TypeOf(a * b),
     };
 }
 
@@ -77,17 +88,12 @@ pub fn EvalFunc(comptime op: Op) ScalarOpReturnType(op) {
 const exp2 = EvalFunc(.{ .MapOp = .Exp2 });
 const add = EvalFunc(.{ .ZipOp = .Add });
 const neg = EvalFunc(.{ .MapOp = .Neg });
+const recip = EvalFunc(.{ .MapOp = .Recip });
 
 const print = @import("std").debug.print;
-// TODO: Test fails because Zig does not automatically cast during arithmetic
-// We can handle this by doing the following:
-// To keep the size requirements the same, use @sizeOf
-// to find the number of bits for the int data, and use the same number of bits
-// for the floating point representation
 test "test impl" {
-    const a: i32 = 2;
-    const b: i32 = 3;
-    print("\n-a = {any}", .{neg(a)});
-    print("\nexp2(b) = {any}", .{exp2(b)});
+    const a: i64 = 2e18;
+    const b: f128 = 5.0;
     print("\na+b = {any}\n", .{add(a, b)});
+    print("{any}\n", .{@TypeOf(add(a, b))});
 }
