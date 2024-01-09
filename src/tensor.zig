@@ -3,8 +3,7 @@ const Allocator = std.mem.Allocator;
 const comptimePrint = std.fmt.comptimePrint;
 const utils = @import("utils.zig");
 const ops = @import("ops.zig");
-const Backend = @import("backend.zig").Backend;
-const Storage = @import("storage.zig").Storage;
+const Backend = @import("backend/backend.zig").Backend;
 
 const InitType = enum { NotDefined, Input, Constant, Result };
 
@@ -43,9 +42,9 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         // tensors will not have gradients calculated.
         init_type: InitType,
         backend: *const Backend,
-        storage: ?*Storage(dtype),
+        storage: ?*Backend.Storage(dtype),
         eval_fn: *const fn (self: *const Self) void,
-        fn init(backend: *const Backend, storage: ?*Storage(dtype)) Self {
+        fn init(backend: *const Backend, storage: ?*Backend.Storage(dtype)) Self {
             return .{
                 .init_type = .NotDefined,
                 .backend = backend,
@@ -137,13 +136,11 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             return index;
         }
         pub fn permute(self: *const Self, comptime perm: [ndims]u8) PermutedTensor(Self, perm) {
-            // TODO: Store a TypeOps.Permute in the output tensor for backprop
             var tensor = PermutedTensor(Self, perm).result(self.backend);
             tensor.storage = self.storage;
             return tensor;
         }
         pub fn view(self: *const Self, comptime new_shape: anytype) Tensor(dtype, new_shape) {
-            // TODO: Store a TypeOps.View in the output tensor for backprop
             if (self.isContiguous()) {
                 var tensor = Tensor(dtype, new_shape).result(self.backend);
                 tensor.storage = self.storage;
@@ -153,7 +150,6 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             }
         }
         pub fn asStrided(self: *const Self, comptime new_shape: anytype, comptime new_strides: anytype) StridedTensor(dtype, new_shape, new_strides) {
-            // TODO: Store a TypeOps.Strided in the output tensor for backprop
             var tensor = StridedTensor(dtype, new_shape, new_strides).result(self.backend);
             tensor.storage = self.storage;
             return tensor;

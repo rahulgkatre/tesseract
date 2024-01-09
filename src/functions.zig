@@ -1,6 +1,5 @@
 const ops = @import("ops.zig");
 const tensor = @import("tensor.zig");
-const Backend = @import("backend.zig").Backend;
 
 // Higher order functions
 pub fn map(x_ptr: anytype, op: ops.MapOp) @TypeOf(x_ptr.*) {

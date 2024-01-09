@@ -1,109 +1,31 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const Storage = @import("storage.zig").Storage;
-const ops = @import("ops.zig");
-const comptimePrint = std.fmt.comptimePrint;
-const tensor = @import("tensor.zig");
+const Allocator = @import("std").mem.Allocator;
+const tensor = @import("../tensor.zig");
+const ops = @import("../ops.zig");
+const Backend = @import("backend.zig").Backend;
 
-pub const BackendTypes = enum {
-    Zig,
-};
-
-pub const Backend = union(BackendTypes) {
-    Zig: ZigBackend,
-    // TODO: Other backends
-    // ArrayFire: ArrayFireBackend
-    // CUDA: CudaBackend
-    // ...
-    // pub fn impl(self: *Backend, comptime op: ops.Op) void {
-    //     return switch (self.*) {
-    //         inline else => |b| @TypeOf(b).impl(op),
-    //     };
-    // }
-    pub fn init(self: *Backend, args: anytype) void {
-        return switch (self.*) {
-            inline else => |*b| b.init(args),
-        };
-    }
-    pub fn alloc(self: *const Backend, comptime dtype: type, size: usize) !*Storage(dtype) {
-        return switch (self.*) {
-            inline else => |*b| try b.alloc(dtype, size),
-        };
-    }
-    pub fn map(self: *const Backend, op: ops.MapOp, x: anytype) @TypeOf(x) {
-        var out = @TypeOf(x).result(self);
-        out.eval_fn = struct {
-            var done = false;
-            fn eval(ptr: *const @TypeOf(out)) void {
-                x.eval();
-                if (!@inComptime()) {
-                    if (done) {
-                        return;
-                    }
-                    std.debug.print("\n{s}@{d} = {any} {s}@{d}", .{ ptr.str, @intFromPtr(ptr), op, x.str, @intFromPtr(&x) });
-                    done = true;
-                } else {
-                    @compileLog(comptimePrint("{s} = {any} {s}", .{ ptr.str, op, x.str }));
-                }
-                switch (self.*) {
-                    inline else => |*eval_backend| eval_backend.mapEval(op, x, ptr),
-                }
-            }
-        }.eval;
-        return out;
-    }
-    pub fn zip(self: *const Backend, op: ops.ZipOp, a: anytype, b: anytype) tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b)) {
-        var out = tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b)).result(self);
-        out.eval_fn = struct {
-            var done = false;
-            fn eval(ptr: *const @TypeOf(out)) void {
-                a.eval();
-                b.eval();
-                if (!@inComptime()) {
-                    if (done) {
-                        return;
-                    }
-                    std.debug.print("\n{s}@{d} = {any} {s}@{d} {s}@{d}", .{ ptr.str, @intFromPtr(ptr), op, a.str, @intFromPtr(&a), b.str, @intFromPtr(&b) });
-                    done = true;
-                } else {
-                    @compileLog(comptimePrint("{s} = {any} {s} {s}", .{ ptr.str, op, a.str, b.str }));
-                }
-                switch (self.*) {
-                    inline else => |*eval_backend| eval_backend.zipEval(op, a, b, ptr),
-                }
-            }
-        }.eval;
-        return out;
-    }
-    pub fn reduce(self: *const Backend, op: ops.ReduceOp, x: anytype, dim: ?u8) tensor.ReducedTensor(@TypeOf(x), dim) {
-        var out = tensor.ReducedTensor(@TypeOf(x), dim).result(self);
-        out.eval_fn = struct {
-            var done = false;
-            fn eval(ptr: *const @TypeOf(out)) void {
-                x.eval();
-                if (!@inComptime()) {
-                    if (done) {
-                        return;
-                    }
-                    std.debug.print("\n{s}@{d} = {any} {s}@{d} {?}", .{ ptr.str, @intFromPtr(ptr), op, x.str, @intFromPtr(&x), dim });
-                    done = true;
-                } else {
-                    @compileLog(comptimePrint("{s} = {any} {s} {?}", .{ ptr.str, op, x.str, dim }));
-                }
-                // TODO: Compute the start value for the accumulator based on the op, and the zip op used to accumulate
-                // by switching on the reduce op
-                // switch (self.*) {
-                //     inline else => |*eval_backend| eval_backend.reduceEval(op, zip_op, x, dim, acc_start, ptr),
-                // }
-            }
-        }.eval;
-        return out;
-    }
-};
-
-// TODO: Move this to its own file in a directory called backends
 pub const ZigBackend = struct {
-    const ZigStorage = @import("storage.zig").ZigStorage;
+    pub fn ZigStorage(comptime dtype: type) type {
+        return struct {
+            const Self = @This();
+            data: []dtype,
+            allocator: *const Allocator,
+            pub fn init(size: usize, allocator: *const Allocator) !*Backend.Storage(dtype) {
+                const data = try allocator.alloc(dtype, size);
+                const storage = try allocator.create(Backend.Storage(dtype));
+                storage.* = .{
+                    .Zig = .{
+                        .data = data,
+                        .allocator = allocator,
+                    },
+                };
+                return storage;
+            }
+            pub fn deinit(self: *Self) void {
+                self.allocator.free(self.data);
+            }
+        };
+    }
+
     allocator: ?*const Allocator = null,
 
     fn ScalarMapOpReturnType(comptime map_op: ops.MapOp, comptime x: anytype) type {
@@ -225,7 +147,7 @@ pub const ZigBackend = struct {
         // }
     }
 
-    pub fn alloc(self: *const ZigBackend, comptime dtype: type, size: usize) !*Storage(dtype) {
+    pub fn alloc(self: *const ZigBackend, comptime dtype: type, size: usize) !*Backend.Storage(dtype) {
         if (self.allocator != null) {
             return try ZigStorage(dtype).init(size, self.allocator.?);
         }
