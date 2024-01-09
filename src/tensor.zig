@@ -45,46 +45,42 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         init_type: InitType,
         backend: *const Backend,
         storage: ?*Backend.Storage(dtype),
-        eval_init_fn: *const fn (self: *Self) void,
-        eval_fn: *const fn (self: *Self) void,
+        initStorageDataFn: *const fn (self: *Self) void,
+        evalFn: *const fn (self: *Self) Self,
         fn init(backend: *const Backend, storage: ?*Backend.Storage(dtype)) Self {
             const funcs = struct {
                 var done = false;
-                fn eval(self: *Self) void {
+                fn eval(self: *Self) Self {
                     if (self.init_type == .NotDefined) {
                         @panic("The initialization type of this tensor is not defined");
                     }
                     if (!@inComptime()) {
-                        self.eval_init_fn(self);
+                        self.make();
+                        self.initStorageDataFn(self);
                         if (done) {
-                            return;
+                            return self.*;
                         }
-                        std.debug.print(
-                            "\n{s}@{d} = {s} {s}",
-                            .{ self.str, @intFromPtr(self), @tagName(self.init_type), self.str },
-                        );
+                        std.debug.print("\n{s}@{d} = {s} {s}", .{ self.str, @intFromPtr(self), @tagName(self.init_type), self.str });
                         done = true;
-                    } else {
-                        @compileLog(comptimePrint(
-                            "{s} = {s}.init()",
-                            .{ self.str, self.str },
-                        ));
-                    }
-                    if (self.storage == null) {
-                        switch (self.init_type) {
-                            .Input => @compileError("Values must be provided for input tensors before evaluating."),
-                            else => @compileError("Tensor has no associated storage"),
+                        if (self.storage == null) {
+                            switch (self.init_type) {
+                                .Input => @panic("Values must be provided for input tensors before evaluating."),
+                                else => @panic("Tensor has no associated storage"),
+                            }
                         }
+                    } else {
+                        @compileLog(comptimePrint("\n{s} = {s} {s}", .{ self.str, @tagName(self.init_type), self.str }));
                     }
+                    return self.*;
                 }
-                fn eval_init(_: *Self) void {}
+                fn initStorageData(_: *Self) void {}
             };
             return .{
                 .init_type = .NotDefined,
                 .backend = backend,
                 .storage = storage,
-                .eval_init_fn = funcs.eval_init,
-                .eval_fn = funcs.eval,
+                .initStorageDataFn = funcs.initStorageData,
+                .evalFn = funcs.eval,
             };
         }
         pub fn input(backend: *const Backend) Self {
@@ -92,13 +88,14 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             tensor.init_type = .Input;
             return tensor;
         }
-        pub fn constant(backend: *const Backend, value: dtype) Self {
+        pub fn constant(backend: *const Backend, comptime value: dtype) Self {
             var tensor = init(backend, null);
             tensor.init_type = .Constant;
-            tensor.eval_init_fn = struct {
+            tensor.initStorageDataFn = struct {
+                const val: dtype = value;
                 fn eval_init(self: *Self) void {
                     if (self.storage != null) {
-                        self.storage.?.fill(value);
+                        self.storage.?.fill(val);
                     }
                 }
             }.eval_init;
@@ -109,11 +106,12 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             tensor.init_type = .Result;
             return tensor;
         }
-        pub fn eval(self: *const Self) void {
-            self.eval_fn(@constCast(self));
+        pub fn eval(self: *const Self) Self {
+            return self.evalFn(@constCast(self));
         }
-        pub fn empty(self: *Self) !void {
-            self.storage = try self.backend.alloc(dtype, size);
+        pub fn make(self: *Self) void {
+            self.storage = self.backend.alloc(dtype, size) catch @panic("Unable to allocate tensor storage");
+            self.initStorageDataFn(self);
         }
         // TODO: Don't deinit individual tensors, the backend should deinit everything it allocated
         // pub fn deinit(self: *const Self) void {

@@ -197,7 +197,7 @@ fn ScalarZipOpEvalFn(
     };
 }
 
-pub fn mapEval(_: *const ZigBackend, comptime op: ops.MapOp, x: anytype, out: *const @TypeOf(x)) void {
+pub fn mapEval(_: *const ZigBackend, comptime op: ops.MapOp, x: anytype, out: *@TypeOf(x)) void {
     const mapFn = ScalarMapOpEvalFn(
         op,
         @field(@TypeOf(x), "dtype"),
@@ -206,7 +206,7 @@ pub fn mapEval(_: *const ZigBackend, comptime op: ops.MapOp, x: anytype, out: *c
         out.storage.?.Zig.data[flat_index] = mapFn(x.storage.?.Zig.data[flat_index]);
     }
 }
-
+const std = @import("std");
 pub fn zipEval(
     _: *const ZigBackend,
     comptime op: ops.ZipOp,

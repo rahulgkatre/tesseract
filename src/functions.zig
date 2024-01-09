@@ -70,4 +70,5 @@ pub const add = Func(.{ .ZipOp = .Add });
 pub const mul = Func(.{ .ZipOp = .Mul });
 pub const sum = Func(.{ .ReduceOp = .Sum });
 pub const max = Func(.{ .ReduceOp = .Max });
-pub const div = MapZipFunc(.Recip, .Mul);
+// pub const div = MapZipFunc(.Recip, .Mul);
+pub const recip = Func(.{ .MapOp = .Recip });
