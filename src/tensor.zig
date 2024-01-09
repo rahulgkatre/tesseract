@@ -16,7 +16,9 @@ fn DefaultStridedTensor(comptime dtype: type, comptime shape: anytype) type {
 }
 
 pub fn StridedTensor(comptime dtype: type, comptime shape: anytype, comptime strides: anytype) type {
-    if (shape.len + 1 != strides.len) @compileError("Provided shape ndims not compatible provided strides ndims");
+    if (shape.len + 1 != strides.len) {
+        @compileError("Provided shape ndims not compatible provided strides ndims");
+    }
     return BaseTensor(dtype, shape.len, shape, strides);
 }
 
@@ -43,39 +45,46 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         init_type: InitType,
         backend: *const Backend,
         storage: ?*Backend.Storage(dtype),
+        eval_init_fn: *const fn (self: *Self) void,
         eval_fn: *const fn (self: *Self) void,
         fn init(backend: *const Backend, storage: ?*Backend.Storage(dtype)) Self {
+            const funcs = struct {
+                var done = false;
+                fn eval(self: *Self) void {
+                    if (self.init_type == .NotDefined) {
+                        @panic("The initialization type of this tensor is not defined");
+                    }
+                    if (!@inComptime()) {
+                        self.eval_init_fn(self);
+                        if (done) {
+                            return;
+                        }
+                        std.debug.print(
+                            "\n{s}@{d} = {s} {s}",
+                            .{ self.str, @intFromPtr(self), @tagName(self.init_type), self.str },
+                        );
+                        done = true;
+                    } else {
+                        @compileLog(comptimePrint(
+                            "{s} = {s}.init()",
+                            .{ self.str, self.str },
+                        ));
+                    }
+                    if (self.storage == null) {
+                        switch (self.init_type) {
+                            .Input => @compileError("Values must be provided for input tensors before evaluating."),
+                            else => @compileError("Tensor has no associated storage"),
+                        }
+                    }
+                }
+                fn eval_init(_: *Self) void {}
+            };
             return .{
                 .init_type = .NotDefined,
                 .backend = backend,
                 .storage = storage,
-                .eval_fn = struct {
-                    // TODO: The default eval_fn must check if the tensor is initialiazed and panic if it is not
-                    var done = false;
-                    fn eval(self: *Self) void {
-                        if (self.init_type == .NotDefined) {
-                            @panic("The initialization type of this tensor is not defined");
-                        }
-                        if (!@inComptime()) {
-                            if (done) {
-                                return;
-                            }
-                            std.debug.print(
-                                "\n{s}@{d} = {s} {s}",
-                                .{ self.str, @intFromPtr(self), @tagName(self.init_type), self.str },
-                            );
-                            done = true;
-                        } else {
-                            @compileLog(comptimePrint(
-                                "{s} = {s}.init()",
-                                .{ self.str, self.str },
-                            ));
-                        }
-                        if (self.storage == null) {
-                            @panic("Tensor has no storage");
-                        }
-                    }
-                }.eval,
+                .eval_init_fn = funcs.eval_init,
+                .eval_fn = funcs.eval,
             };
         }
         pub fn input(backend: *const Backend) Self {
@@ -83,9 +92,16 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             tensor.init_type = .Input;
             return tensor;
         }
-        pub fn constant(backend: *const Backend) Self {
+        pub fn constant(backend: *const Backend, value: dtype) Self {
             var tensor = init(backend, null);
             tensor.init_type = .Constant;
+            tensor.eval_init_fn = struct {
+                fn eval_init(self: *Self) void {
+                    if (self.storage != null) {
+                        self.storage.?.fill(value);
+                    }
+                }
+            }.eval_init;
             return tensor;
         }
         pub fn result(backend: *const Backend) Self {
@@ -96,7 +112,6 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         pub fn eval(self: *const Self) void {
             self.eval_fn(@constCast(self));
         }
-        // TODO: Add more functions to realize tensors (e.g. ones, full, zeros)
         pub fn empty(self: *Self) !void {
             self.storage = try self.backend.alloc(dtype, size);
         }

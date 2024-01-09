@@ -17,9 +17,9 @@ pub const Backend = union(BackendTypes) {
             const Self = @This();
             Zig: ZigBackend.ZigStorage(dtype),
 
-            pub fn deinit(self: *Self) void {
+            pub fn fill(self: *Self, value: dtype) void {
                 switch (self.*) {
-                    inline else => |*b| b.deinit(),
+                    inline else => |*b| b.fill(value),
                 }
             }
         };

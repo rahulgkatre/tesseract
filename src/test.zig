@@ -128,8 +128,8 @@ test "lazy with realization" {
 }
 
 fn fn1() Tensor(i32, .{ 2, 1, 4 }) {
-    const tensor1 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend);
-    const tensor2 = Tensor(i32, .{ 2, 3, 1 }).constant(TestBackend);
+    const tensor1 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend, 2);
+    const tensor2 = Tensor(i32, .{ 2, 3, 1 }).constant(TestBackend, 3);
     const tensor3 = tensor1
         .add(tensor2)
         .sum(1);
@@ -137,8 +137,8 @@ fn fn1() Tensor(i32, .{ 2, 1, 4 }) {
 }
 
 fn fn2(input: anytype) Tensor(i32, .{ 2, 1, 4 }) {
-    const tensor4 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend);
-    const tensor5 = Tensor(i32, .{ 2, 3, 1 }).constant(TestBackend);
+    const tensor4 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend, 2);
+    const tensor5 = Tensor(i32, .{ 2, 3, 1 }).constant(TestBackend, 3);
     const tensor6 = tensor4
         .mul(tensor5)
         .sum(1)
@@ -169,5 +169,6 @@ test "softmax" {
         const x = Tensor(f16, .{ 2, 16 }).input(TestBackend);
         break :blk softmax(x, 1);
     };
+
     runEval("softmax", out);
 }
