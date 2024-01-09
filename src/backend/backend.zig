@@ -39,7 +39,7 @@ pub const Backend = union(BackendTypes) {
         var out = @TypeOf(x).result(self);
         out.eval_fn = struct {
             var done = false;
-            fn eval(ptr: *const @TypeOf(out)) void {
+            fn eval(ptr: *@TypeOf(out)) void {
                 x.eval();
                 if (!@inComptime()) {
                     if (done) {
@@ -50,9 +50,9 @@ pub const Backend = union(BackendTypes) {
                 } else {
                     @compileLog(comptimePrint("{s} = {any} {s}", .{ ptr.str, op, x.str }));
                 }
-                // switch (self.*) {
-                //     inline else => |*eval_backend| eval_backend.mapEval(op, x, ptr),
-                // }
+                switch (self.*) {
+                    inline else => |*eval_backend| eval_backend.mapEval(op, x, ptr),
+                }
             }
         }.eval;
         return out;
@@ -61,7 +61,7 @@ pub const Backend = union(BackendTypes) {
         var out = tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b)).result(self);
         out.eval_fn = struct {
             var done = false;
-            fn eval(ptr: *const @TypeOf(out)) void {
+            fn eval(ptr: *@TypeOf(out)) void {
                 a.eval();
                 b.eval();
                 if (!@inComptime()) {
@@ -73,9 +73,9 @@ pub const Backend = union(BackendTypes) {
                 } else {
                     @compileLog(comptimePrint("{s} = {any} {s} {s}", .{ ptr.str, op, a.str, b.str }));
                 }
-                // switch (self.*) {
-                //     inline else => |*eval_backend| eval_backend.zipEval(op, a, b, ptr),
-                // }
+                switch (self.*) {
+                    inline else => |*eval_backend| eval_backend.zipEval(op, a, b, ptr),
+                }
             }
         }.eval;
         return out;
@@ -84,7 +84,7 @@ pub const Backend = union(BackendTypes) {
         var out = tensor.ReducedTensor(@TypeOf(x), dim).result(self);
         out.eval_fn = struct {
             var done = false;
-            fn eval(ptr: *const @TypeOf(out)) void {
+            fn eval(ptr: *@TypeOf(out)) void {
                 x.eval();
                 if (!@inComptime()) {
                     if (done) {
@@ -97,9 +97,9 @@ pub const Backend = union(BackendTypes) {
                 }
                 // TODO: Compute the start value for the accumulator based on the op, and the zip op used to accumulate
                 // by switching on the reduce op
-                // switch (self.*) {
-                //     inline else => |*eval_backend| eval_backend.reduceEval(op, zip_op, x, dim, acc_start, ptr),
-                // }
+                switch (self.*) {
+                    inline else => |*eval_backend| eval_backend.reduceEval(op, x, dim, ptr),
+                }
             }
         }.eval;
         return out;

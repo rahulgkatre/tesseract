@@ -43,7 +43,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         init_type: InitType,
         backend: *const Backend,
         storage: ?*Backend.Storage(dtype),
-        eval_fn: *const fn (self: *const Self) void,
+        eval_fn: *const fn (self: *Self) void,
         fn init(backend: *const Backend, storage: ?*Backend.Storage(dtype)) Self {
             return .{
                 .init_type = .NotDefined,
@@ -52,7 +52,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
                 .eval_fn = struct {
                     // TODO: The default eval_fn must check if the tensor is initialiazed and panic if it is not
                     var done = false;
-                    fn eval(self: *const Self) void {
+                    fn eval(self: *Self) void {
                         if (self.init_type == .NotDefined) {
                             @panic("The initialization type of this tensor is not defined");
                         }
@@ -70,6 +70,9 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
                                 "{s} = {s}.init()",
                                 .{ self.str, self.str },
                             ));
+                        }
+                        if (self.storage == null) {
+                            @panic("Tensor has no storage");
                         }
                     }
                 }.eval,
@@ -91,7 +94,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             return tensor;
         }
         pub fn eval(self: *const Self) void {
-            self.eval_fn(self);
+            self.eval_fn(@constCast(self));
         }
         // TODO: Add more functions to realize tensors (e.g. ones, full, zeros)
         pub fn empty(self: *Self) !void {
@@ -104,14 +107,14 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         pub inline fn isContiguous(_: *const Self) bool {
             return comptime utils.isContiguous(ndims, strides);
         }
-        pub fn broadcastIndex(bc_index: anytype) [ndims]usize {
+        pub fn broadcastIndex(_: anytype, bc_index: anytype) [ndims]usize {
             // Determine the index in the current tensor given an index in the broadcasted tensor
             // If the current tensor has size of 1 in a dimension, then the index must be 0
             // Otherwise it will be what the broadcasted index is
             const bc_ndims = bc_index.len;
             var index: [ndims]usize = undefined;
             inline for (0..ndims) |d| {
-                index[bc_ndims - d - 1] = if (shape[ndims - d - 1] == 1) 0 else bc_index[bc_ndims - d - 1];
+                index[ndims - d - 1] = if (shape[ndims - d - 1] == 1) 0 else bc_index[bc_ndims - d - 1];
             }
             return index;
         }

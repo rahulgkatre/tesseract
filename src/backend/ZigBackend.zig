@@ -28,11 +28,15 @@ pub fn ZigStorage(comptime dtype: type) type {
 
 allocator: ?*const Allocator = null,
 
-fn ScalarMapOpReturnType(comptime map_op: ops.MapOp, comptime x: anytype) type {
+pub fn init(self: *ZigBackend, args: struct { allocator: *const Allocator }) void {
+    self.allocator = args.allocator;
+}
+
+fn ScalarMapOpReturnType(comptime map_op: ops.MapOp, comptime dtype: type) type {
     return switch (map_op) {
-        .Neg => @TypeOf(x), // Neg can apply to any numeric type (or boolean)
+        .Neg => dtype, // Neg can apply to any numeric type (or boolean)
         else => t: {
-            const size = @sizeOf(@TypeOf(x));
+            const size = @sizeOf(dtype);
             if (size <= 2) {
                 break :t f16;
             } else if (size <= 4) {
@@ -46,116 +50,118 @@ fn ScalarMapOpReturnType(comptime map_op: ops.MapOp, comptime x: anytype) type {
     };
 }
 
-fn scalarMapOpEval(comptime map_op: ops.MapOp, x: anytype) ScalarMapOpReturnType(map_op, x) {
-    return comptime switch (map_op) {
-        .Neg => if (@typeInfo(@TypeOf(x)) == .Bool) !x else -x,
-        .Log2 => @log2(x),
-        .Exp2 => @exp2(x),
-        .Sqrt => @sqrt(x),
-        .Recip => if (@typeInfo(@TypeOf(x)) == .Float) 1.0 / x else @compileError("Input to RECIP must be a float"),
-    };
-}
+fn scalarMapOpEvalFnReturnType(comptime map_op: ops.MapOp, comptime dtype: type) type {
+    return @TypeOf(struct {
+        inline fn f(x: dtype) ScalarMapOpReturnType(map_op, dtype) {
+            _ = x;
 
-fn ScalarZipOpReturnType(comptime zip_op: ops.ZipOp, comptime a: anytype, comptime b: anytype) type {
-    return switch (zip_op) {
-        .Lt, .Eq => bool,
-        .Xor => @TypeOf(a ^ b),
-        else => @TypeOf(a * b),
-    };
-}
-
-fn scalarZipOpEval(comptime zip_op: ops.ZipOp, a: anytype, b: anytype) ScalarZipOpReturnType(zip_op, a, b) {
-    return comptime switch (zip_op) {
-        .Add => a + b,
-        .Mul => a * b,
-        .Maximum => @max(a, b),
-        .Lt => a < b,
-        .Eq => a == b,
-        .Xor => a ^ b,
-        else => @panic("Not implemented"),
-    };
-}
-
-fn ScalarOpReturnType(comptime op: ops.Op) type {
-    return @TypeOf(switch (op) {
-        .MapOp => |map_op| struct {
-            inline fn f(x: anytype) ScalarMapOpReturnType(map_op, x) {
-                return comptime scalarMapOpEval(map_op, x);
-            }
-        },
-        .ZipOp => |zip_op| struct {
-            inline fn f(a: anytype, b: anytype) ScalarZipOpReturnType(zip_op, a, b) {
-                return comptime scalarZipOpEval(zip_op, a, b);
-            }
-        },
-        else => @panic("Not implemented"),
+            @panic("Not a real function");
+        }
     }.f);
 }
 
-pub fn scalarOpEval(comptime op: ops.Op) ScalarOpReturnType(op) {
-    return comptime switch (op) {
-        .MapOp => |map_op| struct {
-            inline fn f(x: anytype) ScalarMapOpReturnType(map_op, x) {
-                return comptime scalarMapOpEval(map_op, x);
-            }
-        },
-        .ZipOp => |zip_op| struct {
-            inline fn f(a: anytype, b: anytype) ScalarZipOpReturnType(zip_op, a, b) {
-                return comptime scalarZipOpEval(zip_op, a, b);
-            }
-        },
-        else => @panic("Not implemented"),
+fn scalarMapOpEvalFn(comptime map_op: ops.MapOp, comptime dtype: type) scalarMapOpEvalFnReturnType(map_op, dtype) {
+    return struct {
+        inline fn f(x: dtype) ScalarMapOpReturnType(map_op, dtype) {
+            return switch (map_op) {
+                .Neg => if (@typeInfo(@TypeOf(x)) == .Bool) !x else -x,
+                .Log2 => @log2(x),
+                .Exp2 => @exp2(x),
+                .Sqrt => @sqrt(x),
+                .Recip => if (@typeInfo(@TypeOf(x)) == .Float) 1.0 / x else @divTrunc(1, x),
+                else => @panic("Not implemented"),
+            };
+        }
     }.f;
 }
 
-pub fn init(self: *ZigBackend, args: struct { allocator: *const Allocator }) void {
-    self.allocator = args.allocator;
+fn ScalarZipOpReturnType(comptime zip_op: ops.ZipOp, comptime a_dtype: type, comptime b_dtype: type) type {
+    return switch (zip_op) {
+        .Lt, .Eq => bool,
+        .Xor => @TypeOf(@as(a_dtype, 0) ^ @as(b_dtype, 0)),
+        else => @TypeOf(@as(a_dtype, 0) * @as(a_dtype, 0)),
+    };
+}
+
+fn ScalarZipOpFnReturnType(comptime zip_op: ops.ZipOp, comptime a_dtype: type, comptime b_dtype: type) type {
+    return @TypeOf(struct {
+        inline fn f(_: a_dtype, _: b_dtype) ScalarZipOpReturnType(zip_op, a_dtype, b_dtype) {
+            @panic("Not a real function");
+        }
+    }.f);
+}
+
+fn scalarZipOpEvalFn(comptime zip_op: ops.ZipOp, comptime a_dtype: type, comptime b_dtype: type) ScalarZipOpFnReturnType(zip_op, a_dtype, b_dtype) {
+    return struct {
+        inline fn f(a: a_dtype, b: b_dtype) ScalarZipOpReturnType(zip_op, a_dtype, b_dtype) {
+            return switch (zip_op) {
+                .Add => a + b,
+                .Mul => a * b,
+                .Maximum => @max(a, b),
+                .Lt => a < b,
+                .Eq => a == b,
+                .Xor => a ^ b,
+                else => @panic("Not implemented"),
+            };
+        }
+    }.f;
 }
 
 pub fn mapEval(self: *const ZigBackend, comptime op: ops.MapOp, x: anytype, out: *const @TypeOf(x)) void {
-    _ = op;
-    _ = out;
-
     _ = self;
-    // inline for (0..@field(@TypeOf(out.*), "size")) |flat_index| {
-    //     out.storage.?.Zig.data[flat_index] = @call(.always_inline, scalarOpEval(.{ .MapOp = op }), .{x.storage.?.Zig.data[flat_index]});
-    // }
+    const map_op_eval_fn = scalarMapOpEvalFn(op, @field(@TypeOf(x), "dtype"));
+    inline for (0..@field(@TypeOf(out.*), "size")) |flat_index| {
+        out.storage.?.Zig.data[flat_index] = map_op_eval_fn(x.storage.?.Zig.data[flat_index]);
+    }
 }
 
-pub fn zipEval(self: *const ZigBackend, comptime op: ops.ZipOp, a: anytype, b: anytype, out: *const tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b))) void {
-    _ = op;
-    _ = out;
+pub fn zipEval(self: *const ZigBackend, comptime op: ops.ZipOp, a: anytype, b: anytype, out: *tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b))) void {
     _ = self;
-    // inline for (0..@field(@TypeOf(out.*), "size")) |out_flat_index| {
-    //     const out_index = @TypeOf(out.*).unflattenIndex(out_flat_index);
-    //     const a_index = @TypeOf(a).broadcastIndex(out_index);
-    //     const b_index = @TypeOf(b).broadcastIndex(out_index);
-    //     out.storage.?.Zig.data[out_flat_index] = @call(.always_inline, scalarOpEval(.{ .ZipOp = op }), .{
-    //         a.storage.?.Zig.data[@TypeOf(a).flattenIndex(a_index)],
-    //         b.storage.?.Zig.data[@TypeOf(b).flattenIndex(b_index)],
-    //     });
-    // }
+    const zip_op_eval_fn = scalarZipOpEvalFn(op, @field(@TypeOf(a), "dtype"), @field(@TypeOf(b), "dtype"));
+    inline for (0..@field(@TypeOf(out.*), "size")) |out_flat_index| {
+        const out_index = out.unflattenIndex(out_flat_index);
+        const a_index = a.broadcastIndex(out_index);
+        const b_index = b.broadcastIndex(out_index);
+
+        out.storage.?.Zig.data[out_flat_index] = zip_op_eval_fn(
+            a.storage.?.Zig.data[a.flattenIndex(a_index)],
+            b.storage.?.Zig.data[b.flattenIndex(b_index)],
+        );
+    }
 }
 
-pub fn reduceEval(self: *const Backend, op: ops.ReduceOp, zip_op: ops.ZipOp, x: anytype, dim: ?u8, acc_start: anytype, out: *const tensor.ReducedTensor(@TypeOf(x), dim)) void {
-    _ = zip_op;
-    _ = acc_start;
-    _ = out;
+const BuiltInReduceOp = @import("std").builtin.ReduceOp;
+
+pub fn reduceEval(self: *const ZigBackend, comptime op: ops.ReduceOp, x: anytype, comptime dim: ?u8, out: *tensor.ReducedTensor(@TypeOf(x), dim)) void {
     _ = self;
-    _ = op;
-    // if (dim == null) {
-    //     reduce across the entire input
-    // }
-    // inline for (0..out.size) |out_flat_index| {
-    //     const out_index = out.unflattenIndex(out_flat_index);
-    //     const x_start = x.flattenIndex(out_index);
-    //     var acc = acc_start;
-    //     for (0..x.shape[dim]) |i| {
-    //         x_flat_index = x_start + i * x.strides[dim];
-    //         acc = @call(.always_inline, zip_op, .{ acc, x.storage.data[x_flat_index] });
-    //     }
-    //     out.storage.data[out_flat_index] = acc;
-    // }
+    if (dim == null) {
+        const builtin_reduceop: BuiltInReduceOp = comptime switch (op) {
+            .Sum => .Add,
+            .Max => .Max,
+        };
+        const data_vec: @Vector(@field(@TypeOf(x), "size"), @field(@TypeOf(x), "dtype")) = x.storage.?.Zig.data[0..@field(@TypeOf(x), "size")].*;
+        out.storage.?.Zig.data[0] = @reduce(builtin_reduceop, data_vec);
+    } else {
+        const zip_op_eval_fn = scalarZipOpEvalFn(
+            switch (op) {
+                .Sum => .Add,
+                .Max => .Maximum,
+            },
+            @field(@TypeOf(x), "dtype"),
+            @field(@TypeOf(x), "dtype"),
+        );
+        inline for (0..@field(@TypeOf(out.*), "size")) |out_flat_index| {
+            const out_index = out.unflattenIndex(out_flat_index);
+            const x_start = x.flattenIndex(out_index);
+            var acc = x.storage.?.Zig.data[x_start];
+            var x_flat_index: usize = undefined;
+            for (1..x.shape[dim.?]) |i| {
+                x_flat_index = x_start + i * x.strides[dim.?];
+                acc = zip_op_eval_fn(acc, x.storage.?.Zig.data[x_flat_index]);
+            }
+            out.storage.?.Zig.data[out_flat_index] = acc;
+        }
+    }
 }
 
 pub fn alloc(self: *const ZigBackend, comptime dtype: type, size: usize) !*Backend.Storage(dtype) {
