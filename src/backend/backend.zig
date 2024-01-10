@@ -16,10 +16,9 @@ pub const Backend = union(BackendTypes) {
         return union(BackendTypes) {
             const Self = @This();
             Zig: ZigBackend.ZigStorage(dtype),
-
-            pub fn deinit(self: *Self) void {
+            pub fn fill(self: *Self, value: dtype) void {
                 switch (self.*) {
-                    inline else => |*b| b.deinit(),
+                    inline else => |*b| b.fill(value),
                 }
             }
         };
@@ -37,69 +36,58 @@ pub const Backend = union(BackendTypes) {
     }
     pub fn map(self: *const Backend, op: ops.MapOp, x: anytype) @TypeOf(x) {
         var out = @TypeOf(x).result(self);
-        out.eval_fn = struct {
-            var done = false;
-            fn eval(ptr: *const @TypeOf(out)) void {
-                x.eval();
+        out.evalFn = struct {
+            fn eval(out_ptr: *@TypeOf(out)) @TypeOf(out) {
+                const eval_x = x.eval();
                 if (!@inComptime()) {
-                    if (done) {
-                        return;
+                    // std.debug.print("\n{s}@{d} = {s} {s}@{d}", .{ out_ptr.str, @intFromPtr(out_ptr), @tagName(op), x.str, @intFromPtr(&x) });
+                    out_ptr.initStorage();
+                    switch (self.*) {
+                        inline else => |*eval_backend| eval_backend.mapEval(op, eval_x, out_ptr),
                     }
-                    std.debug.print("\n{s}@{d} = {any} {s}@{d}", .{ ptr.str, @intFromPtr(ptr), op, x.str, @intFromPtr(&x) });
-                    done = true;
                 } else {
-                    @compileLog(comptimePrint("{s} = {any} {s}", .{ ptr.str, op, x.str }));
+                    @compileLog(comptimePrint("{s} = {s} {s}", .{ out_ptr.str, @tagName(op), x.str }));
                 }
-                // switch (self.*) {
-                //     inline else => |*eval_backend| eval_backend.mapEval(op, x, ptr),
-                // }
+                return out_ptr.*;
             }
         }.eval;
         return out;
     }
     pub fn zip(self: *const Backend, op: ops.ZipOp, a: anytype, b: anytype) tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b)) {
         var out = tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b)).result(self);
-        out.eval_fn = struct {
-            var done = false;
-            fn eval(ptr: *const @TypeOf(out)) void {
-                a.eval();
-                b.eval();
+        out.evalFn = struct {
+            fn eval(out_ptr: *@TypeOf(out)) @TypeOf(out) {
+                const eval_a = a.eval();
+                const eval_b = b.eval();
                 if (!@inComptime()) {
-                    if (done) {
-                        return;
+                    // std.debug.print("\n{s}@{d} = {s} {s}@{d} {s}@{d}", .{ out_ptr.str, @intFromPtr(out_ptr), @tagName(op), a.str, @intFromPtr(&a), b.str, @intFromPtr(&b) });
+                    out_ptr.initStorage();
+                    switch (self.*) {
+                        inline else => |*eval_backend| eval_backend.zipEval(op, eval_a, eval_b, out_ptr),
                     }
-                    std.debug.print("\n{s}@{d} = {any} {s}@{d} {s}@{d}", .{ ptr.str, @intFromPtr(ptr), op, a.str, @intFromPtr(&a), b.str, @intFromPtr(&b) });
-                    done = true;
                 } else {
-                    @compileLog(comptimePrint("{s} = {any} {s} {s}", .{ ptr.str, op, a.str, b.str }));
+                    @compileLog(comptimePrint("{s} = {s} {s} {s}", .{ out_ptr.str, @tagName(op), a.str, b.str }));
                 }
-                // switch (self.*) {
-                //     inline else => |*eval_backend| eval_backend.zipEval(op, a, b, ptr),
-                // }
+                return out_ptr.*;
             }
         }.eval;
         return out;
     }
     pub fn reduce(self: *const Backend, op: ops.ReduceOp, x: anytype, dim: ?u8) tensor.ReducedTensor(@TypeOf(x), dim) {
         var out = tensor.ReducedTensor(@TypeOf(x), dim).result(self);
-        out.eval_fn = struct {
-            var done = false;
-            fn eval(ptr: *const @TypeOf(out)) void {
-                x.eval();
+        out.evalFn = struct {
+            fn eval(out_ptr: *@TypeOf(out)) @TypeOf(out) {
+                const eval_x = x.eval();
                 if (!@inComptime()) {
-                    if (done) {
-                        return;
+                    // std.debug.print("\n{s}@{d} = {s} {s}@{d} {d}", .{ out_ptr.str, @intFromPtr(out_ptr), @tagName(op), x.str, @intFromPtr(&x), dim orelse -1 });
+                    out_ptr.initStorage();
+                    switch (self.*) {
+                        inline else => |*eval_backend| eval_backend.reduceEval(op, eval_x, dim, out_ptr),
                     }
-                    std.debug.print("\n{s}@{d} = {any} {s}@{d} {?}", .{ ptr.str, @intFromPtr(ptr), op, x.str, @intFromPtr(&x), dim });
-                    done = true;
                 } else {
-                    @compileLog(comptimePrint("{s} = {any} {s} {?}", .{ ptr.str, op, x.str, dim }));
+                    @compileLog(comptimePrint("{s} = {s} {s} {?}", .{ out_ptr.str, @tagName(op), x.str, dim orelse -1 }));
                 }
-                // TODO: Compute the start value for the accumulator based on the op, and the zip op used to accumulate
-                // by switching on the reduce op
-                // switch (self.*) {
-                //     inline else => |*eval_backend| eval_backend.reduceEval(op, zip_op, x, dim, acc_start, ptr),
-                // }
+                return out_ptr.*;
             }
         }.eval;
         return out;

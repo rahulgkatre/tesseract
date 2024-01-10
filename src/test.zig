@@ -8,18 +8,13 @@ const ops = @import("ops.zig");
 const utils = @import("utils.zig");
 
 const TestBackend = &backend.Backend{ .Zig = .{ .allocator = null } };
-const logging = true;
-const compile_log = false;
+const compile_log = true;
 fn runEval(comptime test_name: anytype, comptime out: anytype) void {
-    if (!logging) {
-        return;
-    }
     if (compile_log) {
         @compileLog(test_name);
-        comptime out.eval();
+        _ = comptime out.eval();
     } else {
-        out.eval();
-        std.debug.print("\n", .{});
+        // std.debug.print("\n{any}\n", .{out.eval().storage.?.Zig.data});
     }
 }
 
@@ -76,37 +71,51 @@ test "as strided" {
         }
     }
 }
+test "map" {
+    const tensor1 = comptime Tensor(i32, .{ 2, 3, 4 }).constant(TestBackend, 3);
+    const tensor2 = comptime tensor1.neg();
+    try expectEqual([_]usize{ 2, 3, 4 }, tensor2.shape);
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    @constCast(TestBackend).Zig = .{ .allocator = &allocator };
+    _ = runEval("map", tensor2);
+}
 test "zip" {
     const out = comptime blk: {
-        const tensor1 = Tensor(i32, .{ 2, 1, 4 }).input(TestBackend);
-        const tensor2 = Tensor(i32, .{ 3, 1 }).input(TestBackend);
+        const tensor1 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend, 2);
+        const tensor2 = Tensor(i32, .{ 3, 1 }).constant(TestBackend, 3);
         const tensor3 = tensor1.add(tensor2);
         try expectEqual([_]usize{ 2, 3, 4 }, tensor3.shape);
         break :blk tensor3;
     };
-
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    @constCast(TestBackend).Zig = .{ .allocator = &allocator };
     runEval("zip", out);
 }
 test "reduce" {
     const out = comptime blk: {
-        const tensor1 = Tensor(i32, .{ 2, 3, 4 }).input(TestBackend);
+        const tensor1 = Tensor(i32, .{ 2, 3, 4 }).constant(TestBackend, 5);
         const tensor2 = tensor1.sum(1);
         try expectEqual([_]usize{ 2, 1, 4 }, tensor2.shape);
         break :blk tensor2;
     };
-
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    @constCast(TestBackend).Zig = .{ .allocator = &allocator };
     runEval("reduce", out);
 }
 test "zip reduce" {
     const out = comptime blk: {
-        const tensor1 = Tensor(i32, .{ 2, 1, 4 }).input(TestBackend);
-        const tensor2 = Tensor(i32, .{ 2, 3, 1 }).input(TestBackend);
-        const tensor3 = tensor1
-            .add(tensor2)
-            .sum(1);
+        const tensor1 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend, 2);
+        const tensor2 = Tensor(i32, .{ 2, 3, 1 }).constant(TestBackend, 3);
+        const tensor3 = tensor1.add(tensor2).sum(1);
         try expectEqual([_]usize{ 2, 1, 4 }, tensor3.shape);
         break :blk tensor3;
     };
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    @constCast(TestBackend).Zig = .{ .allocator = &allocator };
     runEval("zip reduce", out);
 }
 
@@ -115,35 +124,29 @@ test "lazy with realization" {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
-    var tensor1 = Tensor(i32, .{ 2, 3, 4 }).input(&NewBackend);
+    var tensor1 = Tensor(i32, .{ 2, 3, 4 }).constant(&NewBackend, 0);
     NewBackend.init(.{ .allocator = &allocator });
 
-    try tensor1.empty();
+    tensor1.initStorage();
     try expectEqual(true, tensor1.storage != null);
     try expectEqual(true, tensor1.storage.?.Zig.data.len == 24);
-
-    if (logging) {
-        std.debug.print("\n{any}\n", .{tensor1.storage.?});
-    }
+    try expectEqual([_]i32{0} ** 24, tensor1.storage.?.Zig.data[0..24].*);
 }
 
 fn fn1() Tensor(i32, .{ 2, 1, 4 }) {
-    const tensor1 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend);
-    const tensor2 = Tensor(i32, .{ 2, 3, 1 }).constant(TestBackend);
-    const tensor3 = tensor1
-        .add(tensor2)
-        .sum(1);
+    const tensor1 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend, 1);
+    const tensor2 = Tensor(i32, .{ 2, 3, 1 }).constant(TestBackend, 2);
+    const tensor3 = tensor1.add(tensor2).sum(1);
     return tensor3;
 }
 
 fn fn2(input: anytype) Tensor(i32, .{ 2, 1, 4 }) {
-    const tensor4 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend);
-    const tensor5 = Tensor(i32, .{ 2, 3, 1 }).constant(TestBackend);
-    const tensor6 = tensor4
-        .mul(tensor5)
-        .sum(1)
-        .add(input);
-    return tensor6;
+    return comptime blk: {
+        const tensor4 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend, 4);
+        const tensor5 = Tensor(i32, .{ 2, 3, 1 }).constant(TestBackend, 5);
+        const tensor6 = tensor4.mul(tensor5).sum(1).add(input);
+        break :blk tensor6;
+    };
 }
 
 test "tensors from functions" {
@@ -152,12 +155,15 @@ test "tensors from functions" {
         const tensor6 = fn2(tensor3);
         break :blk tensor6;
     };
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    @constCast(TestBackend).Zig = .{ .allocator = &allocator };
     runEval("tensors from functions", out);
 }
 
 fn softmax(x: anytype, comptime dim: u8) @TypeOf(x) {
     const max = x.max(null);
-    const x_minus_max = x.add(max.neg());
+    const x_minus_max = x.sub(max);
     const exp = x_minus_max.exp2();
     const sumexp = exp.sum(dim);
     const sm = x_minus_max.div(sumexp);
@@ -166,8 +172,11 @@ fn softmax(x: anytype, comptime dim: u8) @TypeOf(x) {
 
 test "softmax" {
     const out = comptime blk: {
-        const x = Tensor(f16, .{ 2, 16 }).input(TestBackend);
+        const x = Tensor(f64, .{ 2, 16 }).constant(TestBackend, 5);
         break :blk softmax(x, 1);
     };
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    @constCast(TestBackend).Zig = .{ .allocator = &allocator };
     runEval("softmax", out);
 }

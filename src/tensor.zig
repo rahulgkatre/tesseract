@@ -5,7 +5,7 @@ const utils = @import("utils.zig");
 const ops = @import("ops.zig");
 const Backend = @import("backend/backend.zig").Backend;
 
-const InitType = enum { NotDefined, Input, Constant, Result };
+const InitType = enum { Input, Constant, Result };
 
 pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
     return DefaultStridedTensor(dtype, shape);
@@ -16,7 +16,9 @@ fn DefaultStridedTensor(comptime dtype: type, comptime shape: anytype) type {
 }
 
 pub fn StridedTensor(comptime dtype: type, comptime shape: anytype, comptime strides: anytype) type {
-    if (shape.len + 1 != strides.len) @compileError("Provided shape ndims not compatible provided strides ndims");
+    if (shape.len + 1 != strides.len) {
+        @compileError("Provided shape ndims not compatible provided strides ndims");
+    }
     return BaseTensor(dtype, shape.len, shape, strides);
 }
 
@@ -37,52 +39,52 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         size: usize = size,
         strides: [ndims + 1]usize = strides,
         str: @TypeOf(str) = str,
-        // TODO: Add an enum flag to indicate whether the tensor data will be provided by already
-        // existing data in the storage (INPUT) or it is a constant tensor (CONSTANT). Constant
-        // tensors will not have gradients calculated.
         init_type: InitType,
         backend: *const Backend,
         storage: ?*Backend.Storage(dtype),
-        eval_fn: *const fn (self: *const Self) void,
+        initStorageDataFn: *const fn (self: *Self) void,
+        evalFn: *const fn (self: *Self) Self,
+
         fn init(backend: *const Backend, storage: ?*Backend.Storage(dtype)) Self {
+            const funcs = struct {
+                fn eval(self: *Self) Self {
+                    if (!@inComptime()) {
+                        // std.debug.print("\n{s}@{d} = {s} {s}", .{ self.str, @intFromPtr(self), @tagName(self.init_type), self.str });
+                        self.initStorage();
+                        self.initStorageDataFn(self);
+                    } else {
+                        @compileLog(comptimePrint("{s} = {s} {s}", .{ self.str, @tagName(self.init_type), self.str }));
+                    }
+                    return self.*;
+                }
+                fn initStorageData(_: *Self) void {}
+            };
             return .{
-                .init_type = .NotDefined,
+                .init_type = .Input,
                 .backend = backend,
                 .storage = storage,
-                .eval_fn = struct {
-                    // TODO: The default eval_fn must check if the tensor is initialiazed and panic if it is not
-                    var done = false;
-                    fn eval(self: *const Self) void {
-                        if (self.init_type == .NotDefined) {
-                            @panic("The initialization type of this tensor is not defined");
-                        }
-                        if (!@inComptime()) {
-                            if (done) {
-                                return;
-                            }
-                            std.debug.print(
-                                "\n{s}@{d} = {s} {s}",
-                                .{ self.str, @intFromPtr(self), @tagName(self.init_type), self.str },
-                            );
-                            done = true;
-                        } else {
-                            @compileLog(comptimePrint(
-                                "{s} = {s}.init()",
-                                .{ self.str, self.str },
-                            ));
-                        }
-                    }
-                }.eval,
+                .initStorageDataFn = funcs.initStorageData,
+                .evalFn = funcs.eval,
             };
         }
+
+        // Exposed functions for initializing
         pub fn input(backend: *const Backend) Self {
             var tensor = init(backend, null);
             tensor.init_type = .Input;
             return tensor;
         }
-        pub fn constant(backend: *const Backend) Self {
+        pub fn constant(backend: *const Backend, comptime value: dtype) Self {
             var tensor = init(backend, null);
             tensor.init_type = .Constant;
+            tensor.initStorageDataFn = struct {
+                const val: dtype = value;
+                fn initStorageData(self: *Self) void {
+                    if (self.storage != null) {
+                        self.storage.?.fill(val);
+                    }
+                }
+            }.initStorageData;
             return tensor;
         }
         pub fn result(backend: *const Backend) Self {
@@ -90,12 +92,15 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             tensor.init_type = .Result;
             return tensor;
         }
-        pub fn eval(self: *const Self) void {
-            self.eval_fn(self);
+
+        pub fn eval(self: *const Self) Self {
+            return self.evalFn(@constCast(self));
         }
-        // TODO: Add more functions to realize tensors (e.g. ones, full, zeros)
-        pub fn empty(self: *Self) !void {
-            self.storage = try self.backend.alloc(dtype, size);
+        pub fn initStorage(self: *Self) void {
+            if (self.storage == null) {
+                self.storage = self.backend.alloc(dtype, size) catch @panic("Unable to allocate tensor storage");
+                self.initStorageDataFn(self);
+            }
         }
         // TODO: Don't deinit individual tensors, the backend should deinit everything it allocated
         // pub fn deinit(self: *const Self) void {
@@ -104,14 +109,14 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         pub inline fn isContiguous(_: *const Self) bool {
             return comptime utils.isContiguous(ndims, strides);
         }
-        pub fn broadcastIndex(bc_index: anytype) [ndims]usize {
+        pub fn broadcastIndex(_: anytype, bc_index: anytype) [ndims]usize {
             // Determine the index in the current tensor given an index in the broadcasted tensor
             // If the current tensor has size of 1 in a dimension, then the index must be 0
             // Otherwise it will be what the broadcasted index is
             const bc_ndims = bc_index.len;
             var index: [ndims]usize = undefined;
             inline for (0..ndims) |d| {
-                index[bc_ndims - d - 1] = if (shape[ndims - d - 1] == 1) 0 else bc_index[bc_ndims - d - 1];
+                index[ndims - d - 1] = if (shape[ndims - d - 1] == 1) 0 else bc_index[bc_ndims - d - 1];
             }
             return index;
         }
