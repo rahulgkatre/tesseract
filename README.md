@@ -87,8 +87,8 @@ For example, when writing a CUDA backend, the ops might be implemented as CUDA k
     - [x] When a function is called, the output tensor receives a closure to evaluate itself
     - [x] The recursive traversal (calling of input evaluate functions) can happen at compile time
     - [ ] Automated fusion of operators to reduce memory bandwidth requirements
-- [ ] Using the compute graph to perform computations on tensors
-    - [ ] Implementations of ops for the Zig backend
+- [x] Using the compute graph to perform computations on tensors
+    - [x] Implementations of ops for the Zig backend
     - [ ] Implement matrix multiplication (GEMM)
     - [ ] Use SIMD via @Vector and multithreading as needed to accelerate the Zig backend
 - [ ] Backpropagation and calculatation of gradients
