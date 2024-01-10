@@ -74,6 +74,33 @@ For example, when writing a CUDA backend, the ops might be implemented as CUDA k
 - Contains functions to perform operations using the backend
 - Makes up the computation graph defined by input tensor(s) and the op applied to them
 
+## Demo
+
+A demo of the library can be found in `demo.zig`. In general to use the library your code would look something like this:
+
+```zig
+pub fn main() !void {
+    // Backend must be defined with null allocator beforehand
+    const TestBackend = &Backend{ .Zig = .{ .allocator = null } };
+
+    // To take advantage of comptime features, all tensor code should be in comptime
+    const out = comptime blk: {
+        const x = Tensor(i32, .{2, 3, 4}).constant(MyBackend, 3);  // Tensor of i32 with shape 2x3x4, to be initialized with all 3s
+        break :blk myfunc(x);
+    };
+
+    // Allocator is modified after the fact
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    @constCast(TestBackend).Zig.allocator = &allocator;
+
+    // Use comptime on the eval call to see the compute graph
+    // comptime out.eval();
+    // Print the storage to show the data
+    std.debug.print("\n{any}\n", .{out.eval().storage});
+}
+```
+
 ## Roadmap
 
 ### First Milestone
