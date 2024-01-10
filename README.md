@@ -79,6 +79,11 @@ For example, when writing a CUDA backend, the ops might be implemented as CUDA k
 A demo of the library can be found in `demo.zig`. In general to use the library your code would look something like this:
 
 ```zig
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const Tensor = @import("src/tensor.zig").Tensor;
+const Backend = @import("src/backend/backend.zig").Backend;
+
 pub fn main() !void {
     // Backend must be defined with null allocator beforehand
     const TestBackend = &Backend{ .Zig = .{ .allocator = null } };
