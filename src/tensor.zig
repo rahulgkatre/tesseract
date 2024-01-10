@@ -5,7 +5,7 @@ const utils = @import("utils.zig");
 const ops = @import("ops.zig");
 const Backend = @import("backend/backend.zig").Backend;
 
-const InitType = enum { NotDefined, Input, Constant, Result };
+const InitType = enum { Input, Constant, Result };
 
 pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
     return DefaultStridedTensor(dtype, shape);
@@ -39,50 +39,36 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         size: usize = size,
         strides: [ndims + 1]usize = strides,
         str: @TypeOf(str) = str,
-        // TODO: Add an enum flag to indicate whether the tensor data will be provided by already
-        // existing data in the storage (INPUT) or it is a constant tensor (CONSTANT). Constant
-        // tensors will not have gradients calculated.
         init_type: InitType,
         backend: *const Backend,
         storage: ?*Backend.Storage(dtype),
         initStorageDataFn: *const fn (self: *Self) void,
         evalFn: *const fn (self: *Self) Self,
+
         fn init(backend: *const Backend, storage: ?*Backend.Storage(dtype)) Self {
             const funcs = struct {
-                var done = false;
                 fn eval(self: *Self) Self {
-                    if (self.init_type == .NotDefined) {
-                        @panic("The initialization type of this tensor is not defined");
-                    }
                     if (!@inComptime()) {
-                        self.make();
+                        // std.debug.print("\n{s}@{d} = {s} {s}", .{ self.str, @intFromPtr(self), @tagName(self.init_type), self.str });
+                        self.initStorage();
                         self.initStorageDataFn(self);
-                        if (done) {
-                            return self.*;
-                        }
-                        std.debug.print("\n{s}@{d} = {s} {s}", .{ self.str, @intFromPtr(self), @tagName(self.init_type), self.str });
-                        done = true;
-                        if (self.storage == null) {
-                            switch (self.init_type) {
-                                .Input => @panic("Values must be provided for input tensors before evaluating."),
-                                else => @panic("Tensor has no associated storage"),
-                            }
-                        }
                     } else {
-                        @compileLog(comptimePrint("\n{s} = {s} {s}", .{ self.str, @tagName(self.init_type), self.str }));
+                        @compileLog(comptimePrint("{s} = {s} {s}", .{ self.str, @tagName(self.init_type), self.str }));
                     }
                     return self.*;
                 }
                 fn initStorageData(_: *Self) void {}
             };
             return .{
-                .init_type = .NotDefined,
+                .init_type = .Input,
                 .backend = backend,
                 .storage = storage,
                 .initStorageDataFn = funcs.initStorageData,
                 .evalFn = funcs.eval,
             };
         }
+
+        // Exposed functions for initializing
         pub fn input(backend: *const Backend) Self {
             var tensor = init(backend, null);
             tensor.init_type = .Input;
@@ -93,12 +79,12 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             tensor.init_type = .Constant;
             tensor.initStorageDataFn = struct {
                 const val: dtype = value;
-                fn eval_init(self: *Self) void {
+                fn initStorageData(self: *Self) void {
                     if (self.storage != null) {
                         self.storage.?.fill(val);
                     }
                 }
-            }.eval_init;
+            }.initStorageData;
             return tensor;
         }
         pub fn result(backend: *const Backend) Self {
@@ -106,12 +92,15 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             tensor.init_type = .Result;
             return tensor;
         }
+
         pub fn eval(self: *const Self) Self {
             return self.evalFn(@constCast(self));
         }
-        pub fn make(self: *Self) void {
-            self.storage = self.backend.alloc(dtype, size) catch @panic("Unable to allocate tensor storage");
-            self.initStorageDataFn(self);
+        pub fn initStorage(self: *Self) void {
+            if (self.storage == null) {
+                self.storage = self.backend.alloc(dtype, size) catch @panic("Unable to allocate tensor storage");
+                self.initStorageDataFn(self);
+            }
         }
         // TODO: Don't deinit individual tensors, the backend should deinit everything it allocated
         // pub fn deinit(self: *const Self) void {

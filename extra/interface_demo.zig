@@ -83,7 +83,9 @@ test "vtab3_embedded_in_struct" {
         &o2.interface,
     };
     for (mystuff) |o| {
-        std.debug.print("{any}\n", .{o});
-        std.debug.print("eval() = {any}\n", .{o.eval()});
+        _ = o;
+
+        // std.debug.print("{any}\n", .{o});
+        // std.debug.print("eval() = {any}\n", .{o.eval()});
     }
 }

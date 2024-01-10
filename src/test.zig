@@ -8,17 +8,13 @@ const ops = @import("ops.zig");
 const utils = @import("utils.zig");
 
 const TestBackend = &backend.Backend{ .Zig = .{ .allocator = null } };
-const logging = true;
-const compile_log = false;
+const compile_log = true;
 fn runEval(comptime test_name: anytype, comptime out: anytype) void {
-    if (!logging) {
-        return;
-    }
     if (compile_log) {
         @compileLog(test_name);
         _ = comptime out.eval();
     } else {
-        std.debug.print("\n{any}\n", .{out.eval().storage.?.Zig.data});
+        // std.debug.print("\n{any}\n", .{out.eval().storage.?.Zig.data});
     }
 }
 
@@ -113,9 +109,7 @@ test "zip reduce" {
     const out = comptime blk: {
         const tensor1 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend, 2);
         const tensor2 = Tensor(i32, .{ 2, 3, 1 }).constant(TestBackend, 3);
-        const tensor3 = tensor1
-            .add(tensor2)
-            .sum(1);
+        const tensor3 = tensor1.add(tensor2).sum(1);
         try expectEqual([_]usize{ 2, 1, 4 }, tensor3.shape);
         break :blk tensor3;
     };
@@ -133,32 +127,26 @@ test "lazy with realization" {
     var tensor1 = Tensor(i32, .{ 2, 3, 4 }).constant(&NewBackend, 0);
     NewBackend.init(.{ .allocator = &allocator });
 
-    tensor1.make();
+    tensor1.initStorage();
     try expectEqual(true, tensor1.storage != null);
     try expectEqual(true, tensor1.storage.?.Zig.data.len == 24);
-
-    if (logging) {
-        std.debug.print("\n{any}\n", .{tensor1.storage.?.Zig.data});
-    }
+    try expectEqual([_]i32{0} ** 24, tensor1.storage.?.Zig.data[0..24].*);
 }
 
 fn fn1() Tensor(i32, .{ 2, 1, 4 }) {
-    const tensor1 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend, 2);
-    const tensor2 = Tensor(i32, .{ 2, 3, 1 }).constant(TestBackend, 3);
-    const tensor3 = tensor1
-        .add(tensor2)
-        .sum(1);
+    const tensor1 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend, 1);
+    const tensor2 = Tensor(i32, .{ 2, 3, 1 }).constant(TestBackend, 2);
+    const tensor3 = tensor1.add(tensor2).sum(1);
     return tensor3;
 }
 
 fn fn2(input: anytype) Tensor(i32, .{ 2, 1, 4 }) {
-    const tensor4 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend, 2);
-    const tensor5 = Tensor(i32, .{ 2, 3, 1 }).constant(TestBackend, 3);
-    const tensor6 = tensor4
-        .mul(tensor5)
-        .sum(1)
-        .add(input);
-    return tensor6;
+    return comptime blk: {
+        const tensor4 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend, 4);
+        const tensor5 = Tensor(i32, .{ 2, 3, 1 }).constant(TestBackend, 5);
+        const tensor6 = tensor4.mul(tensor5).sum(1).add(input);
+        break :blk tensor6;
+    };
 }
 
 test "tensors from functions" {
@@ -175,10 +163,10 @@ test "tensors from functions" {
 
 fn softmax(x: anytype, comptime dim: u8) @TypeOf(x) {
     const max = x.max(null);
-    const x_minus_max = x.add(max.neg());
+    const x_minus_max = x.sub(max);
     const exp = x_minus_max.exp2();
     const sumexp = exp.sum(dim);
-    const sm = x_minus_max.mul(sumexp.recip());
+    const sm = x_minus_max.div(sumexp);
     return sm;
 }
 

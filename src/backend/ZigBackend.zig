@@ -91,22 +91,22 @@ fn ScalarMapOpEvalFn(comptime map_op: ops.MapOp, comptime dtype: type) ScalarMap
         },
         .Log2 => struct {
             inline fn log2Eval(x: dtype) IntToFloatBySize(dtype) {
-                return @log2(@as(IntToFloatBySize(dtype), x));
+                return @log2(x);
             }
         }.log2Eval,
         .Exp2 => struct {
             inline fn exp2Eval(x: dtype) IntToFloatBySize(dtype) {
-                return @exp2(@as(IntToFloatBySize(dtype), x));
+                return @exp2(x);
             }
         }.exp2Eval,
         .Sqrt => struct {
-            inline fn sqrtEval(x: dtype) IntToFloatBySize(dtype) {
-                return @sqrt(@as(IntToFloatBySize(dtype), x));
+            inline fn sqrtEval(x: dtype) dtype {
+                return @sqrt(x);
             }
         }.sqrtEval,
         .Recip => struct {
-            inline fn recipEval(x: dtype) IntToFloatBySize(dtype) {
-                return 1.0 / @as(IntToFloatBySize(dtype), x);
+            inline fn recipEval(x: dtype) dtype {
+                return 1.0 / x;
             }
         }.recipEval,
         else => @compileError("Not implemented"),
@@ -246,8 +246,9 @@ pub fn reduceEval(
     const x_size: usize = @field(@TypeOf(x), "size");
     const out_size: usize = @field(@TypeOf(out.*), "size");
 
-    // TODO: Add checks for 0 dimensionality
-    // Should @compileError when this is the case
+    if (ndims == 0 or (dim != null and shape[dim.?] == 0)) {
+        @compileError("Cannot reduce over 0 elements");
+    }
     if (dim == null) {
         const builtin_reduceop: BuiltInReduceOp = comptime switch (op) {
             .Sum => .Add,

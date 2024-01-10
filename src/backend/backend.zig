@@ -16,7 +16,6 @@ pub const Backend = union(BackendTypes) {
         return union(BackendTypes) {
             const Self = @This();
             Zig: ZigBackend.ZigStorage(dtype),
-
             pub fn fill(self: *Self, value: dtype) void {
                 switch (self.*) {
                     inline else => |*b| b.fill(value),
@@ -38,19 +37,14 @@ pub const Backend = union(BackendTypes) {
     pub fn map(self: *const Backend, op: ops.MapOp, x: anytype) @TypeOf(x) {
         var out = @TypeOf(x).result(self);
         out.evalFn = struct {
-            var done = false;
             fn eval(out_ptr: *@TypeOf(out)) @TypeOf(out) {
                 const eval_x = x.eval();
                 if (!@inComptime()) {
-                    if (done) {
-                        return out_ptr.*;
-                    }
-                    out_ptr.make();
-                    done = true;
+                    // std.debug.print("\n{s}@{d} = {s} {s}@{d}", .{ out_ptr.str, @intFromPtr(out_ptr), @tagName(op), x.str, @intFromPtr(&x) });
+                    out_ptr.initStorage();
                     switch (self.*) {
                         inline else => |*eval_backend| eval_backend.mapEval(op, eval_x, out_ptr),
                     }
-                    std.debug.print("\n{s}@{d} = {s} {s}@{d}", .{ out_ptr.str, @intFromPtr(out_ptr), @tagName(op), x.str, @intFromPtr(&x) });
                 } else {
                     @compileLog(comptimePrint("{s} = {s} {s}", .{ out_ptr.str, @tagName(op), x.str }));
                 }
@@ -62,20 +56,15 @@ pub const Backend = union(BackendTypes) {
     pub fn zip(self: *const Backend, op: ops.ZipOp, a: anytype, b: anytype) tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b)) {
         var out = tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b)).result(self);
         out.evalFn = struct {
-            var done = false;
             fn eval(out_ptr: *@TypeOf(out)) @TypeOf(out) {
                 const eval_a = a.eval();
                 const eval_b = b.eval();
                 if (!@inComptime()) {
-                    if (done) {
-                        return out_ptr.*;
-                    }
-                    out_ptr.make();
-                    done = true;
+                    // std.debug.print("\n{s}@{d} = {s} {s}@{d} {s}@{d}", .{ out_ptr.str, @intFromPtr(out_ptr), @tagName(op), a.str, @intFromPtr(&a), b.str, @intFromPtr(&b) });
+                    out_ptr.initStorage();
                     switch (self.*) {
                         inline else => |*eval_backend| eval_backend.zipEval(op, eval_a, eval_b, out_ptr),
                     }
-                    std.debug.print("\n{s}@{d} = {s} {s}@{d} {s}@{d}", .{ out_ptr.str, @intFromPtr(out_ptr), @tagName(op), a.str, @intFromPtr(&a), b.str, @intFromPtr(&b) });
                 } else {
                     @compileLog(comptimePrint("{s} = {s} {s} {s}", .{ out_ptr.str, @tagName(op), a.str, b.str }));
                 }
@@ -87,19 +76,14 @@ pub const Backend = union(BackendTypes) {
     pub fn reduce(self: *const Backend, op: ops.ReduceOp, x: anytype, dim: ?u8) tensor.ReducedTensor(@TypeOf(x), dim) {
         var out = tensor.ReducedTensor(@TypeOf(x), dim).result(self);
         out.evalFn = struct {
-            var done = false;
             fn eval(out_ptr: *@TypeOf(out)) @TypeOf(out) {
                 const eval_x = x.eval();
                 if (!@inComptime()) {
-                    if (done) {
-                        return out_ptr.*;
-                    }
-                    out_ptr.make();
-                    done = true;
+                    // std.debug.print("\n{s}@{d} = {s} {s}@{d} {d}", .{ out_ptr.str, @intFromPtr(out_ptr), @tagName(op), x.str, @intFromPtr(&x), dim orelse -1 });
+                    out_ptr.initStorage();
                     switch (self.*) {
                         inline else => |*eval_backend| eval_backend.reduceEval(op, eval_x, dim, out_ptr),
                     }
-                    std.debug.print("\n{s}@{d} = {s} {s}@{d} {d}", .{ out_ptr.str, @intFromPtr(out_ptr), @tagName(op), x.str, @intFromPtr(&x), dim orelse -1 });
                 } else {
                     @compileLog(comptimePrint("{s} = {s} {s} {?}", .{ out_ptr.str, @tagName(op), x.str, dim orelse -1 }));
                 }
