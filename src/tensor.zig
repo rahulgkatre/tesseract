@@ -62,7 +62,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             return .{
                 .init_type = .Input,
                 .backend = backend,
-                .storage = storage orelse backend.alloc(dtype, size),
+                .storage = storage orelse backend.storage(dtype, size),
                 .initStorageDataFn = funcs.initStorageData,
                 .evalFn = funcs.eval,
             };
@@ -97,7 +97,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         pub fn initStorage(self: *Self) void {
             // if (self.storage == null) {
             //     self.storage = self.backend.alloc(dtype, size) catch @panic("Unable to allocate tensor storage");
-            self.storage.realize();
+            self.storage.init();
             self.initStorageDataFn(self);
             // }
         }

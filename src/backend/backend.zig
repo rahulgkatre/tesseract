@@ -21,9 +21,9 @@ pub const Backend = union(BackendTypes) {
                     inline else => |*b| b.fill(value),
                 }
             }
-            pub fn realize(self: *Self) void {
+            pub fn init(self: *Self) void {
                 switch (self.*) {
-                    inline else => |*b| b.realize(),
+                    inline else => |*b| b.init(),
                 }
             }
         };
@@ -34,9 +34,9 @@ pub const Backend = union(BackendTypes) {
             inline else => |*b| b.init(args),
         };
     }
-    pub fn alloc(self: *const Backend, comptime dtype: type, size: usize) Storage(dtype) {
+    pub fn storage(self: *const Backend, comptime dtype: type, size: usize) Storage(dtype) {
         return switch (self.*) {
-            inline else => |*b| b.alloc(dtype, size),
+            inline else => |*b| b.storage(dtype, size),
         };
     }
     pub fn deinit(self: *const Backend) void {

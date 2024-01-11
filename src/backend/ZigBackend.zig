@@ -25,13 +25,7 @@ pub fn ZigStorage(comptime dtype: type) type {
         const Self = @This();
         data: ?[]dtype,
         size: usize,
-        pub fn init(size: usize) Self {
-            return .{
-                .data = null,
-                .size = size,
-            };
-        }
-        pub fn realize(self: *Self) void {
+        pub fn init(self: *Self) void {
             if (self.data == null) {
                 self.data = GlobalArena.allocator().alloc(dtype, self.size) catch @panic("Unable to allocate tensor storage");
             }
@@ -48,8 +42,13 @@ pub fn init(_: *const ZigBackend, _: anytype) void {
     GlobalArena.init(std.heap.ArenaAllocator.init(std.heap.page_allocator));
 }
 
-pub fn alloc(_: *const ZigBackend, comptime dtype: type, size: usize) Backend.Storage(dtype) {
-    return .{ .Zig = ZigStorage(dtype).init(size) };
+pub fn storage(_: *const ZigBackend, comptime dtype: type, size: usize) Backend.Storage(dtype) {
+    return .{
+        .Zig = .{
+            .data = null,
+            .size = size,
+        },
+    };
 }
 
 pub fn deinit(_: *const ZigBackend) void {
