@@ -85,19 +85,15 @@ const Tensor = @import("src/tensor.zig").Tensor;
 const Backend = @import("src/backend/backend.zig").Backend;
 
 pub fn main() !void {
-    // Backend must be defined with null allocator beforehand
-    const TestBackend = &Backend{ .Zig = .{ .allocator = null } };
-
     // To take advantage of comptime features, all tensor code should be in comptime
     const out = comptime blk: {
-        const x = Tensor(i32, .{2, 3, 4}).constant(MyBackend, 3);  // Tensor of i32 with shape 2x3x4, to be initialized with all 3s
-        break :blk myfunc(x);
+        const x = fn1();
+        break :blk fn2(x);
     };
 
-    // Allocator is modified after the fact
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
-    @constCast(TestBackend).Zig.allocator = &allocator;
+    // Now in runtime, initialize the backend which will allow for allocation of tensor storage
+    TestBackend.init(.{});
+    defer TestBackend.deinit();
 
     // Use comptime on the eval call to see the compute graph
     // comptime out.eval();

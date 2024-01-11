@@ -28,8 +28,7 @@ pub fn main() !void {
         break :blk fn2(x);
     };
 
-    // Allocator is modified after the fact
-
+    // Now in runtime, initialize the backend which will allow for allocation of tensor storage
     TestBackend.init(.{});
     defer TestBackend.deinit();
 
