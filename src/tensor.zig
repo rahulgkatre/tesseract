@@ -41,11 +41,11 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         str: @TypeOf(str) = str,
         init_type: InitType,
         backend: *const Backend,
-        storage: ?*Backend.Storage(dtype),
+        storage: Backend.Storage(dtype),
         initStorageDataFn: *const fn (self: *Self) void,
         evalFn: *const fn (self: *Self) Self,
 
-        fn init(backend: *const Backend, storage: ?*Backend.Storage(dtype)) Self {
+        fn init(backend: *const Backend, storage: ?Backend.Storage(dtype)) Self {
             const funcs = struct {
                 fn eval(self: *Self) Self {
                     if (!@inComptime()) {
@@ -62,7 +62,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             return .{
                 .init_type = .Input,
                 .backend = backend,
-                .storage = storage,
+                .storage = storage orelse backend.alloc(dtype, size),
                 .initStorageDataFn = funcs.initStorageData,
                 .evalFn = funcs.eval,
             };
@@ -80,9 +80,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             tensor.initStorageDataFn = struct {
                 const val: dtype = value;
                 fn initStorageData(self: *Self) void {
-                    if (self.storage != null) {
-                        self.storage.?.fill(val);
-                    }
+                    self.storage.fill(val);
                 }
             }.initStorageData;
             return tensor;
@@ -97,10 +95,11 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             return self.evalFn(@constCast(self));
         }
         pub fn initStorage(self: *Self) void {
-            if (self.storage == null) {
-                self.storage = self.backend.alloc(dtype, size) catch @panic("Unable to allocate tensor storage");
-                self.initStorageDataFn(self);
-            }
+            // if (self.storage == null) {
+            //     self.storage = self.backend.alloc(dtype, size) catch @panic("Unable to allocate tensor storage");
+            self.storage.realize();
+            self.initStorageDataFn(self);
+            // }
         }
         // TODO: Don't deinit individual tensors, the backend should deinit everything it allocated
         // pub fn deinit(self: *const Self) void {

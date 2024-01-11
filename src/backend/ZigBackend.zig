@@ -3,47 +3,52 @@ const tensor = @import("../tensor.zig");
 const ops = @import("../ops.zig");
 const Backend = @import("backend.zig").Backend;
 const ZigBackend = @This();
+const std = @import("std");
+
+const GlobalArena = struct {
+    var global_arena: std.heap.ArenaAllocator = undefined;
+    fn init(arena: std.heap.ArenaAllocator) void {
+        global_arena = arena;
+    }
+    fn deinit() void {
+        global_arena.deinit();
+        global_arena = undefined;
+    }
+    fn allocator() std.mem.Allocator {
+        return global_arena.allocator();
+    }
+};
 
 pub fn ZigStorage(comptime dtype: type) type {
     return struct {
         const Self = @This();
-        data: []dtype,
-        allocator: *const Allocator,
-        pub fn init(size: usize, allocator: *const Allocator) !*Backend.Storage(dtype) {
-            const data = try allocator.alloc(dtype, size);
-            const storage = try allocator.create(Backend.Storage(dtype));
-            storage.* = .{
-                .Zig = .{
-                    .data = data,
-                    .allocator = allocator,
-                },
+        data: ?[]dtype,
+        size: usize,
+        pub fn init(size: usize) Self {
+            return .{
+                .data = null,
+                .size = size,
             };
-            return storage;
         }
-        pub fn deinit(self: *Self) void {
-            self.allocator.free(self.data);
+        pub fn realize(self: *Self) void {
+            if (self.data == null) {
+                self.data = GlobalArena.allocator().alloc(dtype, self.size) catch @panic("Unable to allocate tensor storage");
+            }
         }
         pub fn fill(self: *Self, value: dtype) void {
-            @memset(self.data, value);
+            @memset(self.data.?, value);
         }
     };
 }
 
-allocator: ?*const Allocator = null,
-
-pub fn init(self: *ZigBackend, args: anytype) void {
-    self.allocator = args.allocator;
+// TODO: Replace page with a fixed buffer allocator
+// Buffer size should be computed at compile time
+pub fn init(_: *const ZigBackend, _: anytype) void {
+    GlobalArena.init(std.heap.ArenaAllocator.init(std.heap.page_allocator));
 }
 
-pub fn alloc(self: *const ZigBackend, comptime dtype: type, size: usize) !*Backend.Storage(dtype) {
-    if (self.allocator != null) {
-        return try ZigStorage(dtype).init(size, self.allocator.?);
-    }
-    @panic("No allocator provided");
-}
-
-pub fn deinitStorage(_: *const ZigBackend, storage: anytype) void {
-    storage.deinit();
+pub fn alloc(_: *const ZigBackend, comptime dtype: type, size: usize) Backend.Storage(dtype) {
+    return .{ .Zig = ZigStorage(dtype).init(size) };
 }
 
 // TODO: What is the standardized way for determining the float type to cast an int type to
@@ -60,7 +65,7 @@ fn IntToFloatBySize(comptime int_type: type) type {
     }
 }
 
-fn ScalarMapOpEvalFnReturnType(comptime map_op: ops.MapOp, comptime dtype: type) type {
+fn ScalarMapFnReturnType(comptime map_op: ops.MapOp, comptime dtype: type) type {
     return @TypeOf(switch (map_op) {
         .Neg => struct {
             inline fn f(_: dtype) dtype {
@@ -75,7 +80,7 @@ fn ScalarMapOpEvalFnReturnType(comptime map_op: ops.MapOp, comptime dtype: type)
     }.f);
 }
 
-fn ScalarMapOpEvalFn(comptime map_op: ops.MapOp, comptime dtype: type) ScalarMapOpEvalFnReturnType(map_op, dtype) {
+fn ScalarMapFn(comptime map_op: ops.MapOp, comptime dtype: type) ScalarMapFnReturnType(map_op, dtype) {
     return comptime switch (map_op) {
         .Neg => switch (@typeInfo(dtype)) {
             .Bool => struct {
@@ -113,7 +118,7 @@ fn ScalarMapOpEvalFn(comptime map_op: ops.MapOp, comptime dtype: type) ScalarMap
     };
 }
 
-fn ScalarZipOpEvalFnReturnType(comptime zip_op: ops.ZipOp, comptime a_dtype: type, comptime b_dtype: type) type {
+fn ScalarZipFnReturnType(comptime zip_op: ops.ZipOp, comptime a_dtype: type, comptime b_dtype: type) type {
     return @TypeOf(switch (zip_op) {
         .Lt, .Eq => struct {
             inline fn f(_: a_dtype, _: a_dtype) bool {
@@ -133,15 +138,7 @@ fn ScalarZipOpEvalFnReturnType(comptime zip_op: ops.ZipOp, comptime a_dtype: typ
     }.f);
 }
 
-fn ScalarZipOpEvalFn(
-    comptime zip_op: ops.ZipOp,
-    comptime a_dtype: type,
-    comptime b_dtype: type,
-) ScalarZipOpEvalFnReturnType(
-    zip_op,
-    a_dtype,
-    b_dtype,
-) {
+fn ScalarZipFn(comptime zip_op: ops.ZipOp, comptime a_dtype: type, comptime b_dtype: type) ScalarZipFnReturnType(zip_op, a_dtype, b_dtype) {
     return comptime switch (zip_op) {
         .Add => struct {
             inline fn addEval(a: a_dtype, b: b_dtype) @TypeOf(@as(a_dtype, 0) + @as(b_dtype, 0)) {
@@ -197,24 +194,24 @@ fn ScalarZipOpEvalFn(
     };
 }
 
-pub fn mapEval(_: *const ZigBackend, comptime op: ops.MapOp, x: anytype, out: *@TypeOf(x)) void {
-    const mapFn = ScalarMapOpEvalFn(
+pub fn map(_: *const ZigBackend, comptime op: ops.MapOp, x: anytype, out: *@TypeOf(x)) void {
+    const mapFn = ScalarMapFn(
         op,
         @field(@TypeOf(x), "dtype"),
     );
     inline for (0..@field(@TypeOf(out.*), "size")) |flat_index| {
-        out.storage.?.Zig.data[flat_index] = mapFn(x.storage.?.Zig.data[flat_index]);
+        out.storage.Zig.data.?[flat_index] = mapFn(x.storage.Zig.data.?[flat_index]);
     }
 }
-const std = @import("std");
-pub fn zipEval(
+
+pub fn zip(
     _: *const ZigBackend,
     comptime op: ops.ZipOp,
     a: anytype,
     b: anytype,
     out: *tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b)),
 ) void {
-    const zipFn = ScalarZipOpEvalFn(
+    const zipFn = ScalarZipFn(
         op,
         @field(@TypeOf(a), "dtype"),
         @field(@TypeOf(b), "dtype"),
@@ -224,16 +221,14 @@ pub fn zipEval(
         const a_index = a.broadcastIndex(out_index);
         const b_index = b.broadcastIndex(out_index);
 
-        out.storage.?.Zig.data[out_flat_index] = zipFn(
-            a.storage.?.Zig.data[a.flattenIndex(a_index)],
-            b.storage.?.Zig.data[b.flattenIndex(b_index)],
+        out.storage.Zig.data.?[out_flat_index] = zipFn(
+            a.storage.Zig.data.?[a.flattenIndex(a_index)],
+            b.storage.Zig.data.?[b.flattenIndex(b_index)],
         );
     }
 }
 
-const BuiltInReduceOp = @import("std").builtin.ReduceOp;
-
-pub fn reduceEval(
+pub fn reduce(
     _: *const ZigBackend,
     comptime op: ops.ReduceOp,
     x: anytype,
@@ -244,21 +239,22 @@ pub fn reduceEval(
     const ndims: u8 = @field(@TypeOf(x), "ndims");
     const shape: [ndims]usize = @field(@TypeOf(x), "shape");
     const x_size: usize = @field(@TypeOf(x), "size");
+    _ = x_size;
     const out_size: usize = @field(@TypeOf(out.*), "size");
 
     if (ndims == 0 or (dim != null and shape[dim.?] == 0)) {
         @compileError("Cannot reduce over 0 elements");
     }
     if (dim == null) {
-        const builtin_reduceop: BuiltInReduceOp = comptime switch (op) {
-            .Sum => .Add,
-            .Max => .Max,
-        };
-        // Use SIMD to reduce the entire data to a single value
-        const data_vec: @Vector(x_size, dtype) = x.storage.?.Zig.data[0..x_size].*;
-        out.storage.?.Zig.data[0] = @reduce(builtin_reduceop, data_vec);
+        // const builtin_reduceop: BuiltInReduceOp = comptime switch (op) {
+        //     .Sum => .Add,
+        //     .Max => .Max,
+        // };
+        // // Use SIMD to reduce the entire data to a single value
+        // const data_vec: @Vector(x_size, dtype) = x.storage.Zig.data.?[0..x_size].*;
+        // out.storage.Zig.data.?[0] = @reduce(builtin_reduceop, data_vec);
     } else {
-        const zipFn = ScalarZipOpEvalFn(
+        const zipFn = ScalarZipFn(
             switch (op) {
                 .Sum => .Add,
                 .Max => .Maximum,
@@ -274,12 +270,12 @@ pub fn reduceEval(
         inline for (0..out_size) |out_flat_index| {
             out_index = out.unflattenIndex(out_flat_index);
             x_start_flat_index = x.flattenIndex(out_index);
-            acc = x.storage.?.Zig.data[x_start_flat_index];
+            acc = x.storage.Zig.data.?[x_start_flat_index];
             inline for (1..shape[dim.?]) |i| {
                 x_flat_index = x_start_flat_index + i * x.strides[dim.?];
-                acc = zipFn(acc, x.storage.?.Zig.data[x_flat_index]);
+                acc = zipFn(acc, x.storage.Zig.data.?[x_flat_index]);
             }
-            out.storage.?.Zig.data[out_flat_index] = acc;
+            out.storage.Zig.data.?[out_flat_index] = acc;
         }
     }
 }

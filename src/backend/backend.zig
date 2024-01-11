@@ -21,17 +21,22 @@ pub const Backend = union(BackendTypes) {
                     inline else => |*b| b.fill(value),
                 }
             }
+            pub fn realize(self: *Self) void {
+                switch (self.*) {
+                    inline else => |*b| b.realize(),
+                }
+            }
         };
     }
 
-    pub fn init(self: *Backend, args: anytype) void {
+    pub fn init(self: *const Backend, args: anytype) void {
         return switch (self.*) {
             inline else => |*b| b.init(args),
         };
     }
-    pub fn alloc(self: *const Backend, comptime dtype: type, size: usize) !*Storage(dtype) {
+    pub fn alloc(self: *const Backend, comptime dtype: type, size: usize) Storage(dtype) {
         return switch (self.*) {
-            inline else => |*b| try b.alloc(dtype, size),
+            inline else => |*b| b.alloc(dtype, size),
         };
     }
     pub fn map(self: *const Backend, op: ops.MapOp, x: anytype) @TypeOf(x) {
@@ -43,7 +48,7 @@ pub const Backend = union(BackendTypes) {
                     // std.debug.print("\n{s}@{d} = {s} {s}@{d}", .{ out_ptr.str, @intFromPtr(out_ptr), @tagName(op), x.str, @intFromPtr(&x) });
                     out_ptr.initStorage();
                     switch (self.*) {
-                        inline else => |*eval_backend| eval_backend.mapEval(op, eval_x, out_ptr),
+                        inline else => |*backend| backend.map(op, eval_x, out_ptr),
                     }
                 } else {
                     @compileLog(comptimePrint("{s} = {s} {s}", .{ out_ptr.str, @tagName(op), x.str }));
@@ -63,7 +68,7 @@ pub const Backend = union(BackendTypes) {
                     // std.debug.print("\n{s}@{d} = {s} {s}@{d} {s}@{d}", .{ out_ptr.str, @intFromPtr(out_ptr), @tagName(op), a.str, @intFromPtr(&a), b.str, @intFromPtr(&b) });
                     out_ptr.initStorage();
                     switch (self.*) {
-                        inline else => |*eval_backend| eval_backend.zipEval(op, eval_a, eval_b, out_ptr),
+                        inline else => |*backend| backend.zip(op, eval_a, eval_b, out_ptr),
                     }
                 } else {
                     @compileLog(comptimePrint("{s} = {s} {s} {s}", .{ out_ptr.str, @tagName(op), a.str, b.str }));
@@ -82,7 +87,7 @@ pub const Backend = union(BackendTypes) {
                     // std.debug.print("\n{s}@{d} = {s} {s}@{d} {d}", .{ out_ptr.str, @intFromPtr(out_ptr), @tagName(op), x.str, @intFromPtr(&x), dim orelse -1 });
                     out_ptr.initStorage();
                     switch (self.*) {
-                        inline else => |*eval_backend| eval_backend.reduceEval(op, eval_x, dim, out_ptr),
+                        inline else => |*backend| backend.reduce(op, eval_x, dim, out_ptr),
                     }
                 } else {
                     @compileLog(comptimePrint("{s} = {s} {s} {?}", .{ out_ptr.str, @tagName(op), x.str, dim orelse -1 }));

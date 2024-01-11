@@ -3,7 +3,7 @@ const Allocator = std.mem.Allocator;
 const Tensor = @import("src/tensor.zig").Tensor;
 const Backend = @import("src/backend/backend.zig").Backend;
 
-const TestBackend = &Backend{ .Zig = .{ .allocator = null } };
+const TestBackend = &Backend{ .Zig = .{} };
 
 fn fn1() Tensor(i32, .{ 2, 1, 4 }) {
     const tensor1 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend, 1);
@@ -29,9 +29,8 @@ pub fn main() !void {
     };
 
     // Allocator is modified after the fact
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
-    @constCast(TestBackend).Zig.allocator = &allocator;
+
+    TestBackend.init(.{});
 
     // Use comptime on the eval call to see the compute graph
     // comptime out.eval();
