@@ -1,6 +1,10 @@
 const ops = @import("ops.zig");
 const tensor = @import("tensor.zig");
 
+pub fn asType(x: anytype, comptime dtype: type) tensor.CastedTensor(@TypeOf(x.*), dtype) {
+    return x.backend.asType(x, dtype);
+}
+
 // Higher order functions
 pub fn map(x: anytype, op: ops.MapOp) @TypeOf(x) {
     return x.backend.map(op, x);

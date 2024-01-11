@@ -1,7 +1,7 @@
 const Allocator = @import("std").mem.Allocator;
 const tensor = @import("../tensor.zig");
 const ops = @import("../ops.zig");
-const Backend = @import("backend.zig").Backend;
+const Backend = @import("../backend.zig").Backend;
 const ZigBackend = @This();
 const std = @import("std");
 
@@ -20,7 +20,7 @@ const GlobalArena = struct {
     }
 };
 
-pub fn ZigStorage(comptime dtype: type) type {
+pub fn Storage(comptime dtype: type) type {
     return struct {
         const Self = @This();
         data: ?[]dtype,
@@ -243,20 +243,19 @@ pub fn reduce(
     const ndims: u8 = @field(@TypeOf(x), "ndims");
     const shape: [ndims]usize = @field(@TypeOf(x), "shape");
     const x_size: usize = @field(@TypeOf(x), "size");
-    _ = x_size;
     const out_size: usize = @field(@TypeOf(out.*), "size");
 
     if (ndims == 0 or (dim != null and shape[dim.?] == 0)) {
         @compileError("Cannot reduce over 0 elements");
     }
     if (dim == null) {
-        // const builtin_reduceop: BuiltInReduceOp = comptime switch (op) {
-        //     .Sum => .Add,
-        //     .Max => .Max,
-        // };
-        // // Use SIMD to reduce the entire data to a single value
-        // const data_vec: @Vector(x_size, dtype) = x.storage.Zig.data.?[0..x_size].*;
-        // out.storage.Zig.data.?[0] = @reduce(builtin_reduceop, data_vec);
+        const builtin_reduceop: std.builtin.ReduceOp = comptime switch (op) {
+            .Sum => .Add,
+            .Max => .Max,
+        };
+        // Use SIMD to reduce the entire data to a single value
+        const data_vec: @Vector(x_size, dtype) = x.storage.Zig.data.?[0..x_size].*;
+        out.storage.Zig.data.?[0] = @reduce(builtin_reduceop, data_vec);
     } else {
         const zipFn = ScalarZipFn(
             switch (op) {

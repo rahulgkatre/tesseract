@@ -3,7 +3,7 @@ const Allocator = std.mem.Allocator;
 const comptimePrint = std.fmt.comptimePrint;
 const utils = @import("utils.zig");
 const ops = @import("ops.zig");
-const Backend = @import("backend/backend.zig").Backend;
+const Backend = @import("backend.zig").Backend;
 
 const InitType = enum { Input, Constant, Result };
 
@@ -42,29 +42,32 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         init_type: InitType,
         backend: *const Backend,
         storage: Backend.Storage(dtype),
-        initStorageDataFn: *const fn (self: *Self) void,
+        loadDataFn: *const fn (self: *Self) void,
         evalFn: *const fn (self: *Self) Self,
+        graphFn: *const fn (self: *const Self) void,
 
         fn init(backend: *const Backend, storage: ?Backend.Storage(dtype)) Self {
             const funcs = struct {
                 fn eval(self: *Self) Self {
-                    if (!@inComptime()) {
-                        // std.debug.print("\n{s}@{d} = {s} {s}", .{ self.str, @intFromPtr(self), @tagName(self.init_type), self.str });
-                        self.initStorage();
-                        self.initStorageDataFn(self);
-                    } else {
-                        @compileLog(comptimePrint("{s} = {s} {s}", .{ self.str, @tagName(self.init_type), self.str }));
-                    }
+                    self.initStorage();
                     return self.*;
                 }
-                fn initStorageData(_: *Self) void {}
+                fn graph(self: *const Self) void {
+                    if (@inComptime()) {
+                        @compileLog(comptimePrint("{s} := {s} {s}", .{ self.str, @tagName(self.init_type), self.str }));
+                    } else {
+                        std.debug.print("{s}@{d} := {s} {s}\n", .{ self.str, @intFromPtr(self), @tagName(self.init_type), self.str });
+                    }
+                }
+                fn loadData(_: *Self) void {}
             };
             return .{
                 .init_type = .Input,
                 .backend = backend,
                 .storage = storage orelse backend.storage(dtype, size),
-                .initStorageDataFn = funcs.initStorageData,
+                .loadDataFn = funcs.loadData,
                 .evalFn = funcs.eval,
+                .graphFn = funcs.graph,
             };
         }
 
@@ -76,17 +79,26 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         }
         pub fn constant(backend: *const Backend, comptime value: dtype) Self {
             var tensor = init(backend, null);
-            tensor.init_type = .Constant;
-            tensor.initStorageDataFn = struct {
+            const funcs = struct {
                 const val: dtype = value;
-                fn initStorageData(self: *Self) void {
+                fn graph(self: *const Self) void {
+                    if (@inComptime()) {
+                        @compileLog(comptimePrint("{s} := {s}({}) {s}", .{ self.str, @tagName(self.init_type), val, self.str }));
+                    } else {
+                        std.debug.print("{s}@{d} := {s}({}) {s}\n", .{ self.str, @intFromPtr(self), @tagName(self.init_type), val, self.str });
+                    }
+                }
+                fn loadData(self: *Self) void {
                     self.storage.fill(val);
                 }
-            }.initStorageData;
+            };
+            tensor.init_type = .Constant;
+            tensor.graphFn = funcs.graph;
+            tensor.loadDataFn = funcs.loadData;
             return tensor;
         }
-        pub fn result(backend: *const Backend) Self {
-            var tensor = init(backend, null);
+        pub fn result(backend: *const Backend, storage: ?Backend.Storage(dtype)) Self {
+            var tensor = init(backend, storage);
             tensor.init_type = .Result;
             return tensor;
         }
@@ -94,18 +106,14 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         pub fn eval(self: *const Self) Self {
             return self.evalFn(@constCast(self));
         }
-        pub fn initStorage(self: *Self) void {
-            // if (self.storage == null) {
-            //     self.storage = self.backend.alloc(dtype, size) catch @panic("Unable to allocate tensor storage");
-            self.storage.init();
-            self.initStorageDataFn(self);
-            // }
+        pub fn graph(self: *const Self) void {
+            self.graphFn(self);
         }
-        // TODO: Don't deinit individual tensors, the backend should deinit everything it allocated
-        // pub fn deinit(self: *const Self) void {
-        //     _ = self;
-        // }
-        pub inline fn isContiguous(_: *const Self) bool {
+        pub fn initStorage(self: *Self) void {
+            self.storage.init();
+            self.loadDataFn(self);
+        }
+        pub fn isContiguous(_: *const Self) bool {
             return comptime utils.isContiguous(ndims, strides);
         }
         pub fn broadcastIndex(_: anytype, bc_index: anytype) [ndims]usize {
@@ -114,7 +122,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             // Otherwise it will be what the broadcasted index is
             const bc_ndims = bc_index.len;
             var index: [ndims]usize = undefined;
-            inline for (0..ndims) |d| {
+            for (0..ndims) |d| {
                 index[ndims - d - 1] = if (shape[ndims - d - 1] == 1) 0 else bc_index[bc_ndims - d - 1];
             }
             return index;
@@ -140,23 +148,17 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             return index;
         }
         pub fn permute(self: *const Self, comptime perm: [ndims]u8) PermutedTensor(Self, perm) {
-            var tensor = PermutedTensor(Self, perm).result(self.backend);
-            tensor.storage = self.storage;
-            return tensor;
+            return PermutedTensor(Self, perm).result(self.backend, self.storage);
         }
         pub fn view(self: *const Self, comptime new_shape: anytype) Tensor(dtype, new_shape) {
             if (self.isContiguous()) {
-                var tensor = Tensor(dtype, new_shape).result(self.backend);
-                tensor.storage = self.storage;
-                return tensor;
+                return Tensor(dtype, new_shape).result(self.backend, self.storage);
             } else {
                 @compileError("Must be contiguous to view");
             }
         }
         pub fn asStrided(self: *const Self, comptime new_shape: anytype, comptime new_strides: anytype) StridedTensor(dtype, new_shape, new_strides) {
-            var tensor = StridedTensor(dtype, new_shape, new_strides).result(self.backend);
-            tensor.storage = self.storage;
-            return tensor;
+            return StridedTensor(dtype, new_shape, new_strides).result(self.backend, self.storage);
         }
         // We can add the tensor functions using "pub usingnamespace"
         // That way the tensor struct definition is cleaner
@@ -208,7 +210,7 @@ pub fn BroadcastedTensor(comptime tensor1_t: type, comptime tensor2_t: type) typ
 
     const bc_ndims = @max(tensor1_ndims, tensor2_ndims);
     var bc_shape: [bc_ndims]usize = undefined;
-    inline for (0..bc_ndims) |i| {
+    for (0..bc_ndims) |i| {
         const dim1 = if (i >= tensor1_ndims) 1 else tensor1_shape[tensor1_ndims - i - 1];
         const dim2 = if (i >= tensor2_ndims) 1 else tensor2_shape[tensor2_ndims - i - 1];
         if (dim1 != 1 and dim2 != 1 and dim1 != dim2) {
@@ -234,4 +236,11 @@ pub fn PermutedTensor(comptime tensor_t: type, comptime perm: [@field(tensor_t, 
         utils.permuteArray(shape.len, shape, perm),
         utils.permuteArray(strides.len, strides, strides_perm),
     );
+}
+
+pub fn CastedTensor(comptime tensor_t: type, comptime new_dtype: type) type {
+    const ndims = @field(tensor_t, "ndims");
+    const shape = @field(tensor_t, "shape");
+    const strides = @field(tensor_t, "strides");
+    BaseTensor(new_dtype, ndims, shape, strides);
 }

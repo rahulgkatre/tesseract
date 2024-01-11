@@ -82,24 +82,30 @@ A demo of the library can be found in `demo.zig`. In general to use the library 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Tensor = @import("src/tensor.zig").Tensor;
-const Backend = @import("src/backend/backend.zig").Backend;
+const Backend = @import("src/backend.zig").Backend;
 
 pub fn main() !void {
     // To take advantage of comptime features, all tensor code should be in comptime
     const out = comptime blk: {
-        const x = fn1();
-        break :blk fn2(x);
+        const x1 = fn1();
+        const x2 = fn2(x1);
+        break :blk x2;
     };
 
-    // Now in runtime, initialize the backend which will allow for allocation of tensor storage
+    // Use comptime on the graph call to see the compute graph
+    // comptime out.graph();
+
+    // Print the tensors created during compile time, which now exist at runtime
+    // as they have memory addresses
+    out.graph();
+
+    // Initialize the backend which will allow for allocation of tensor storage
     TestBackend.init(.{});
     defer TestBackend.deinit();
 
-    // Use comptime on the eval call to see the compute graph
-    // comptime out.eval();
     // Print the storage to show the data
-    std.debug.print("\n{any}\n", .{out.eval().storage});
-}
+    const eval_out = out.eval();
+    std.debug.print("\n{any}\n", .{eval_out.storage});
 ```
 
 ## Roadmap

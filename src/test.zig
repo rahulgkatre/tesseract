@@ -2,19 +2,27 @@ const std = @import("std");
 const expectEqual = std.testing.expectEqual;
 const Allocator = std.mem.Allocator;
 const Tensor = @import("tensor.zig").Tensor;
-const backend = @import("backend/backend.zig");
+const backend = @import("backend.zig");
 const comptimePrint = std.fmt.comptimePrint;
 const ops = @import("ops.zig");
 const utils = @import("utils.zig");
 
 const TestBackend = &backend.Backend{ .Zig = .{} };
-const compile_log = false;
+const comptime_graph = false;
+const runtime_graph = true;
+const eval_logging = true;
 fn runEval(comptime test_name: anytype, comptime out: anytype) void {
-    if (compile_log) {
+    if (comptime_graph) {
         @compileLog(test_name);
-        _ = comptime out.eval();
-    } else {
-        // std.debug.print("\n{any}\n", .{out.eval().storage.Zig.data.?});
+        comptime out.graph();
+    } else if (runtime_graph) {
+        std.debug.print("\n", .{});
+        out.graph();
+    }
+
+    const eval_out = out.eval();
+    if (eval_logging) {
+        std.debug.print("\n{any}\n", .{eval_out.storage.Zig.data.?});
     }
 }
 
@@ -76,7 +84,7 @@ test "map" {
     const tensor2 = comptime tensor1.neg();
     try expectEqual([_]usize{ 2, 3, 4 }, tensor2.shape);
     TestBackend.init(.{});
-    defer TestBackend.deinit();
+
     runEval("map", tensor2);
 }
 test "zip" {
@@ -98,7 +106,6 @@ test "reduce" {
         break :blk tensor2;
     };
     TestBackend.init(.{});
-    defer TestBackend.deinit();
     runEval("reduce", out);
 }
 test "zip reduce" {
@@ -111,7 +118,7 @@ test "zip reduce" {
     };
 
     TestBackend.init(.{});
-    defer TestBackend.deinit();
+
     runEval("zip reduce", out);
 }
 
@@ -151,7 +158,7 @@ test "tensors from functions" {
     };
 
     TestBackend.init(.{});
-    defer TestBackend.deinit();
+
     runEval("tensors from functions", out);
     TestBackend.deinit();
 }
@@ -172,6 +179,6 @@ test "softmax" {
     };
 
     TestBackend.init(.{});
-    defer TestBackend.deinit();
+
     runEval("softmax", out);
 }
