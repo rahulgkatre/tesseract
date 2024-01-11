@@ -31,6 +31,7 @@ pub fn main() !void {
     // Allocator is modified after the fact
 
     TestBackend.init(.{});
+    defer TestBackend.deinit();
 
     // Use comptime on the eval call to see the compute graph
     // comptime out.eval();

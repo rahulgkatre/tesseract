@@ -12,7 +12,8 @@ const GlobalArena = struct {
     }
     fn deinit() void {
         global_arena.deinit();
-        global_arena = undefined;
+        // TODO: Why does this cause an error?
+        // global_arena = undefined;
     }
     fn allocator() std.mem.Allocator {
         return global_arena.allocator();
@@ -49,6 +50,10 @@ pub fn init(_: *const ZigBackend, _: anytype) void {
 
 pub fn alloc(_: *const ZigBackend, comptime dtype: type, size: usize) Backend.Storage(dtype) {
     return .{ .Zig = ZigStorage(dtype).init(size) };
+}
+
+pub fn deinit(_: *const ZigBackend) void {
+    GlobalArena.deinit();
 }
 
 // TODO: What is the standardized way for determining the float type to cast an int type to

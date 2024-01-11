@@ -39,6 +39,11 @@ pub const Backend = union(BackendTypes) {
             inline else => |*b| b.alloc(dtype, size),
         };
     }
+    pub fn deinit(self: *const Backend) void {
+        return switch (self.*) {
+            inline else => |*b| b.deinit(),
+        };
+    }
     pub fn map(self: *const Backend, op: ops.MapOp, x: anytype) @TypeOf(x) {
         var out = @TypeOf(x).result(self);
         out.evalFn = struct {

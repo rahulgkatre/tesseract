@@ -76,7 +76,8 @@ test "map" {
     const tensor2 = comptime tensor1.neg();
     try expectEqual([_]usize{ 2, 3, 4 }, tensor2.shape);
     TestBackend.init(.{});
-    _ = runEval("map", tensor2);
+    defer TestBackend.deinit();
+    runEval("map", tensor2);
 }
 test "zip" {
     const out = comptime blk: {
@@ -97,6 +98,7 @@ test "reduce" {
         break :blk tensor2;
     };
     TestBackend.init(.{});
+    defer TestBackend.deinit();
     runEval("reduce", out);
 }
 test "zip reduce" {
@@ -109,6 +111,7 @@ test "zip reduce" {
     };
 
     TestBackend.init(.{});
+    defer TestBackend.deinit();
     runEval("zip reduce", out);
 }
 
@@ -116,6 +119,7 @@ test "lazy with realization" {
     var NewBackend = backend.Backend{ .Zig = .{} };
     var tensor1 = Tensor(i32, .{ 2, 3, 4 }).constant(&NewBackend, 0);
     NewBackend.init(.{});
+    defer NewBackend.deinit();
 
     tensor1.initStorage();
     try expectEqual(true, tensor1.storage.Zig.data != null);
@@ -147,7 +151,9 @@ test "tensors from functions" {
     };
 
     TestBackend.init(.{});
+    defer TestBackend.deinit();
     runEval("tensors from functions", out);
+    TestBackend.deinit();
 }
 
 fn softmax(x: anytype, comptime dim: u8) @TypeOf(x) {
@@ -166,5 +172,6 @@ test "softmax" {
     };
 
     TestBackend.init(.{});
+    defer TestBackend.deinit();
     runEval("softmax", out);
 }
