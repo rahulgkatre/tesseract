@@ -198,11 +198,64 @@ fn ScalarZipFn(comptime zip_op: ops.ZipOp, comptime a_dtype: type, comptime b_dt
     };
 }
 
+fn ScalarCastFnReturnType(comptime old_dtype: type, comptime new_dtype: type) type {
+    return @TypeOf(struct {
+        inline fn cast(_: old_dtype) new_dtype {
+            unreachable;
+        }
+    }.cast);
+}
+
+fn ScalarCastFn(comptime old_dtype: type, comptime new_dtype: type) ScalarCastFnReturnType(old_dtype, new_dtype) {
+    const old_info = @typeInfo(old_dtype);
+    const new_info = @typeInfo(new_dtype);
+    const err_msg = std.fmt.comptimePrint("Cannot cast dtype {} to {}", .{ old_dtype, new_dtype });
+    return comptime switch (new_info) {
+        .Float => switch (old_info) {
+            .Int => struct {
+                inline fn cast(x: old_dtype) new_dtype {
+                    return @floatFromInt(x);
+                }
+            },
+            .Float => struct {
+                inline fn cast(x: old_dtype) new_dtype {
+                    return @floatCast(x);
+                }
+            },
+            else => @compileError(err_msg),
+        },
+        .Int => switch (old_info) {
+            .Float => struct {
+                inline fn cast(x: old_dtype) new_dtype {
+                    return @intFromFloat(x);
+                }
+            },
+            .Bool => struct {
+                inline fn cast(x: old_dtype) new_dtype {
+                    return @intFromBool(x);
+                }
+            },
+            .Int => struct {
+                inline fn cast(x: old_dtype) new_dtype {
+                    return @intCast(x);
+                }
+            },
+            else => @compileError(err_msg),
+        },
+        else => @compileError(err_msg),
+    }.cast;
+}
+
+pub fn asType(_: *const ZigBackend, comptime new_dtype: type, x: anytype, out: *tensor.CastedTensor(@TypeOf(x), new_dtype)) void {
+    const old_dtype: type = @field(@TypeOf(x), "dtype");
+    const castFn = ScalarCastFn(old_dtype, new_dtype);
+    inline for (0..@field(@TypeOf(out.*), "size")) |flat_index| {
+        out.storage.Zig.data.?[flat_index] = castFn(x.storage.Zig.data.?[flat_index]);
+    }
+}
+
 pub fn map(_: *const ZigBackend, comptime op: ops.MapOp, x: anytype, out: *@TypeOf(x)) void {
-    const mapFn = ScalarMapFn(
-        op,
-        @field(@TypeOf(x), "dtype"),
-    );
+    const mapFn = ScalarMapFn(op, @field(@TypeOf(x), "dtype"));
     inline for (0..@field(@TypeOf(out.*), "size")) |flat_index| {
         out.storage.Zig.data.?[flat_index] = mapFn(x.storage.Zig.data.?[flat_index]);
     }

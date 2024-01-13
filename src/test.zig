@@ -10,7 +10,7 @@ const utils = @import("utils.zig");
 const TestBackend = &backend.Backend{ .Zig = .{} };
 const comptime_graph = false;
 const runtime_graph = true;
-const eval_logging = true;
+const eval_logging = false;
 fn runEval(comptime test_name: anytype, comptime out: anytype) void {
     if (comptime_graph) {
         @compileLog(test_name);
@@ -22,21 +22,21 @@ fn runEval(comptime test_name: anytype, comptime out: anytype) void {
 
     const eval_out = out.eval();
     if (eval_logging) {
-        std.debug.print("\n{any}\n", .{eval_out.storage.Zig.data.?});
+        std.debug.print("{any}\n", .{eval_out.storage.Zig.data.?});
     }
 }
 
 test "same tensors assignable" {
     // This test catches regressions caused by comptime slices with the same values not being
     // equal to teach other, which would cause this test to not compile
-    const tensor1 = Tensor(i32, .{ 2, 3, 4 }).input(TestBackend);
-    var tensor2 = Tensor(i32, .{ 2, 3, 4 }).input(TestBackend);
+    const tensor1 = Tensor(i32, .{ 2, 3, 4 }).input(TestBackend, null);
+    var tensor2 = Tensor(i32, .{ 2, 3, 4 }).input(TestBackend, null);
     tensor2 = tensor1;
 }
 
 test "permute" {
     comptime {
-        const tensor1 = Tensor(i32, .{ 2, 3, 4 }).input(TestBackend);
+        const tensor1 = Tensor(i32, .{ 2, 3, 4 }).input(TestBackend, null);
         const tensor2 = tensor1.permute(.{ 0, 2, 1 });
         try expectEqual([_]usize{ 2, 4, 3 }, tensor2.shape);
         try expectEqual([_]usize{ 12, 1, 4, 0 }, tensor2.strides);
@@ -44,7 +44,7 @@ test "permute" {
 }
 test "view" {
     comptime {
-        const tensor1 = Tensor(i32, .{ 2, 3, 4 }).input(TestBackend);
+        const tensor1 = Tensor(i32, .{ 2, 3, 4 }).input(TestBackend, null);
         const tensor2 = tensor1.view(.{ 12, 2 });
         const tensor3 = tensor2.view(.{24});
 
@@ -57,7 +57,7 @@ test "view" {
 test "as strided" {
     // Based on example from https://pytorch.org/docs/stable/generated/torch.as_strided.html
     comptime {
-        const tensor1 = Tensor(i32, .{ 3, 3 }).input(TestBackend);
+        const tensor1 = Tensor(i32, .{ 3, 3 }).input(TestBackend, null);
         const tensor2 = tensor1.asStrided(.{ 2, 2 }, .{ 1, 2, 0 });
 
         try expectEqual([_]usize{ 2, 2 }, tensor2.shape);
@@ -179,6 +179,18 @@ test "softmax" {
     };
 
     TestBackend.init(.{});
-
     runEval("softmax", out);
+}
+
+test "astype" {
+    const out = comptime blk: {
+        const tensor1 = Tensor(bool, .{3}).constant(TestBackend, true);
+        const tensor2 = tensor1.asType(i32);
+        const tensor3 = tensor2.asType(u8);
+        const tensor4 = tensor3.asType(f16);
+        const tensor5 = tensor4.asType(f32);
+        break :blk tensor5;
+    };
+    TestBackend.init(.{});
+    runEval("astype", out);
 }

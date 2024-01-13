@@ -44,35 +44,38 @@ pub const Backend = union(BackendTypes) {
             inline else => |*b| b.deinit(),
         };
     }
-    pub fn asType(self: *const Backend, x: anytype, comptime dtype: type) tensor.CastedTensor(@TypeOf(x), dtype) {
-        var out = tensor.CastedTensor(@TypeOf(x), dtype);
-        out.evalFn = struct {
-            fn eval(out_ptr: *@TypeOf(out)) @TypeOf(out) {
+    pub fn asType(self: *const Backend, comptime new_dtype: type, x: anytype) tensor.CastedTensor(@TypeOf(x), new_dtype) {
+        const OutType = tensor.CastedTensor(@TypeOf(x), new_dtype);
+        const Impl = struct {
+            fn eval(out_ptr: *OutType) OutType {
                 const eval_x = x.eval();
                 out_ptr.initStorage();
                 switch (self.*) {
-                    inline else => |*backend| backend.asType(eval_x, out_ptr, dtype),
+                    inline else => |*backend| backend.asType(new_dtype, eval_x, out_ptr),
                 }
                 return out_ptr.*;
             }
-        }.eval;
-        out.graphFn = struct {
-            fn graph(ptr: *@TypeOf(out)) void {
+            fn graph(ptr: *const OutType) void {
                 if (@inComptime()) {
                     x.graph();
-                    @compileLog(comptimePrint("{s} = AsType({any}) {s}", .{ ptr.str, dtype, x.str }));
+                    @compileLog(comptimePrint("{s} = AsType({any}) {s}", .{ ptr.str, new_dtype, x.str }));
                 } else {
-                    std.debug.print("{s}@{d} = AsType({any}) {s}@{d}\n", .{ ptr.str, @intFromPtr(ptr), dtype, x.str, @intFromPtr(&x) });
+                    std.debug.print("{s}@{d} = AsType({any}) {s}@{d}\n", .{ ptr.str, @intFromPtr(ptr), new_dtype, x.str, @intFromPtr(&x) });
                 }
             }
-        }.graph;
-        return out;
+        };
+        return OutType.result(
+            self,
+            null,
+            Impl.eval,
+            Impl.graph,
+        );
     }
 
     pub fn map(self: *const Backend, op: ops.MapOp, x: anytype) @TypeOf(x) {
-        var out = @TypeOf(x).result(self, null);
-        out.evalFn = struct {
-            fn eval(eval_out: *@TypeOf(out)) @TypeOf(out) {
+        const OutType: type = @TypeOf(x);
+        const Impl = struct {
+            fn eval(eval_out: *OutType) OutType {
                 const eval_x = x.eval();
                 eval_out.initStorage();
                 switch (self.*) {
@@ -80,9 +83,7 @@ pub const Backend = union(BackendTypes) {
                 }
                 return eval_out.*;
             }
-        }.eval;
-        out.graphFn = struct {
-            fn graph(out_ptr: *const @TypeOf(out)) void {
+            fn graph(out_ptr: *const OutType) void {
                 if (@inComptime()) {
                     x.graph();
                     @compileLog(comptimePrint("{s} := {s} {s}", .{ out_ptr.str, @tagName(op), x.str }));
@@ -90,13 +91,18 @@ pub const Backend = union(BackendTypes) {
                     std.debug.print("{s}@{d} := {s} {s}@{d}\n", .{ out_ptr.str, @intFromPtr(out_ptr), @tagName(op), x.str, @intFromPtr(&x) });
                 }
             }
-        }.graph;
-        return out;
+        };
+        return OutType.result(
+            self,
+            null,
+            Impl.eval,
+            Impl.graph,
+        );
     }
     pub fn zip(self: *const Backend, op: ops.ZipOp, a: anytype, b: anytype) tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b)) {
-        var out = tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b)).result(self, null);
-        out.evalFn = struct {
-            fn eval(eval_out: *@TypeOf(out)) @TypeOf(out) {
+        const OutType = tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b));
+        const Impl = struct {
+            fn eval(eval_out: *OutType) OutType {
                 const eval_a = a.eval();
                 const eval_b = b.eval();
                 eval_out.initStorage();
@@ -105,9 +111,7 @@ pub const Backend = union(BackendTypes) {
                 }
                 return eval_out.*;
             }
-        }.eval;
-        out.graphFn = struct {
-            fn graph(ptr: *const @TypeOf(out)) void {
+            fn graph(ptr: *const OutType) void {
                 a.graph();
                 b.graph();
                 if (@inComptime()) {
@@ -116,13 +120,18 @@ pub const Backend = union(BackendTypes) {
                     std.debug.print("{s}@{d} := {s}@{d} {s} {s}@{d}\n", .{ ptr.str, @intFromPtr(ptr), a.str, @intFromPtr(&a), @tagName(op), b.str, @intFromPtr(&b) });
                 }
             }
-        }.graph;
-        return out;
+        };
+        return OutType.result(
+            self,
+            null,
+            Impl.eval,
+            Impl.graph,
+        );
     }
     pub fn reduce(self: *const Backend, op: ops.ReduceOp, x: anytype, dim: ?u8) tensor.ReducedTensor(@TypeOf(x), dim) {
-        var out = tensor.ReducedTensor(@TypeOf(x), dim).result(self, null);
-        out.evalFn = struct {
-            fn eval(eval_out: *@TypeOf(out)) @TypeOf(out) {
+        const OutType = tensor.ReducedTensor(@TypeOf(x), dim);
+        const Impl = struct {
+            fn eval(eval_out: *OutType) OutType {
                 const eval_x = x.eval();
                 eval_out.initStorage();
                 switch (self.*) {
@@ -130,9 +139,8 @@ pub const Backend = union(BackendTypes) {
                 }
                 return eval_out.*;
             }
-        }.eval;
-        out.graphFn = struct {
-            fn graph(ptr: *const @TypeOf(out)) void {
+
+            fn graph(ptr: *const OutType) void {
                 x.graph();
                 if (@inComptime()) {
                     @compileLog(comptimePrint("{s} := {s} {s} {d}", .{ ptr.str, @tagName(op), x.str, dim orelse -1 }));
@@ -140,7 +148,12 @@ pub const Backend = union(BackendTypes) {
                     std.debug.print("{s}@{d} := {s} {s}@{d} {d}\n", .{ ptr.str, @intFromPtr(ptr), @tagName(op), x.str, @intFromPtr(&x), dim orelse -1 });
                 }
             }
-        }.graph;
-        return out;
+        };
+        return OutType.result(
+            self,
+            null,
+            Impl.eval,
+            Impl.graph,
+        );
     }
 };

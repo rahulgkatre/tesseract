@@ -1,8 +1,8 @@
 const ops = @import("ops.zig");
 const tensor = @import("tensor.zig");
 
-pub fn asType(x: anytype, comptime dtype: type) tensor.CastedTensor(@TypeOf(x.*), dtype) {
-    return x.backend.asType(x, dtype);
+pub fn asType(x_ptr: anytype, comptime dtype: type) tensor.CastedTensor(@TypeOf(x_ptr.*), dtype) {
+    return x_ptr.backend.asType(dtype, x_ptr.*);
 }
 
 // Higher order functions

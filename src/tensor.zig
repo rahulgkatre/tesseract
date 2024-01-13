@@ -7,6 +7,10 @@ const Backend = @import("backend.zig").Backend;
 
 const InitType = enum { Input, Constant, Result };
 
+pub fn ConstantTensor(comptime dtype: type) type {
+    return Tensor(dtype, .{1});
+}
+
 pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
     return DefaultStridedTensor(dtype, shape);
 }
@@ -42,12 +46,21 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         init_type: InitType,
         backend: *const Backend,
         storage: Backend.Storage(dtype),
-        loadDataFn: *const fn (self: *Self) void,
+
+        // Callbacks during recursive traversal of compute graph
         evalFn: *const fn (self: *Self) Self,
+        loadDataFn: *const fn (self: *Self) void,
         graphFn: *const fn (self: *const Self) void,
 
-        fn init(backend: *const Backend, storage: ?Backend.Storage(dtype)) Self {
-            const funcs = struct {
+        fn init(
+            backend: *const Backend,
+            init_type: InitType,
+            storage: ?Backend.Storage(dtype),
+            comptime evalFn: ?*const fn (self: *Self) Self,
+            comptime loadDataFn: ?*const fn (self: *Self) void,
+            comptime graphFn: ?*const fn (self: *const Self) void,
+        ) Self {
+            const Impl = struct {
                 fn eval(self: *Self) Self {
                     self.initStorage();
                     return self.*;
@@ -62,23 +75,29 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
                 fn loadData(_: *Self) void {}
             };
             return .{
-                .init_type = .Input,
+                .init_type = init_type,
                 .backend = backend,
                 .storage = storage orelse backend.storage(dtype, size),
-                .loadDataFn = funcs.loadData,
-                .evalFn = funcs.eval,
-                .graphFn = funcs.graph,
+                .evalFn = evalFn orelse Impl.eval,
+                .loadDataFn = loadDataFn orelse Impl.loadData,
+                .graphFn = graphFn orelse Impl.graph,
             };
         }
 
         // Exposed functions for initializing
-        pub fn input(backend: *const Backend) Self {
-            var tensor = init(backend, null);
-            tensor.init_type = .Input;
-            return tensor;
+        pub fn input(backend: *const Backend, storage: ?Backend.Storage(dtype)) Self {
+            return init(
+                backend,
+                .Input,
+                storage,
+                null,
+                null,
+                null,
+            );
         }
+        // TODO: A tensor of constants does not need to have a real shape as broadcasting is always possible
+        // While a tensor with specific size is useful for things like tables, a ConstantTensor with size 1 will be better
         pub fn constant(backend: *const Backend, comptime value: dtype) Self {
-            var tensor = init(backend, null);
             const funcs = struct {
                 const val: dtype = value;
                 fn graph(self: *const Self) void {
@@ -92,15 +111,29 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
                     self.storage.fill(val);
                 }
             };
-            tensor.init_type = .Constant;
-            tensor.graphFn = funcs.graph;
-            tensor.loadDataFn = funcs.loadData;
-            return tensor;
+            return init(
+                backend,
+                .Constant,
+                null,
+                null,
+                funcs.loadData,
+                funcs.graph,
+            );
         }
-        pub fn result(backend: *const Backend, storage: ?Backend.Storage(dtype)) Self {
-            var tensor = init(backend, storage);
-            tensor.init_type = .Result;
-            return tensor;
+        pub fn result(
+            backend: *const Backend,
+            storage: ?Backend.Storage(dtype),
+            comptime evalFn: ?*const fn (self: *Self) Self,
+            comptime graphFn: ?*const fn (self: *const Self) void,
+        ) Self {
+            return init(
+                backend,
+                .Result,
+                storage,
+                evalFn,
+                null,
+                graphFn,
+            );
         }
 
         pub fn eval(self: *const Self) Self {
@@ -148,17 +181,17 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             return index;
         }
         pub fn permute(self: *const Self, comptime perm: [ndims]u8) PermutedTensor(Self, perm) {
-            return PermutedTensor(Self, perm).result(self.backend, self.storage);
+            return PermutedTensor(Self, perm).result(self.backend, self.storage, null, null);
         }
         pub fn view(self: *const Self, comptime new_shape: anytype) Tensor(dtype, new_shape) {
             if (self.isContiguous()) {
-                return Tensor(dtype, new_shape).result(self.backend, self.storage);
+                return Tensor(dtype, new_shape).result(self.backend, self.storage, null, null);
             } else {
                 @compileError("Must be contiguous to view");
             }
         }
         pub fn asStrided(self: *const Self, comptime new_shape: anytype, comptime new_strides: anytype) StridedTensor(dtype, new_shape, new_strides) {
-            return StridedTensor(dtype, new_shape, new_strides).result(self.backend, self.storage);
+            return StridedTensor(dtype, new_shape, new_strides).result(self.backend, self.storage, null, null);
         }
         // We can add the tensor functions using "pub usingnamespace"
         // That way the tensor struct definition is cleaner
@@ -242,5 +275,5 @@ pub fn CastedTensor(comptime tensor_t: type, comptime new_dtype: type) type {
     const ndims = @field(tensor_t, "ndims");
     const shape = @field(tensor_t, "shape");
     const strides = @field(tensor_t, "strides");
-    BaseTensor(new_dtype, ndims, shape, strides);
+    return BaseTensor(new_dtype, ndims, shape, strides);
 }
