@@ -75,3 +75,29 @@ pub fn div(a_ptr: anytype, b: anytype) tensor.BroadcastedTensor(@TypeOf(a_ptr.*)
 pub fn sub(a_ptr: anytype, b: anytype) tensor.BroadcastedTensor(@TypeOf(a_ptr.*), @TypeOf(b)) {
     return a_ptr.add(b.neg());
 }
+
+// KEEPING THIS HERE FOR NOW
+// Pre-defined User Functions
+fn mapZipFunc(comptime map_op: ops.MapOp, comptime zip_op: ops.ZipOp) FuncType(.{ .ZipOp = zip_op }) {
+    return struct {
+        fn f(a_ptr: anytype, b: anytype) tensor.BroadcastedTensor(@TypeOf(a_ptr.*), @TypeOf(b)) {
+            return zip(&map(a_ptr, map_op), zip_op, b);
+        }
+    }.f;
+}
+
+fn zipMapFunc(comptime map_op: ops.MapOp, comptime zip_op: ops.ZipOp) FuncType(.{ .MapOp = map_op }) {
+    return struct {
+        fn f(a_ptr: anytype, b: anytype) tensor.BroadcastedTensor(@TypeOf(a_ptr.*), @TypeOf(b)) {
+            return map(&zip(a_ptr, zip_op, b), map_op);
+        }
+    }.f;
+}
+
+fn composeFunc(comptime map_op_f: ops.MapOp, comptime map_op_g: ops.MapOp) FuncType(.{ .MapOp = map_op_f }) {
+    return struct {
+        fn f(a_ptr: anytype) tensor.BroadcastedTensor(@TypeOf(a_ptr.*)) {
+            return map(&map(a_ptr, map_op_g), map_op_f);
+        }
+    }.f;
+}
