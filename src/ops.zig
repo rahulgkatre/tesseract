@@ -3,6 +3,7 @@
 pub const MapOp = enum { Neg, Log2, Exp2, Sqrt, Recip, Sin };
 pub const ZipOp = enum { Add, Mul, Maximum, Mod, Lt, Eq, Xor };
 pub const ReduceOp = enum { Sum, Max };
+
 // TypeOps affect the type of the tensor because they modify dtype, shape, or stride
 // pub const TypeOp = enum { Reshape, Permute, Expand, Pad, Shrink, Stride, AsStrided, AsType };
 pub const TypeOp = enum { Permute, View, Cast };

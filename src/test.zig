@@ -10,7 +10,7 @@ const utils = @import("utils.zig");
 const TestBackend = &backend.Backend{ .Zig = .{} };
 const comptime_graph = false;
 const runtime_graph = true;
-const eval_logging = false;
+const eval_logging = true;
 fn runEval(comptime test_name: anytype, comptime out: anytype) void {
     if (comptime_graph) {
         @compileLog(test_name);
@@ -22,7 +22,7 @@ fn runEval(comptime test_name: anytype, comptime out: anytype) void {
 
     const eval_out = out.eval();
     if (eval_logging) {
-        std.debug.print("{any}\n", .{eval_out.storage.Zig.data.?});
+        std.debug.print("{any}\n", .{eval_out.storage.?.Zig.data});
     }
 }
 
@@ -80,12 +80,14 @@ test "as strided" {
     }
 }
 test "map" {
-    const tensor1 = comptime Tensor(i32, .{ 2, 3, 4 }).constant(TestBackend, 3);
-    const tensor2 = comptime tensor1.neg();
-    try expectEqual([_]usize{ 2, 3, 4 }, tensor2.shape);
+    const out = comptime blk: {
+        const tensor1 = Tensor(i32, .{ 2, 3, 4 }).constant(TestBackend, 3);
+        const tensor2 = tensor1.neg();
+        break :blk tensor2;
+    };
+    try expectEqual([_]usize{ 2, 3, 4 }, out.shape);
     TestBackend.init(.{});
-
-    runEval("map", tensor2);
+    runEval("map", out);
 }
 test "zip" {
     const out = comptime blk: {
@@ -123,15 +125,16 @@ test "zip reduce" {
 }
 
 test "lazy with realization" {
-    var NewBackend = backend.Backend{ .Zig = .{} };
-    var tensor1 = Tensor(i32, .{ 2, 3, 4 }).constant(&NewBackend, 0);
+    const NewBackend = &backend.Backend{ .Zig = .{} };
+    var tensor1 = comptime Tensor(i32, .{ 2, 3, 4 }).constant(NewBackend, 0);
     NewBackend.init(.{});
     defer NewBackend.deinit();
 
-    tensor1.initStorage();
-    try expectEqual(true, tensor1.storage.Zig.data != null);
-    try expectEqual(true, tensor1.storage.Zig.data.?.len == 24);
-    try expectEqual([_]i32{0} ** 24, tensor1.storage.Zig.data.?[0..24].*);
+    tensor1.initStorage(null);
+    try expectEqual(true, tensor1.storage != null);
+    std.debug.print("{any}", .{tensor1.storage.?.Zig.data.?.len});
+    try expectEqual(true, tensor1.storage.?.Zig.data.?.len == 24);
+    try expectEqual([_]i32{0} ** 24, tensor1.storage.?.Zig.data.?[0..24].*);
 }
 
 fn fn1() Tensor(i32, .{ 2, 1, 4 }) {
@@ -182,7 +185,7 @@ test "softmax" {
     runEval("softmax", out);
 }
 
-test "astype" {
+test "as_type" {
     const out = comptime blk: {
         const tensor1 = Tensor(bool, .{3}).constant(TestBackend, true);
         const tensor2 = tensor1.asType(i32);
@@ -192,5 +195,5 @@ test "astype" {
         break :blk tensor5;
     };
     TestBackend.init(.{});
-    runEval("astype", out);
+    runEval("as_type", out);
 }

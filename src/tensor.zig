@@ -21,7 +21,7 @@ fn DefaultStridedTensor(comptime dtype: type, comptime shape: anytype) type {
 
 pub fn StridedTensor(comptime dtype: type, comptime shape: anytype, comptime strides: anytype) type {
     if (shape.len + 1 != strides.len) {
-        @compileError("Provided shape ndims not compatible provided strides ndims");
+        @compileError("Provided shape ndims not compatible with provided strides ndims");
     }
     return BaseTensor(dtype, shape.len, shape, strides);
 }
@@ -45,7 +45,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         str: @TypeOf(str) = str,
         init_type: InitType,
         backend: *const Backend,
-        storage: Backend.Storage(dtype),
+        storage: ?*Backend.Storage(dtype),
 
         // Callbacks during recursive traversal of compute graph
         evalFn: *const fn (self: *Self) Self,
@@ -55,21 +55,21 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         fn init(
             backend: *const Backend,
             init_type: InitType,
-            storage: ?Backend.Storage(dtype),
+            storage: ?*Backend.Storage(dtype),
             comptime evalFn: ?*const fn (self: *Self) Self,
             comptime loadDataFn: ?*const fn (self: *Self) void,
             comptime graphFn: ?*const fn (self: *const Self) void,
         ) Self {
             const Impl = struct {
                 fn eval(self: *Self) Self {
-                    self.initStorage();
+                    self.initStorage(null);
                     return self.*;
                 }
                 fn graph(self: *const Self) void {
                     if (@inComptime()) {
-                        @compileLog(comptimePrint("{s} := {s} {s}", .{ self.str, @tagName(self.init_type), self.str }));
+                        @compileLog(comptimePrint("{s} = {s} {s}", .{ self.str, @tagName(self.init_type), self.str }));
                     } else {
-                        std.debug.print("{s}@{d} := {s} {s}\n", .{ self.str, @intFromPtr(self), @tagName(self.init_type), self.str });
+                        std.debug.print("{s}@{d} = {s} {s}\n", .{ self.str, @intFromPtr(self), @tagName(self.init_type), self.str });
                     }
                 }
                 fn loadData(_: *Self) void {}
@@ -77,7 +77,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             return .{
                 .init_type = init_type,
                 .backend = backend,
-                .storage = storage orelse backend.storage(dtype, size),
+                .storage = storage, // orelse backend.storage(dtype, size),
                 .evalFn = evalFn orelse Impl.eval,
                 .loadDataFn = loadDataFn orelse Impl.loadData,
                 .graphFn = graphFn orelse Impl.graph,
@@ -85,7 +85,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         }
 
         // Exposed functions for initializing
-        pub fn input(backend: *const Backend, storage: ?Backend.Storage(dtype)) Self {
+        pub fn input(backend: *const Backend, storage: ?*Backend.Storage(dtype)) Self {
             return init(
                 backend,
                 .Input,
@@ -102,13 +102,13 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
                 const val: dtype = value;
                 fn graph(self: *const Self) void {
                     if (@inComptime()) {
-                        @compileLog(comptimePrint("{s} := {s}({}) {s}", .{ self.str, @tagName(self.init_type), val, self.str }));
+                        @compileLog(comptimePrint("{s} = {s}({}) {s}", .{ self.str, @tagName(self.init_type), val, self.str }));
                     } else {
-                        std.debug.print("{s}@{d} := {s}({}) {s}\n", .{ self.str, @intFromPtr(self), @tagName(self.init_type), val, self.str });
+                        std.debug.print("{s}@{d} = {s}({}) {s}\n", .{ self.str, @intFromPtr(self), @tagName(self.init_type), val, self.str });
                     }
                 }
                 fn loadData(self: *Self) void {
-                    self.storage.fill(val);
+                    self.storage.?.fill(val);
                 }
             };
             return init(
@@ -122,7 +122,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         }
         pub fn result(
             backend: *const Backend,
-            storage: ?Backend.Storage(dtype),
+            storage: ?*Backend.Storage(dtype),
             comptime evalFn: ?*const fn (self: *Self) Self,
             comptime graphFn: ?*const fn (self: *const Self) void,
         ) Self {
@@ -142,9 +142,13 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         pub fn graph(self: *const Self) void {
             self.graphFn(self);
         }
-        pub fn initStorage(self: *Self) void {
-            self.storage.init();
-            self.loadDataFn(self);
+        pub fn initStorage(self: *Self, comptime data: ?[size]dtype) void {
+            if (self.storage == null) {
+                self.storage = self.backend.storage(dtype, size, data);
+            }
+            if (data == null) {
+                self.loadDataFn(self);
+            }
         }
         pub fn isContiguous(_: *const Self) bool {
             return comptime utils.isContiguous(ndims, strides);
@@ -155,26 +159,21 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             // Otherwise it will be what the broadcasted index is
             const bc_ndims = bc_index.len;
             var index: [ndims]usize = undefined;
-            for (0..ndims) |d| {
+            inline for (0..ndims) |d| {
                 index[ndims - d - 1] = if (shape[ndims - d - 1] == 1) 0 else bc_index[bc_ndims - d - 1];
             }
             return index;
         }
         pub fn flattenIndex(_: anytype, index: [ndims]usize) usize {
-            // Convert a multidimensional index into a single dimensional index
-            // Start by adding the storage offset
-            var flat_index: usize = strides[ndims];
-            for (0..ndims) |d| {
-                flat_index += index[d] * strides[d];
-            }
-            return flat_index;
-            // return @reduce(.Sum, @mulAdd([ndims]usize, index, strides, [_]usize{0} ** ndims));
+            const index_vec: @Vector(ndims, usize) = index;
+            const strides_vec: @Vector(ndims, usize) = strides[0..ndims].*;
+            return @reduce(.Add, index_vec * strides_vec) + strides[ndims];
         }
         pub fn unflattenIndex(_: anytype, flat_index: usize) [ndims]usize {
             var index: [ndims]usize = undefined;
             // Subtract storage offset first
             var remainder = flat_index - strides[ndims];
-            for (0..ndims) |d| {
+            inline for (0..ndims) |d| {
                 index[d] = @divTrunc(remainder, strides[d]);
                 remainder = @mod(remainder, strides[d]);
             }
@@ -199,81 +198,70 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
     };
 }
 
-pub fn ReducedTensor(comptime tensor_t: type, comptime dim: ?u8) type {
-    const ndims = @field(tensor_t, "ndims");
-    const shape = @field(tensor_t, "shape");
+pub fn ReducedTensor(comptime TensorX: type, comptime dim: ?u8) type {
     if (dim == null) {
-        return DefaultStridedTensor(@field(tensor_t, "dtype"), [_]usize{1} ** ndims);
+        return DefaultStridedTensor(TensorX.dtype, [_]usize{1} ** TensorX.ndims);
     }
 
-    if (dim.? >= ndims) {
+    if (dim.? >= TensorX.ndims) {
         @compileError(comptimePrint(
             "Reduce dim {d} is out of bounds for tensor {s} with ndims={d} ",
-            .{
-                dim.?,
-                @field(tensor_t, "str"),
-                ndims,
-            },
+            .{ dim.?, TensorX.str, TensorX.ndims },
         ));
     }
-    var reduced_shape: [ndims]usize = undefined;
-    @memcpy(&reduced_shape, &shape);
+    var reduced_shape: [TensorX.ndims]usize = undefined;
+    @memcpy(&reduced_shape, &TensorX.shape);
     reduced_shape[dim.?] = 1;
     return DefaultStridedTensor(
-        @field(tensor_t, "dtype"),
+        TensorX.dtype,
         reduced_shape,
     );
 }
 
-// TODO: The broadcasted tensor's dtype might be different based on the operation
-// It will always be one of the two input tensor's dtypes
-pub fn BroadcastedTensor(comptime tensor1_t: type, comptime tensor2_t: type) type {
+pub fn BroadcastedTensor(comptime TensorA: type, comptime TensorB: type) type {
     // Gets the broadcast shape between two tensors if one exists
     // If the two tensors do not broadcast, the code won't compile
-    const tensor1_dtype = @field(tensor1_t, "dtype");
-    const tensor2_dtype = @field(tensor2_t, "dtype");
-    if (tensor1_dtype != tensor2_dtype) {
+    if (TensorA.dtype != TensorB.dtype) {
         @compileError("Cannot broadcast tensors as they do not have the same dtype, please cast first");
     }
 
-    const tensor1_ndims = @field(tensor1_t, "ndims");
-    const tensor1_shape = @field(tensor1_t, "shape");
-    const tensor2_ndims = @field(tensor2_t, "ndims");
-    const tensor2_shape = @field(tensor2_t, "shape");
-
-    const bc_ndims = @max(tensor1_ndims, tensor2_ndims);
+    const bc_ndims = @max(TensorA.ndims, TensorB.ndims);
     var bc_shape: [bc_ndims]usize = undefined;
     for (0..bc_ndims) |i| {
-        const dim1 = if (i >= tensor1_ndims) 1 else tensor1_shape[tensor1_ndims - i - 1];
-        const dim2 = if (i >= tensor2_ndims) 1 else tensor2_shape[tensor2_ndims - i - 1];
+        const dim1 = if (i >= TensorA.ndims) 1 else TensorA.shape[TensorA.ndims - i - 1];
+        const dim2 = if (i >= TensorB.ndims) 1 else TensorB.shape[TensorB.ndims - i - 1];
         if (dim1 != 1 and dim2 != 1 and dim1 != dim2) {
             @compileError(comptimePrint(
                 "Cannot broadcast tensors of shapes {any} and {any}",
-                .{ tensor1_shape, tensor2_shape },
+                .{ TensorA.shape, TensorB.shape },
             ));
         }
         bc_shape[bc_ndims - i - 1] = if (dim1 == dim2 or dim2 == 1) dim1 else dim2;
     }
-    return Tensor(tensor1_dtype, bc_shape);
+    return Tensor(TensorA.dtype, bc_shape);
 }
 
-pub fn PermutedTensor(comptime tensor_t: type, comptime perm: [@field(tensor_t, "ndims")]u8) type {
-    const shape = @field(tensor_t, "shape");
-    const strides = @field(tensor_t, "strides");
-
-    var strides_perm: [strides.len]u8 = undefined;
-    @memcpy(strides_perm[0 .. strides.len - 1], &perm);
-    strides_perm[strides.len - 1] = strides.len - 1;
+pub fn PermutedTensor(comptime TensorX: type, comptime perm: [TensorX.ndims]u8) type {
+    var strides_perm: [TensorX.ndims + 1]u8 = undefined;
+    @memcpy(strides_perm[0..TensorX.ndims], &perm);
+    strides_perm[TensorX.ndims] = TensorX.ndims;
     return StridedTensor(
-        @field(tensor_t, "dtype"),
-        utils.permuteArray(shape.len, shape, perm),
-        utils.permuteArray(strides.len, strides, strides_perm),
+        TensorX.dtype,
+        utils.permuteArray(TensorX.ndims, TensorX.shape, perm),
+        utils.permuteArray(TensorX.ndims + 1, TensorX.strides, strides_perm),
     );
 }
 
-pub fn CastedTensor(comptime tensor_t: type, comptime new_dtype: type) type {
-    const ndims = @field(tensor_t, "ndims");
-    const shape = @field(tensor_t, "shape");
-    const strides = @field(tensor_t, "strides");
+pub fn CastedTensor(comptime tensor: type, comptime new_dtype: type) type {
+    const ndims = tensor.ndims;
+    const shape = tensor.shape;
+    const strides = tensor.strides;
     return BaseTensor(new_dtype, ndims, shape, strides);
+}
+
+pub fn ShrinkBroadcastTensor(comptime TensorA: type, comptime TensorB: type) type {
+    const TensorBroadcast = BroadcastedTensor(TensorA, TensorB);
+    const ndims = TensorBroadcast.ndims;
+
+    _ = ndims;
 }
