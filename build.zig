@@ -6,6 +6,7 @@ pub fn build(b: *std.Build) void {
         .name = "demo",
         .root_source_file = .{ .path = "demo.zig" },
         .target = b.host,
+        .optimize = .ReleaseFast,
     });
 
     b.installArtifact(exe);

@@ -132,9 +132,9 @@ test "lazy with realization" {
 
     tensor1.initStorage(null);
     try expectEqual(true, tensor1.storage != null);
-    std.debug.print("{any}", .{tensor1.storage.?.Zig.data.?.len});
-    try expectEqual(true, tensor1.storage.?.Zig.data.?.len == 24);
-    try expectEqual([_]i32{0} ** 24, tensor1.storage.?.Zig.data.?[0..24].*);
+    std.debug.print("{any}", .{tensor1.storage.?.Zig.data.len});
+    try expectEqual(true, tensor1.storage.?.Zig.data.len == 24);
+    try expectEqual([_]i32{0} ** 24, tensor1.storage.?.Zig.data[0..24].*);
 }
 
 fn fn1() Tensor(i32, .{ 2, 1, 4 }) {
