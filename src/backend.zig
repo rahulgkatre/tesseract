@@ -21,11 +21,6 @@ pub const Backend = union(BackendTypes) {
                     inline else => |*b| b.fill(value),
                 }
             }
-            pub fn init(self: *Self) void {
-                switch (self.*) {
-                    inline else => |*b| b.init(),
-                }
-            }
             pub fn load(self: *Self, data: []dtype) void {
                 switch (self.*) {
                     inline else => |*b| b.load(data),
@@ -39,7 +34,7 @@ pub const Backend = union(BackendTypes) {
             inline else => |*b| b.init(args),
         };
     }
-    pub fn storage(self: *const Backend, comptime dtype: type, comptime size: usize, comptime data: ?[size]dtype) *Storage(dtype) {
+    pub fn storage(self: *const Backend, comptime dtype: type, comptime size: usize, comptime data: ?[]dtype) *Storage(dtype) {
         return switch (self.*) {
             inline else => |*b| b.storage(dtype, size, data),
         };
@@ -52,13 +47,13 @@ pub const Backend = union(BackendTypes) {
     pub fn asType(self: *const Backend, comptime new_dtype: type, x: anytype) @TypeOf(x).AsType(new_dtype) {
         const Output = @TypeOf(x).AsType(new_dtype);
         const Impl = struct {
-            fn eval(out_ptr: *Output) Output {
-                const eval_x = @call(.auto, x.evalFn, .{@constCast(&x)});
-                out_ptr.initStorage(null);
+            fn eval(out: *Output) Output {
+                const x_eval = @call(.auto, x.evalFn, .{@constCast(&x)});
+                out.initStorage(null);
                 switch (self.*) {
-                    inline else => |*backend| backend.asType(new_dtype, eval_x, out_ptr),
+                    inline else => |*backend| backend.asType(new_dtype, x_eval, out),
                 }
-                return out_ptr.*;
+                return out.*;
             }
             fn graph(ptr: *const Output) void {
                 x.graph();
@@ -75,13 +70,13 @@ pub const Backend = union(BackendTypes) {
     pub fn map(self: *const Backend, op: ops.MapOp, x: anytype) @TypeOf(x) {
         const Output: type = @TypeOf(x);
         const Impl = struct {
-            fn eval(eval_out: *Output) Output {
-                const eval_x = @call(.auto, x.evalFn, .{@constCast(&x)});
-                eval_out.initStorage(null);
+            fn eval(out: *Output) Output {
+                const x_eval = @call(.auto, x.evalFn, .{@constCast(&x)});
+                out.initStorage(null);
                 switch (self.*) {
-                    inline else => |*backend| backend.map(op, eval_x, eval_out),
+                    inline else => |*backend| backend.map(op, x_eval, out),
                 }
-                return eval_out.*;
+                return out.*;
             }
             fn graph(out_ptr: *const Output) void {
                 x.graph();
@@ -97,14 +92,14 @@ pub const Backend = union(BackendTypes) {
     pub fn zip(self: *const Backend, op: ops.ZipOp, a: anytype, b: anytype) @TypeOf(a).Broadcast(@TypeOf(b)) {
         const Output = @TypeOf(a).Broadcast(@TypeOf(b));
         const Impl = struct {
-            fn eval(eval_out: *Output) Output {
-                const eval_a = @call(.auto, a.evalFn, .{@constCast(&a)});
-                const eval_b = @call(.auto, b.evalFn, .{@constCast(&b)});
-                eval_out.initStorage(null);
+            fn eval(out: *Output) Output {
+                const a_eval = @call(.auto, a.evalFn, .{@constCast(&a)});
+                const b_eval = @call(.auto, b.evalFn, .{@constCast(&b)});
+                out.initStorage(null);
                 switch (self.*) {
-                    inline else => |*backend| backend.zip(op, eval_a, eval_b, eval_out),
+                    inline else => |*backend| backend.zip(op, a_eval, b_eval, out),
                 }
-                return eval_out.*;
+                return out.*;
             }
             fn graph(ptr: *const Output) void {
                 a.graph();
@@ -121,13 +116,13 @@ pub const Backend = union(BackendTypes) {
     pub fn reduce(self: *const Backend, op: ops.ReduceOp, x: anytype, comptime dim: ?u8) @TypeOf(x).Reduce(dim) {
         const Output = @TypeOf(x).Reduce(dim);
         const Impl = struct {
-            fn eval(eval_out: *Output) Output {
-                const eval_x = x.eval();
-                eval_out.initStorage(null);
+            fn eval(out: *Output) Output {
+                const x_eval = @call(.auto, x.evalFn, .{@constCast(&x)});
+                out.initStorage(null);
                 switch (self.*) {
-                    inline else => |*backend| backend.reduce(op, eval_x, dim, eval_out),
+                    inline else => |*backend| backend.reduce(op, x_eval, dim, out),
                 }
-                return eval_out.*;
+                return out.*;
             }
 
             fn graph(ptr: *const Output) void {

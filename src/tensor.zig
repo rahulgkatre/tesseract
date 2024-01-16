@@ -7,12 +7,13 @@ const Backend = @import("backend.zig").Backend;
 
 const InitType = enum { Input, Constant, Result };
 
-pub fn Constant(comptime dtype: type) type {
-    return Tensor(dtype, .{1});
+pub fn Constant(backend: *const Backend, comptime dtype: type, comptime value: dtype) Tensor(dtype, .{1}) {
+    const data: [1]dtype = [_]dtype{value};
+    return Tensor(dtype, .{1}).fromData(backend, @constCast(data[0..]));
 }
 
 pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
-    return DefaultStridedTensor(dtype, shape);
+    return AsStrided(dtype, shape, utils.stridesFromShape(shape));
 }
 
 pub fn Range(backend: *const Backend, comptime dtype: type, comptime start: dtype, comptime stop: dtype) Tensor(dtype, .{stop - start}) {
@@ -20,13 +21,9 @@ pub fn Range(backend: *const Backend, comptime dtype: type, comptime start: dtyp
     return Tensor(dtype, .{stop - start}).fromData(backend, @constCast(data[0..]));
 }
 
-fn DefaultStridedTensor(comptime dtype: type, comptime shape: anytype) type {
-    return AsStrided(dtype, shape, utils.stridesFromShape(shape));
-}
-
 fn AsStrided(comptime dtype: type, comptime shape: anytype, comptime strides: anytype) type {
     if (shape.len + 1 != strides.len) {
-        @compileError("Provided shape ndims not compatible with provided strides ndims");
+        @compileError("Provided shape ndims not compatible with provided strides ndims, you may be missing the storage offset (strides[ndims])");
     }
     return BaseTensor(dtype, shape.len, shape, strides);
 }
@@ -53,14 +50,13 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         backend: *const Backend,
         storage: ?*Backend.Storage(dtype),
 
-        // Callbacks during recursive traversal of compute graph
+        // Callbacks for recursive traversal of compute graph
         evalFn: *const fn (self: *Self) Self,
         loadDataFn: *const fn (self: *Self) void,
         graphFn: *const fn (self: *const Self) void,
 
         fn init(
             backend: *const Backend,
-            // init_type: InitType,
             storage: ?*Backend.Storage(dtype),
             comptime evalFn: ?*const fn (self: *Self) Self,
             comptime loadDataFn: ?*const fn (self: *Self) void,
@@ -81,9 +77,8 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
                 fn loadData(_: *Self) void {}
             };
             return .{
-                // .init_type = init_type,
                 .backend = backend,
-                .storage = storage, // orelse backend.storage(dtype, size),
+                .storage = storage,
                 .evalFn = evalFn orelse Impl.eval,
                 .loadDataFn = loadDataFn orelse Impl.loadData,
                 .graphFn = graphFn orelse Impl.graph,
@@ -102,47 +97,41 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             );
         }
 
-        pub fn fromData(backend: *const Backend, data: anytype) Self {
+        pub fn fromData(backend: *const Backend, data: []dtype) Self {
             const Impl = struct {
                 fn eval(self: *Self) Self {
-                    self.initStorage(null);
+                    self.initStorage(data);
                     return self.*;
                 }
                 fn graph(self: *const Self) void {
                     if (@inComptime()) {
-                        @compileLog(comptimePrint("{s} = {s}", .{ self.str, self.str }));
+                        @compileLog(comptimePrint("{s} = FromData {s}", .{ self.str, self.str }));
                     } else {
-                        std.debug.print("{s}@{d} = {s}\n", .{ self.str, @intFromPtr(self), self.str });
+                        std.debug.print("{s}@{d} = FromData {s}\n", .{ self.str, @intFromPtr(self), self.str });
                     }
                 }
-                fn loadData(self: *Self) void {
-                    self.storage.?.load(@as([]dtype, data));
-                }
             };
-            return .{
-                // .init_type = init_type,
-                .backend = backend,
-                .storage = null, // orelse backend.storage(dtype, size),
-                .evalFn = Impl.eval,
-                .loadDataFn = Impl.loadData,
-                .graphFn = Impl.graph,
-            };
+            return result(
+                backend,
+                null,
+                Impl.eval,
+                Impl.graph,
+            );
         }
 
         // TODO: A tensor of constants does not need to have a real shape as broadcasting is always possible
         // While a tensor with specific size is useful for things like tables, a ConstantTensor with size 1 will be better
         pub fn full(backend: *const Backend, comptime value: dtype) Self {
             const Impl = struct {
-                const val: dtype = value;
                 fn graph(self: *const Self) void {
                     if (@inComptime()) {
-                        @compileLog(comptimePrint("{s} = Full({d}) {s}", .{ self.str, val, self.str }));
+                        @compileLog(comptimePrint("{s} = Full({d}) {s}", .{ self.str, value, self.str }));
                     } else {
-                        std.debug.print("{s}@{d} = Full({any}) {s}\n", .{ self.str, @intFromPtr(self), val, self.str });
+                        std.debug.print("{s}@{d} = Full({any}) {s}\n", .{ self.str, @intFromPtr(self), value, self.str });
                     }
                 }
                 fn loadData(self: *Self) void {
-                    self.storage.?.fill(val);
+                    self.storage.?.fill(value);
                 }
             };
             return init(
@@ -176,7 +165,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         pub fn graph(self: *const Self) void {
             self.graphFn(self);
         }
-        pub fn initStorage(self: *Self, comptime data: ?[size]dtype) void {
+        pub fn initStorage(self: *Self, comptime data: ?[]dtype) void {
             if (self.storage == null) {
                 self.storage = self.backend.storage(dtype, size, data);
                 self.loadDataFn(self);
@@ -221,45 +210,45 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
                 utils.permuteArray(ndims + 1, strides, strides_perm),
             );
         }
-        pub fn permute(self: *const Self, comptime perm: [ndims]u8) Permute(perm) {
+        pub fn permute(parent: *const Self, comptime perm: [ndims]u8) Permute(perm) {
             const Output = Permute(perm);
             const Impl = struct {
-                fn eval(ptr: *Output) Output {
-                    const self_eval = self.eval();
-                    ptr.storage = self_eval.storage;
-                    return ptr.*;
+                fn eval(out: *Output) Output {
+                    const parent_eval = parent.eval();
+                    out.storage = parent_eval.storage;
+                    return out.*;
                 }
-                fn graph(ptr: *const Output) void {
-                    self.graph();
+                fn graph(out: *const Output) void {
+                    parent.graph();
                     if (@inComptime()) {
-                        @compileLog(comptimePrint("{s} = Permute({any}) {s}", .{ ptr.str, perm, self.str }));
+                        @compileLog(comptimePrint("{s} = Permute({any}) {s}", .{ out.str, perm, parent.str }));
                     } else {
-                        std.debug.print("{s}@{d} = Permute({any}) {s}@{d}\n", .{ ptr.str, @intFromPtr(ptr), perm, self.str, @intFromPtr(self) });
+                        std.debug.print("{s}@{d} = Permute({any}) {s}@{d}\n", .{ out.str, @intFromPtr(out), perm, parent.str, @intFromPtr(parent) });
                     }
                 }
             };
 
-            return Output.result(self.backend, self.storage, Impl.eval, Impl.graph);
+            return Output.result(parent.backend, null, Impl.eval, Impl.graph);
         }
-        pub fn view(self: *const Self, comptime new_shape: anytype) Tensor(dtype, new_shape) {
+        pub fn view(parent: *const Self, comptime new_shape: anytype) Tensor(dtype, new_shape) {
             const Output = Tensor(dtype, new_shape);
-            if (self.isContiguous()) {
+            if (parent.isContiguous()) {
                 const Impl = struct {
-                    fn eval(ptr: *Output) Output {
-                        const self_eval = self.eval();
-                        ptr.storage = self_eval.storage;
-                        return ptr.*;
+                    fn eval(out: *Output) Output {
+                        const parent_eval = parent.eval();
+                        out.storage = parent_eval.storage;
+                        return out.*;
                     }
-                    fn graph(ptr: *const Output) void {
-                        self.graph();
+                    fn graph(out: *const Output) void {
+                        parent.graph();
                         if (@inComptime()) {
-                            @compileLog(comptimePrint("{s} = View({any}) {s}", .{ ptr.str, new_shape, self.str }));
+                            @compileLog(comptimePrint("{s} = View({any}) {s}", .{ out.str, new_shape, parent.str }));
                         } else {
-                            std.debug.print("{s}@{d} = View({any}) {s}@{d}\n", .{ ptr.str, @intFromPtr(ptr), new_shape, self.str, @intFromPtr(self) });
+                            std.debug.print("{s}@{d} = View({any}) {s}@{d}\n", .{ out.str, @intFromPtr(out), new_shape, parent.str, @intFromPtr(parent) });
                         }
                     }
                 };
-                return Output.result(self.backend, self.storage, Impl.eval, Impl.graph);
+                return Output.result(parent.backend, null, Impl.eval, Impl.graph);
             } else {
                 @compileError("Must be contiguous to view");
             }
@@ -300,7 +289,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
 
         pub fn Reduce(comptime dim: ?u8) type {
             if (dim == null) {
-                return DefaultStridedTensor(dtype, [_]usize{1} ** ndims);
+                return Tensor(dtype, [_]usize{1} ** ndims);
             }
             if (dim.? >= ndims) {
                 @compileError(comptimePrint(

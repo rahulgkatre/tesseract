@@ -20,9 +20,9 @@ fn runEval(comptime test_name: anytype, comptime out: anytype) void {
         out.graph();
     }
 
-    const eval_out = out.eval();
+    const out_eval = out.eval();
     if (eval_logging) {
-        std.debug.print("{any}\n", .{eval_out.storage.?.Zig.data});
+        std.debug.print("{any}\n", .{out_eval.storage.?.Zig.data});
     }
 }
 

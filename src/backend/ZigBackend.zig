@@ -42,7 +42,7 @@ pub fn init(_: *const ZigBackend, _: anytype) void {
     GlobalArena.init(std.heap.ArenaAllocator.init(std.heap.page_allocator));
 }
 
-pub fn storage(_: *const ZigBackend, comptime dtype: type, comptime size: usize, comptime data: ?[size]dtype) *Backend.Storage(dtype) {
+pub fn storage(_: *const ZigBackend, comptime dtype: type, comptime size: usize, comptime data: ?[]dtype) *Backend.Storage(dtype) {
     const store = GlobalArena.allocator().create(Backend.Storage(dtype)) catch @panic("Out of memory");
     store.* = .{
         .Zig = .{
@@ -51,7 +51,7 @@ pub fn storage(_: *const ZigBackend, comptime dtype: type, comptime size: usize,
         },
     };
     if (data != null) {
-        @memcpy(store.Zig.data, data[0..]);
+        @memcpy(store.Zig.data, data.?);
     }
     return store;
 }
@@ -215,13 +215,13 @@ pub fn map(_: *const ZigBackend, comptime op: ops.MapOp, x: anytype, out: *@Type
     const mapFn = MapFn(op, @TypeOf(x).dtype);
     const size = @TypeOf(out.*).size;
     const num_vecs = @divFloor(size, default_vec_len);
-    inline for (0..num_vecs) |vec_i| {
+    for (0..num_vecs) |vec_i| {
         const vec_start_i = vec_i * default_vec_len;
         const stop_i = vec_start_i + default_vec_len;
-        const x_vec: @Vector(default_vec_len, @TypeOf(x).dtype) = x.storage.?.Zig.data[vec_start_i..stop_i].*;
-        out.storage.?.Zig.data[vec_start_i..stop_i].* = @call(.always_inline, mapFn, .{x_vec});
+        const x_vec: @Vector(default_vec_len, @TypeOf(x).dtype) = x.storage.?.Zig.data[vec_start_i..stop_i][0..default_vec_len].*;
+        out.storage.?.Zig.data[vec_start_i..stop_i][0..default_vec_len].* = @call(.always_inline, mapFn, .{x_vec});
     }
-    inline for (num_vecs * default_vec_len..size) |i| {
+    for (num_vecs * default_vec_len..size) |i| {
         out.storage.?.Zig.data[i] = @call(.always_inline, mapFn, .{x.storage.?.Zig.data[i]});
     }
 }
@@ -261,13 +261,13 @@ pub fn zip(_: *const ZigBackend, comptime op: ops.ZipOp, a: anytype, b: anytype,
     // comptime view_common_max_final_dim(@TypeOf(a).shape, @TypeOf(b).shape);
     for (0..@TypeOf(out.*).size) |dst| {
         const out_index = out.unflattenIndex(dst);
-        std.debug.print("out[{}] = a[{}] ({}) + b[{}] ({}) \n", .{
-            dst,
-            a.flattenIndex(a.broadcastIndex(out_index)),
-            a.storage.?.Zig.data[a.flattenIndex(a.broadcastIndex(out_index))],
-            b.flattenIndex(b.broadcastIndex(out_index)),
-            b.storage.?.Zig.data[b.flattenIndex(b.broadcastIndex(out_index))],
-        });
+        // std.debug.print("out[{}] = a[{}] ({}) + b[{}] ({}) \n", .{
+        //     dst,
+        //     a.flattenIndex(a.broadcastIndex(out_index)),
+        //     a.storage.?.Zig.data[a.flattenIndex(a.broadcastIndex(out_index))],
+        //     b.flattenIndex(b.broadcastIndex(out_index)),
+        //     b.storage.?.Zig.data[b.flattenIndex(b.broadcastIndex(out_index))],
+        // });
 
         out.storage.?.Zig.data[dst] = @call(
             .always_inline,
@@ -280,7 +280,7 @@ pub fn zip(_: *const ZigBackend, comptime op: ops.ZipOp, a: anytype, b: anytype,
     }
 }
 
-inline fn reduce_helper(comptime op: ops.ReduceOp, comptime dtype: type, array: anytype, comptime len: usize) dtype {
+inline fn reduceArray(comptime op: ops.ReduceOp, comptime dtype: type, array: anytype, comptime len: usize) dtype {
     const zipFn = ZipFn(comptime switch (op) {
         .Sum => .Add,
         .Max => .Maximum,
@@ -325,18 +325,17 @@ pub fn reduce(
     const dtype: type = @TypeOf(x).dtype;
     const ndims: u8 = @TypeOf(x).ndims;
     const shape: [ndims]usize = @TypeOf(x).shape;
-    const x_size: usize = @TypeOf(x).size;
-    const out_size: usize = @TypeOf(out.*).size;
-    if (ndims == 0 or x_size == 0 or (dim != null and shape[dim.?] == 0)) {
+    const size: usize = @TypeOf(x).size;
+    if (ndims == 0 or size == 0 or (dim != null and shape[dim.?] == 0)) {
         @compileError("Cannot reduce over 0 elements");
     }
     if (comptime dim == null) {
-        out.storage.?.Zig.data[0] = reduce_helper(op, dtype, x.storage.?.Zig.data, x_size);
+        out.storage.?.Zig.data[0] = reduceArray(op, dtype, x.storage.?.Zig.data, size);
     } else {
-        for (0..out_size) |out_i| {
+        for (0..@TypeOf(out.*).size) |out_i| {
             const x_start_i = x.flattenIndex(out.unflattenIndex(out_i));
             const x_stop_i = x_start_i + shape[dim.?];
-            out.storage.?.Zig.data[out_i] = reduce_helper(op, dtype, x.storage.?.Zig.data[x_start_i..x_stop_i], shape[dim.?]);
+            out.storage.?.Zig.data[out_i] = reduceArray(op, dtype, x.storage.?.Zig.data[x_start_i..x_stop_i], shape[dim.?]);
         }
     }
 }
