@@ -69,7 +69,7 @@ pub fn isContiguous(comptime ndims: u8, strides: [ndims + 1]usize) bool {
     // Check if the strides are contiguous (decreasing order)
     var prev = strides[0];
     for (strides[1..ndims]) |s| {
-        if (s >= prev and s > 0) {
+        if (s > prev and s > 0) {
             return false;
         }
         prev = s;

@@ -81,7 +81,7 @@ test "as strided" {
 }
 test "map" {
     const out = comptime blk: {
-        const tensor1 = Tensor(i32, .{ 2, 3, 4 }).constant(TestBackend, 3);
+        const tensor1 = Tensor(i32, .{ 2, 3, 4 }).full(TestBackend, 3);
         const tensor2 = tensor1.neg();
         break :blk tensor2;
     };
@@ -91,8 +91,8 @@ test "map" {
 }
 test "zip" {
     const out = comptime blk: {
-        const tensor1 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend, 2);
-        const tensor2 = Tensor(i32, .{ 3, 1 }).constant(TestBackend, 3);
+        const tensor1 = Tensor(i32, .{ 2, 1, 4 }).full(TestBackend, 2);
+        const tensor2 = Tensor(i32, .{ 3, 1 }).full(TestBackend, 3);
         const tensor3 = tensor1.add(tensor2);
         try expectEqual([_]usize{ 2, 3, 4 }, tensor3.shape);
         break :blk tensor3;
@@ -102,7 +102,7 @@ test "zip" {
 }
 test "reduce" {
     const out = comptime blk: {
-        const tensor1 = Tensor(i32, .{ 2, 3, 4 }).constant(TestBackend, 5);
+        const tensor1 = Tensor(i32, .{ 2, 3, 4 }).full(TestBackend, 5);
         const tensor2 = tensor1.sum(1);
         try expectEqual([_]usize{ 2, 1, 4 }, tensor2.shape);
         break :blk tensor2;
@@ -112,8 +112,8 @@ test "reduce" {
 }
 test "zip reduce" {
     const out = comptime blk: {
-        const tensor1 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend, 2);
-        const tensor2 = Tensor(i32, .{ 2, 3, 1 }).constant(TestBackend, 3);
+        const tensor1 = Tensor(i32, .{ 2, 1, 4 }).full(TestBackend, 2);
+        const tensor2 = Tensor(i32, .{ 2, 3, 1 }).full(TestBackend, 3);
         const tensor3 = tensor1.add(tensor2).sum(1);
         try expectEqual([_]usize{ 2, 1, 4 }, tensor3.shape);
         break :blk tensor3;
@@ -126,7 +126,7 @@ test "zip reduce" {
 
 test "lazy with realization" {
     const NewBackend = &backend.Backend{ .Zig = .{} };
-    var tensor1 = comptime Tensor(i32, .{ 2, 3, 4 }).constant(NewBackend, 0);
+    var tensor1 = comptime Tensor(i32, .{ 2, 3, 4 }).full(NewBackend, 0);
     NewBackend.init(.{});
     defer NewBackend.deinit();
 
@@ -138,16 +138,16 @@ test "lazy with realization" {
 }
 
 fn fn1() Tensor(i32, .{ 2, 1, 4 }) {
-    const tensor1 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend, 1);
-    const tensor2 = Tensor(i32, .{ 2, 3, 1 }).constant(TestBackend, 2);
+    const tensor1 = Tensor(i32, .{ 2, 1, 4 }).full(TestBackend, 1);
+    const tensor2 = Tensor(i32, .{ 2, 3, 1 }).full(TestBackend, 2);
     const tensor3 = tensor1.add(tensor2).sum(1);
     return tensor3;
 }
 
 fn fn2(input: anytype) Tensor(i32, .{ 2, 1, 4 }) {
     return comptime blk: {
-        const tensor4 = Tensor(i32, .{ 2, 1, 4 }).constant(TestBackend, 4);
-        const tensor5 = Tensor(i32, .{ 2, 3, 1 }).constant(TestBackend, 5);
+        const tensor4 = Tensor(i32, .{ 2, 1, 4 }).full(TestBackend, 4);
+        const tensor5 = Tensor(i32, .{ 2, 3, 1 }).full(TestBackend, 5);
         const tensor6 = tensor4.mul(tensor5).sum(1).add(input);
         break :blk tensor6;
     };
@@ -177,7 +177,7 @@ fn softmax(x: anytype, comptime dim: u8) @TypeOf(x) {
 
 test "softmax" {
     const out = comptime blk: {
-        const x = Tensor(f64, .{ 2, 16 }).constant(TestBackend, 5);
+        const x = Tensor(f64, .{ 2, 16 }).full(TestBackend, 5);
         break :blk softmax(x, 1);
     };
 
@@ -187,7 +187,7 @@ test "softmax" {
 
 test "as_type" {
     const out = comptime blk: {
-        const tensor1 = Tensor(bool, .{3}).constant(TestBackend, true);
+        const tensor1 = Tensor(bool, .{3}).full(TestBackend, true);
         const tensor2 = tensor1.asType(i32);
         const tensor3 = tensor2.asType(u8);
         const tensor4 = tensor3.asType(f16);

@@ -26,6 +26,11 @@ pub const Backend = union(BackendTypes) {
                     inline else => |*b| b.init(),
                 }
             }
+            pub fn load(self: *Self, data: []dtype) void {
+                switch (self.*) {
+                    inline else => |*b| b.load(data),
+                }
+            }
         };
     }
 
@@ -44,8 +49,8 @@ pub const Backend = union(BackendTypes) {
             inline else => |*b| b.deinit(),
         };
     }
-    pub fn asType(self: *const Backend, comptime new_dtype: type, x: anytype) tensor.CastedTensor(@TypeOf(x), new_dtype) {
-        const Output = tensor.CastedTensor(@TypeOf(x), new_dtype);
+    pub fn asType(self: *const Backend, comptime new_dtype: type, x: anytype) @TypeOf(x).AsType(new_dtype) {
+        const Output = @TypeOf(x).AsType(new_dtype);
         const Impl = struct {
             fn eval(out_ptr: *Output) Output {
                 const eval_x = @call(.auto, x.evalFn, .{@constCast(&x)});
@@ -89,8 +94,8 @@ pub const Backend = union(BackendTypes) {
         };
         return Output.result(self, null, Impl.eval, Impl.graph);
     }
-    pub fn zip(self: *const Backend, op: ops.ZipOp, a: anytype, b: anytype) tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b)) {
-        const Output = tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b));
+    pub fn zip(self: *const Backend, op: ops.ZipOp, a: anytype, b: anytype) @TypeOf(a).Broadcast(@TypeOf(b)) {
+        const Output = @TypeOf(a).Broadcast(@TypeOf(b));
         const Impl = struct {
             fn eval(eval_out: *Output) Output {
                 const eval_a = @call(.auto, a.evalFn, .{@constCast(&a)});
@@ -113,8 +118,8 @@ pub const Backend = union(BackendTypes) {
         };
         return Output.result(self, null, Impl.eval, Impl.graph);
     }
-    pub fn reduce(self: *const Backend, op: ops.ReduceOp, x: anytype, dim: ?u8) tensor.ReducedTensor(@TypeOf(x), dim) {
-        const Output = tensor.ReducedTensor(@TypeOf(x), dim);
+    pub fn reduce(self: *const Backend, op: ops.ReduceOp, x: anytype, comptime dim: ?u8) @TypeOf(x).Reduce(dim) {
+        const Output = @TypeOf(x).Reduce(dim);
         const Impl = struct {
             fn eval(eval_out: *Output) Output {
                 const eval_x = x.eval();

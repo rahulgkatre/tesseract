@@ -30,6 +30,9 @@ pub fn Storage(comptime dtype: type) type {
         pub fn fill(self: *Self, value: dtype) void {
             @memset(self.data, value);
         }
+        pub fn load(self: *Self, data: []dtype) void {
+            @memcpy(self.data, data);
+        }
     };
 }
 
@@ -201,7 +204,7 @@ fn CastFn(comptime old_dtype: type, comptime new_dtype: type) CastFnType(old_dty
     }.cast;
 }
 
-pub fn asType(_: *const ZigBackend, comptime new_dtype: type, x: anytype, out: *tensor.CastedTensor(@TypeOf(x), new_dtype)) void {
+pub fn asType(_: *const ZigBackend, comptime new_dtype: type, x: anytype, out: *@TypeOf(x).AsType(new_dtype)) void {
     const castFn = CastFn(@TypeOf(x).dtype, new_dtype);
     for (0..@TypeOf(out.*).size) |flat_index| {
         out.storage.?.Zig.data[flat_index] = @call(.always_inline, castFn, .{x.storage.?.Zig.data[flat_index]});
@@ -223,16 +226,49 @@ pub fn map(_: *const ZigBackend, comptime op: ops.MapOp, x: anytype, out: *@Type
     }
 }
 
-pub fn zip(
-    _: *const ZigBackend,
-    comptime op: ops.ZipOp,
-    a: anytype,
-    b: anytype,
-    out: *tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b)),
-) void {
+fn view_common_max_final_dim(shape_a: anytype, shape_b: anytype) void {
+    var flatten_shape_a: [shape_a.len]usize = undefined;
+    var prod: usize = 1;
+    for (0..shape_a.len) |d| {
+        prod *= shape_a[shape_a.len - d - 1];
+        flatten_shape_a[shape_a.len - d - 1] = prod;
+    }
+
+    var flatten_shape_b: [shape_b.len]usize = undefined;
+    prod = 1;
+    for (0..shape_a.len) |d| {
+        prod *= shape_b[shape_b.len - d - 1];
+        flatten_shape_b[shape_b.len - d - 1] = prod;
+    }
+
+    // @compileLog(shape_a);
+    // @compileLog(flatten_shape_a);
+    // @compileLog(shape_b);
+    // @compileLog(flatten_shape_b);
+}
+
+pub fn zip(_: *const ZigBackend, comptime op: ops.ZipOp, a: anytype, b: anytype, out: *@TypeOf(a).Broadcast(@TypeOf(b))) void {
     const zipFn = ZipFn(op, @TypeOf(a).dtype);
-    inline for (0..@TypeOf(out.*).size) |dst| {
+    // TODO: Simplify the shapes of the input tensors in order to maximize the common size of the last dimension
+    // Then, use that common size as the vector size for SIMD
+    // @compileLog(@TypeOf(a).shape);
+    // @compileLog(@TypeOf(a).strides);
+    // @compileLog(@TypeOf(b).shape);
+    // @compileLog(@TypeOf(b).strides);
+    // @compileLog(@TypeOf(out.*).shape);
+    // @compileLog(@TypeOf(out.*).strides);
+
+    // comptime view_common_max_final_dim(@TypeOf(a).shape, @TypeOf(b).shape);
+    for (0..@TypeOf(out.*).size) |dst| {
         const out_index = out.unflattenIndex(dst);
+        std.debug.print("out[{}] = a[{}] ({}) + b[{}] ({}) \n", .{
+            dst,
+            a.flattenIndex(a.broadcastIndex(out_index)),
+            a.storage.?.Zig.data[a.flattenIndex(a.broadcastIndex(out_index))],
+            b.flattenIndex(b.broadcastIndex(out_index)),
+            b.storage.?.Zig.data[b.flattenIndex(b.broadcastIndex(out_index))],
+        });
+
         out.storage.?.Zig.data[dst] = @call(
             .always_inline,
             zipFn,
@@ -249,7 +285,7 @@ inline fn reduce_helper(comptime op: ops.ReduceOp, comptime dtype: type, array: 
         .Sum => .Add,
         .Max => .Maximum,
     }, dtype);
-    const vec_reduce: std.builtin.ReduceOp = comptime switch (op) {
+    const vec_reduce_op: std.builtin.ReduceOp = comptime switch (op) {
         .Sum => .Add,
         .Max => .Max,
     };
@@ -257,19 +293,22 @@ inline fn reduce_helper(comptime op: ops.ReduceOp, comptime dtype: type, array: 
     if (comptime len >= default_vec_len) {
         const init_vec: @Vector(default_vec_len, dtype) = array[0..default_vec_len].*;
         const num_vecs = @divFloor(len, default_vec_len);
-        acc = @reduce(vec_reduce, init_vec);
-        inline for (1..num_vecs) |vec_i| {
-            const vec_start_i = vec_i * default_vec_len;
-            const stop_i = vec_start_i + default_vec_len;
-            const x_vec: @Vector(default_vec_len, dtype) = array[vec_start_i..stop_i].*;
-            acc = @call(.always_inline, zipFn, .{ acc, @reduce(vec_reduce, x_vec) });
+        acc = @reduce(vec_reduce_op, init_vec);
+
+        var vec_start: usize = undefined;
+        var vec_stop: usize = undefined;
+        for (1..num_vecs) |vec_i| {
+            vec_start = vec_i * default_vec_len;
+            vec_stop = vec_start + default_vec_len;
+            const x_vec: @Vector(default_vec_len, dtype) = array[vec_start..vec_stop][0..default_vec_len].*;
+            acc = @call(.always_inline, zipFn, .{ acc, @reduce(vec_reduce_op, x_vec) });
         }
-        inline for (num_vecs * default_vec_len..len) |i| {
+        for (vec_stop..len) |i| {
             acc = @call(.always_inline, zipFn, .{ acc, array[i] });
         }
     } else {
         acc = array[0];
-        inline for (1..len) |i| {
+        for (1..len) |i| {
             acc = @call(.always_inline, zipFn, .{ acc, array[i] });
         }
     }
@@ -281,7 +320,7 @@ pub fn reduce(
     comptime op: ops.ReduceOp,
     x: anytype,
     comptime dim: ?u8,
-    out: *tensor.ReducedTensor(@TypeOf(x), dim),
+    out: *@TypeOf(x).Reduce(dim),
 ) void {
     const dtype: type = @TypeOf(x).dtype;
     const ndims: u8 = @TypeOf(x).ndims;
@@ -292,9 +331,9 @@ pub fn reduce(
         @compileError("Cannot reduce over 0 elements");
     }
     if (comptime dim == null) {
-        out.storage.?.Zig.data[0] = reduce_helper(op, dtype, x.storage.?.Zig.data);
+        out.storage.?.Zig.data[0] = reduce_helper(op, dtype, x.storage.?.Zig.data, x_size);
     } else {
-        inline for (0..out_size) |out_i| {
+        for (0..out_size) |out_i| {
             const x_start_i = x.flattenIndex(out.unflattenIndex(out_i));
             const x_stop_i = x_start_i + shape[dim.?];
             out.storage.?.Zig.data[out_i] = reduce_helper(op, dtype, x.storage.?.Zig.data[x_start_i..x_stop_i], shape[dim.?]);

@@ -1,59 +1,55 @@
 const ops = @import("ops.zig");
 const tensor = @import("tensor.zig");
 
-pub fn asType(x_ptr: anytype, comptime dtype: type) tensor.CastedTensor(@TypeOf(x_ptr.*), dtype) {
-    return x_ptr.backend.asType(dtype, x_ptr.*);
-}
-
 // Higher order functions
 pub fn map(x: anytype, op: ops.MapOp) @TypeOf(x) {
     return x.backend.map(op, x);
 }
 
-pub fn zip(a: anytype, op: ops.ZipOp, b: anytype) tensor.BroadcastedTensor(@TypeOf(a), @TypeOf(b)) {
+pub fn zip(a: anytype, op: ops.ZipOp, b: anytype) @TypeOf(a).Broadcast(@TypeOf(b)) {
     return a.backend.zip(op, a, b);
 }
 
-pub fn reduce(x: anytype, op: ops.ReduceOp, comptime dim: ?u8) tensor.ReducedTensor(@TypeOf(x), dim) {
+pub fn reduce(x: anytype, op: ops.ReduceOp, comptime dim: ?u8) @TypeOf(x).Reduce(dim) {
     return x.backend.reduce(op, x, dim);
 }
 
 fn FuncType(comptime op: ops.Op) type {
     return @TypeOf(switch (op) {
         .MapOp => struct {
-            fn f(x_ptr: anytype) @TypeOf(x_ptr.*) {
-                @panic("Not implemented");
+            fn mapFn(self: anytype) @TypeOf(self.*) {
+                unreachable;
             }
-        },
+        }.mapFn,
         .ZipOp => struct {
-            fn f(a_ptr: anytype, b: anytype) tensor.BroadcastedTensor(@TypeOf(a_ptr.*), @TypeOf(b)) {
-                @panic("Not implemented");
+            fn zipFn(self: anytype, other: anytype) @TypeOf(self.*).Broadcast(@TypeOf(other)) {
+                unreachable;
             }
-        },
+        }.zipFn,
         .ReduceOp => struct {
-            fn f(x_ptr: anytype, comptime dim: ?u8) tensor.ReducedTensor(@TypeOf(x_ptr.*), dim) {
-                @panic("Not implemented");
+            fn reduceFn(self: anytype, comptime dim: ?u8) @TypeOf(self.*).Reduce(dim) {
+                unreachable;
             }
-        },
+        }.reduceFn,
         else => @compileError("Operation cannot run lazily"),
-    }.f);
+    });
 }
 
 fn Func(comptime op: ops.Op) FuncType(op) {
     return switch (op) {
         .MapOp => struct {
-            fn f(x_ptr: anytype) @TypeOf(x_ptr.*) {
-                return map(x_ptr.*, op.MapOp);
+            fn f(self: anytype) @TypeOf(self.*) {
+                return map(self.*, op.MapOp);
             }
         },
         .ZipOp => struct {
-            fn f(a_ptr: anytype, b: anytype) tensor.BroadcastedTensor(@TypeOf(a_ptr.*), @TypeOf(b)) {
-                return zip(a_ptr.*, op.ZipOp, b);
+            fn f(self: anytype, other: anytype) @TypeOf(self.*).Broadcast(@TypeOf(other)) {
+                return zip(self.*, op.ZipOp, other);
             }
         },
         .ReduceOp => struct {
-            fn f(x_ptr: anytype, comptime dim: ?u8) tensor.ReducedTensor(@TypeOf(x_ptr.*), dim) {
-                return reduce(x_ptr.*, op.ReduceOp, dim);
+            fn f(self: anytype, comptime dim: ?u8) @TypeOf(self.*).Reduce(dim) {
+                return reduce(self.*, op.ReduceOp, dim);
             }
         },
         else => @compileError("Operation cannot run lazily"),
@@ -68,12 +64,12 @@ pub const sum = Func(.{ .ReduceOp = .Sum });
 pub const max = Func(.{ .ReduceOp = .Max });
 pub const recip = Func(.{ .MapOp = .Recip });
 
-pub fn div(a_ptr: anytype, b: anytype) tensor.BroadcastedTensor(@TypeOf(a_ptr.*), @TypeOf(b)) {
-    return a_ptr.mul(b.recip());
+pub fn div(self: anytype, other: anytype) @TypeOf(self.*).Broadcast(@TypeOf(other)) {
+    return self.mul(other.recip());
 }
 
-pub fn sub(a_ptr: anytype, b: anytype) tensor.BroadcastedTensor(@TypeOf(a_ptr.*), @TypeOf(b)) {
-    return a_ptr.add(b.neg());
+pub fn sub(self: anytype, other: anytype) @TypeOf(self.*).Broadcast(@TypeOf(other)) {
+    return self.add(other.neg());
 }
 
 // KEEPING THIS HERE FOR NOW
