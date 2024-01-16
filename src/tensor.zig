@@ -62,9 +62,9 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             comptime loadDataFn: ?*const fn (self: *Self) void,
             comptime graphFn: ?*const fn (self: *const Self) void,
         ) Self {
-            const Impl = struct {
+            const InitImpl = struct {
                 fn eval(self: *Self) Self {
-                    self.initStorage(null);
+                    self.initStorage();
                     return self.*;
                 }
                 fn graph(self: *const Self) void {
@@ -79,17 +79,19 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             return .{
                 .backend = backend,
                 .storage = storage,
-                .evalFn = evalFn orelse Impl.eval,
-                .loadDataFn = loadDataFn orelse Impl.loadData,
-                .graphFn = graphFn orelse Impl.graph,
+                .evalFn = evalFn orelse InitImpl.eval,
+                .loadDataFn = loadDataFn orelse InitImpl.loadData,
+                .graphFn = graphFn orelse InitImpl.graph,
             };
         }
 
         // Exposed functions for initializing
-        pub fn input(backend: *const Backend, storage: ?*Backend.Storage(dtype)) Self {
+        pub fn input(
+            backend: *const Backend,
+            storage: ?*Backend.Storage(dtype),
+        ) Self {
             return init(
                 backend,
-                // .Input,
                 storage,
                 null,
                 null,
@@ -98,11 +100,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         }
 
         pub fn fromData(backend: *const Backend, data: []dtype) Self {
-            const Impl = struct {
-                fn eval(self: *Self) Self {
-                    self.initStorage(data);
-                    return self.*;
-                }
+            const InitImpl = struct {
                 fn graph(self: *const Self) void {
                     if (@inComptime()) {
                         @compileLog(comptimePrint("{s} = FromData {s}", .{ self.str, self.str }));
@@ -110,19 +108,21 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
                         std.debug.print("{s}@{d} = FromData {s}\n", .{ self.str, @intFromPtr(self), self.str });
                     }
                 }
+                fn loadData(self: *Self) void {
+                    self.storage.?.load(data);
+                }
             };
-            return result(
+            return init(
                 backend,
                 null,
-                Impl.eval,
-                Impl.graph,
+                null,
+                InitImpl.loadData,
+                InitImpl.graph,
             );
         }
 
-        // TODO: A tensor of constants does not need to have a real shape as broadcasting is always possible
-        // While a tensor with specific size is useful for things like tables, a ConstantTensor with size 1 will be better
         pub fn full(backend: *const Backend, comptime value: dtype) Self {
-            const Impl = struct {
+            const InitImpl = struct {
                 fn graph(self: *const Self) void {
                     if (@inComptime()) {
                         @compileLog(comptimePrint("{s} = Full({d}) {s}", .{ self.str, value, self.str }));
@@ -136,11 +136,10 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             };
             return init(
                 backend,
-                // .Constant,
                 null,
                 null,
-                Impl.loadData,
-                Impl.graph,
+                InitImpl.loadData,
+                InitImpl.graph,
             );
         }
         pub fn result(
@@ -149,14 +148,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             comptime evalFn: ?*const fn (self: *Self) Self,
             comptime graphFn: ?*const fn (self: *const Self) void,
         ) Self {
-            return init(
-                backend,
-                // .Result,
-                storage,
-                evalFn,
-                null,
-                graphFn,
-            );
+            return init(backend, storage, evalFn, null, graphFn);
         }
 
         pub fn eval(self: *const Self) Self {
@@ -165,9 +157,9 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         pub fn graph(self: *const Self) void {
             self.graphFn(self);
         }
-        pub fn initStorage(self: *Self, comptime data: ?[]dtype) void {
+        pub fn initStorage(self: *Self) void {
             if (self.storage == null) {
-                self.storage = self.backend.storage(dtype, size, data);
+                self.storage = self.backend.storage(dtype, size);
                 self.loadDataFn(self);
             }
         }
@@ -195,8 +187,12 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             // Subtract storage offset first
             var remainder = flat_index - strides[ndims];
             inline for (0..ndims) |d| {
-                index[d] = @divTrunc(remainder, strides[d]);
-                remainder = @mod(remainder, strides[d]);
+                if (strides[d] == 0) {
+                    index[d] = 0;
+                } else {
+                    index[d] = @divTrunc(remainder, strides[d]);
+                    remainder = @mod(remainder, strides[d]);
+                }
             }
             return index;
         }

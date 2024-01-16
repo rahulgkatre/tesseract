@@ -34,9 +34,9 @@ pub const Backend = union(BackendTypes) {
             inline else => |*b| b.init(args),
         };
     }
-    pub fn storage(self: *const Backend, comptime dtype: type, comptime size: usize, comptime data: ?[]dtype) *Storage(dtype) {
+    pub fn storage(self: *const Backend, comptime dtype: type, comptime size: usize) *Storage(dtype) {
         return switch (self.*) {
-            inline else => |*b| b.storage(dtype, size, data),
+            inline else => |*b| b.storage(dtype, size),
         };
     }
     pub fn deinit(self: *const Backend) void {
@@ -46,10 +46,10 @@ pub const Backend = union(BackendTypes) {
     }
     pub fn asType(self: *const Backend, comptime new_dtype: type, x: anytype) @TypeOf(x).AsType(new_dtype) {
         const Output = @TypeOf(x).AsType(new_dtype);
-        const Impl = struct {
+        const ResultImpl = struct {
             fn eval(out: *Output) Output {
-                const x_eval = @call(.auto, x.evalFn, .{@constCast(&x)});
-                out.initStorage(null);
+                const x_eval = x.eval();
+                out.initStorage();
                 switch (self.*) {
                     inline else => |*backend| backend.asType(new_dtype, x_eval, out),
                 }
@@ -64,15 +64,15 @@ pub const Backend = union(BackendTypes) {
                 }
             }
         };
-        return Output.result(self, null, Impl.eval, Impl.graph);
+        return Output.result(self, null, ResultImpl.eval, ResultImpl.graph);
     }
 
     pub fn map(self: *const Backend, op: ops.MapOp, x: anytype) @TypeOf(x) {
         const Output: type = @TypeOf(x);
-        const Impl = struct {
+        const ResultImpl = struct {
             fn eval(out: *Output) Output {
-                const x_eval = @call(.auto, x.evalFn, .{@constCast(&x)});
-                out.initStorage(null);
+                const x_eval = x.eval();
+                out.initStorage();
                 switch (self.*) {
                     inline else => |*backend| backend.map(op, x_eval, out),
                 }
@@ -87,15 +87,15 @@ pub const Backend = union(BackendTypes) {
                 }
             }
         };
-        return Output.result(self, null, Impl.eval, Impl.graph);
+        return Output.result(self, null, ResultImpl.eval, ResultImpl.graph);
     }
     pub fn zip(self: *const Backend, op: ops.ZipOp, a: anytype, b: anytype) @TypeOf(a).Broadcast(@TypeOf(b)) {
         const Output = @TypeOf(a).Broadcast(@TypeOf(b));
-        const Impl = struct {
+        const ResultImpl = struct {
             fn eval(out: *Output) Output {
-                const a_eval = @call(.auto, a.evalFn, .{@constCast(&a)});
-                const b_eval = @call(.auto, b.evalFn, .{@constCast(&b)});
-                out.initStorage(null);
+                const a_eval = a.eval();
+                const b_eval = b.eval();
+                out.initStorage();
                 switch (self.*) {
                     inline else => |*backend| backend.zip(op, a_eval, b_eval, out),
                 }
@@ -111,14 +111,14 @@ pub const Backend = union(BackendTypes) {
                 }
             }
         };
-        return Output.result(self, null, Impl.eval, Impl.graph);
+        return Output.result(self, null, ResultImpl.eval, ResultImpl.graph);
     }
     pub fn reduce(self: *const Backend, op: ops.ReduceOp, x: anytype, comptime dim: ?u8) @TypeOf(x).Reduce(dim) {
         const Output = @TypeOf(x).Reduce(dim);
-        const Impl = struct {
+        const ResultImpl = struct {
             fn eval(out: *Output) Output {
-                const x_eval = @call(.auto, x.evalFn, .{@constCast(&x)});
-                out.initStorage(null);
+                const x_eval = x.eval();
+                out.initStorage();
                 switch (self.*) {
                     inline else => |*backend| backend.reduce(op, x_eval, dim, out),
                 }
@@ -134,6 +134,6 @@ pub const Backend = union(BackendTypes) {
                 }
             }
         };
-        return Output.result(self, null, Impl.eval, Impl.graph);
+        return Output.result(self, null, ResultImpl.eval, ResultImpl.graph);
     }
 };

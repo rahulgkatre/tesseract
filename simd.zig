@@ -10,8 +10,10 @@ const TestBackend = &Backend{ .Zig = .{} };
 pub fn main() !void {
     // To take advantage of comptime features, all tensor code should be in comptime
     const out = comptime blk: {
-        const x1 = Range(TestBackend, i32, 0, 64).view(.{ 8, 1, 4, 1, 2 }).view(.{ 8, 1, 4, 1, 2 });
-        const x2 = Range(TestBackend, i32, 64, 128).view(.{ 8, 2, 1, 4, 1 }).view(.{ 8, 4, 1, 2, 1 });
+        const x1 = Range(TestBackend, u8, 0, 50).view(.{ 10, 1, 5, 1 }); //.view(.{ 8, 1, 4, 1, 2 });
+        // @compileLog(x1.strides);
+        const x2 = Range(TestBackend, u8, 50, 100).view(.{ 1, 2, 5, 5 }); //.view(.{ 8, 4, 1, 2, 1 });
+        // @compileLog(x2.strides);
         const x3 = x1.add(x2);
         break :blk x3;
     };

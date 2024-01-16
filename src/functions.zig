@@ -2,32 +2,32 @@ const ops = @import("ops.zig");
 const tensor = @import("tensor.zig");
 
 // Higher order functions
-pub fn map(x: anytype, op: ops.MapOp) @TypeOf(x) {
+pub inline fn map(x: anytype, op: ops.MapOp) @TypeOf(x) {
     return x.backend.map(op, x);
 }
 
-pub fn zip(a: anytype, op: ops.ZipOp, b: anytype) @TypeOf(a).Broadcast(@TypeOf(b)) {
+pub inline fn zip(a: anytype, op: ops.ZipOp, b: anytype) @TypeOf(a).Broadcast(@TypeOf(b)) {
     return a.backend.zip(op, a, b);
 }
 
-pub fn reduce(x: anytype, op: ops.ReduceOp, comptime dim: ?u8) @TypeOf(x).Reduce(dim) {
+pub inline fn reduce(x: anytype, op: ops.ReduceOp, comptime dim: ?u8) @TypeOf(x).Reduce(dim) {
     return x.backend.reduce(op, x, dim);
 }
 
 fn FuncType(comptime op: ops.Op) type {
     return @TypeOf(switch (op) {
         .MapOp => struct {
-            fn mapFn(self: anytype) @TypeOf(self.*) {
+            inline fn mapFn(self: anytype) @TypeOf(self.*) {
                 unreachable;
             }
         }.mapFn,
         .ZipOp => struct {
-            fn zipFn(self: anytype, other: anytype) @TypeOf(self.*).Broadcast(@TypeOf(other)) {
+            inline fn zipFn(self: anytype, other: anytype) @TypeOf(self.*).Broadcast(@TypeOf(other)) {
                 unreachable;
             }
         }.zipFn,
         .ReduceOp => struct {
-            fn reduceFn(self: anytype, comptime dim: ?u8) @TypeOf(self.*).Reduce(dim) {
+            inline fn reduceFn(self: anytype, comptime dim: ?u8) @TypeOf(self.*).Reduce(dim) {
                 unreachable;
             }
         }.reduceFn,
@@ -35,20 +35,20 @@ fn FuncType(comptime op: ops.Op) type {
     });
 }
 
-fn Func(comptime op: ops.Op) FuncType(op) {
+inline fn Func(comptime op: ops.Op) FuncType(op) {
     return switch (op) {
         .MapOp => struct {
-            fn f(self: anytype) @TypeOf(self.*) {
+            inline fn f(self: anytype) @TypeOf(self.*) {
                 return map(self.*, op.MapOp);
             }
         },
         .ZipOp => struct {
-            fn f(self: anytype, other: anytype) @TypeOf(self.*).Broadcast(@TypeOf(other)) {
+            inline fn f(self: anytype, other: anytype) @TypeOf(self.*).Broadcast(@TypeOf(other)) {
                 return zip(self.*, op.ZipOp, other);
             }
         },
         .ReduceOp => struct {
-            fn f(self: anytype, comptime dim: ?u8) @TypeOf(self.*).Reduce(dim) {
+            inline fn f(self: anytype, comptime dim: ?u8) @TypeOf(self.*).Reduce(dim) {
                 return reduce(self.*, op.ReduceOp, dim);
             }
         },
@@ -64,35 +64,35 @@ pub const sum = Func(.{ .ReduceOp = .Sum });
 pub const max = Func(.{ .ReduceOp = .Max });
 pub const recip = Func(.{ .MapOp = .Recip });
 
-pub fn div(self: anytype, other: anytype) @TypeOf(self.*).Broadcast(@TypeOf(other)) {
+pub inline fn div(self: anytype, other: anytype) @TypeOf(self.*).Broadcast(@TypeOf(other)) {
     return self.mul(other.recip());
 }
 
-pub fn sub(self: anytype, other: anytype) @TypeOf(self.*).Broadcast(@TypeOf(other)) {
+pub inline fn sub(self: anytype, other: anytype) @TypeOf(self.*).Broadcast(@TypeOf(other)) {
     return self.add(other.neg());
 }
 
 // KEEPING THIS HERE FOR NOW
 // Pre-defined User Functions
-fn mapZipFunc(comptime map_op: ops.MapOp, comptime zip_op: ops.ZipOp) FuncType(.{ .ZipOp = zip_op }) {
+inline fn mapZipFunc(comptime map_op: ops.MapOp, comptime zip_op: ops.ZipOp) FuncType(.{ .ZipOp = zip_op }) {
     return struct {
-        fn f(a_ptr: anytype, b: anytype) tensor.BroadcastedTensor(@TypeOf(a_ptr.*), @TypeOf(b)) {
+        inline fn f(a_ptr: anytype, b: anytype) tensor.BroadcastedTensor(@TypeOf(a_ptr.*), @TypeOf(b)) {
             return zip(&map(a_ptr, map_op), zip_op, b);
         }
     }.f;
 }
 
-fn zipMapFunc(comptime map_op: ops.MapOp, comptime zip_op: ops.ZipOp) FuncType(.{ .MapOp = map_op }) {
+inline fn zipMapFunc(comptime map_op: ops.MapOp, comptime zip_op: ops.ZipOp) FuncType(.{ .MapOp = map_op }) {
     return struct {
-        fn f(a_ptr: anytype, b: anytype) tensor.BroadcastedTensor(@TypeOf(a_ptr.*), @TypeOf(b)) {
+        inline fn f(a_ptr: anytype, b: anytype) tensor.BroadcastedTensor(@TypeOf(a_ptr.*), @TypeOf(b)) {
             return map(&zip(a_ptr, zip_op, b), map_op);
         }
     }.f;
 }
 
-fn composeFunc(comptime map_op_f: ops.MapOp, comptime map_op_g: ops.MapOp) FuncType(.{ .MapOp = map_op_f }) {
+inline fn composeFunc(comptime map_op_f: ops.MapOp, comptime map_op_g: ops.MapOp) FuncType(.{ .MapOp = map_op_f }) {
     return struct {
-        fn f(a_ptr: anytype) tensor.BroadcastedTensor(@TypeOf(a_ptr.*)) {
+        inline fn f(a_ptr: anytype) tensor.BroadcastedTensor(@TypeOf(a_ptr.*)) {
             return map(&map(a_ptr, map_op_g), map_op_f);
         }
     }.f;

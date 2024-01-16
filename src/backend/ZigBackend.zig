@@ -5,8 +5,6 @@ const Backend = @import("../backend.zig").Backend;
 const ZigBackend = @This();
 const std = @import("std");
 
-const default_vec_len = std.simd.suggestVectorLength(usize) orelse 4;
-
 const GlobalArena = struct {
     var global_arena: std.heap.ArenaAllocator = undefined;
     fn init(arena: std.heap.ArenaAllocator) void {
@@ -24,6 +22,7 @@ const GlobalArena = struct {
 pub fn Storage(comptime dtype: type) type {
     return struct {
         const Self = @This();
+        pub const default_vec_len = std.simd.suggestVectorLength(dtype) orelse 4;
         pub const simd_align = @alignOf(@Vector(default_vec_len, dtype));
         data: []align(simd_align) dtype,
         size: usize,
@@ -36,13 +35,13 @@ pub fn Storage(comptime dtype: type) type {
     };
 }
 
-// TODO: Replace page with a fixed buffer allocator
+// TODO: Replace page allocator with a fixed buffer allocator
 // Buffer size should be computed at compile time
 pub fn init(_: *const ZigBackend, _: anytype) void {
     GlobalArena.init(std.heap.ArenaAllocator.init(std.heap.page_allocator));
 }
 
-pub fn storage(_: *const ZigBackend, comptime dtype: type, comptime size: usize, comptime data: ?[]dtype) *Backend.Storage(dtype) {
+pub fn storage(_: *const ZigBackend, comptime dtype: type, comptime size: usize) *Backend.Storage(dtype) {
     const store = GlobalArena.allocator().create(Backend.Storage(dtype)) catch @panic("Out of memory");
     store.* = .{
         .Zig = .{
@@ -50,9 +49,6 @@ pub fn storage(_: *const ZigBackend, comptime dtype: type, comptime size: usize,
             .size = size,
         },
     };
-    if (data != null) {
-        @memcpy(store.Zig.data, data.?);
-    }
     return store;
 }
 
@@ -61,7 +57,7 @@ pub fn deinit(_: *const ZigBackend) void {
 }
 
 const MapFnType = @TypeOf(struct {
-    fn f(x: anytype) @TypeOf(x) {
+    inline fn f(x: anytype) @TypeOf(x) {
         unreachable;
     }
 }.f);
@@ -70,33 +66,33 @@ fn MapFn(comptime map_op: ops.MapOp, comptime dtype: type) MapFnType {
     return comptime switch (map_op) {
         .Neg => switch (@typeInfo(dtype)) {
             .Bool => struct {
-                fn negateBoolEval(x: anytype) @TypeOf(x) {
+                inline fn negateBoolEval(x: anytype) @TypeOf(x) {
                     return !x;
                 }
             }.negateBoolEval,
             else => struct {
-                fn negateEval(x: anytype) @TypeOf(x) {
+                inline fn negateEval(x: anytype) @TypeOf(x) {
                     return -x;
                 }
             }.negateEval,
         },
         .Log2 => struct {
-            fn log2Eval(x: anytype) @TypeOf(x) {
+            inline fn log2Eval(x: anytype) @TypeOf(x) {
                 return @log2(x);
             }
         }.log2Eval,
         .Exp2 => struct {
-            fn exp2Eval(x: anytype) @TypeOf(x) {
+            inline fn exp2Eval(x: anytype) @TypeOf(x) {
                 return @exp2(x);
             }
         }.exp2Eval,
         .Sqrt => struct {
-            fn sqrtEval(x: anytype) @TypeOf(x) {
+            inline fn sqrtEval(x: anytype) @TypeOf(x) {
                 return @sqrt(x);
             }
         }.sqrtEval,
         .Recip => struct {
-            fn recipEval(x: anytype) @TypeOf(x) {
+            inline fn recipEval(x: anytype) @TypeOf(x) {
                 return switch (@typeInfo(@TypeOf(x))) {
                     .Vector => |v| @as(@Vector(v.len, v.child), @splat(1.0)) / x,
                     else => 1.0 / x,
@@ -109,7 +105,7 @@ fn MapFn(comptime map_op: ops.MapOp, comptime dtype: type) MapFnType {
 
 fn ZipFnType(comptime zip_op: ops.ZipOp, comptime dtype: type) type {
     return @TypeOf(struct {
-        fn f(a: anytype, _: @TypeOf(a)) switch (zip_op) {
+        inline fn f(a: anytype, _: @TypeOf(a)) switch (zip_op) {
             .Lt, .Eq => bool,
             else => dtype,
         } {
@@ -121,34 +117,32 @@ fn ZipFnType(comptime zip_op: ops.ZipOp, comptime dtype: type) type {
 fn ZipFn(comptime zip_op: ops.ZipOp, comptime dtype: type) ZipFnType(zip_op, dtype) {
     return comptime switch (zip_op) {
         .Add => struct {
-            fn addEval(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+            inline fn addEval(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
                 return a + b;
             }
         }.addEval,
         .Mul => struct {
-            fn mulEval(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+            inline fn mulEval(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
                 return a * b;
             }
         }.mulEval,
         .Maximum => struct {
-            // Cast to a shared type
-            fn maximumEval(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
-                const cast_type = @TypeOf(@as(dtype, 0) * @as(dtype, 0));
-                return @max(@as(cast_type, a), @as(cast_type, b));
+            inline fn maximumEval(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+                return @max(a, b);
             }
         }.maximumEval,
         .Lt => struct {
-            fn lessThanEval(a: anytype, b: @TypeOf(a)) bool {
+            inline fn lessThanEval(a: anytype, b: @TypeOf(a)) bool {
                 return a < b;
             }
         }.lessThanEval,
         .Eq => struct {
-            fn equalsEval(a: anytype, b: @TypeOf(a)) bool {
+            inline fn equalsEval(a: anytype, b: @TypeOf(a)) bool {
                 return a == b;
             }
         }.equalsEval,
         .Xor => struct {
-            fn xorEval(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+            inline fn xorEval(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
                 return a ^ b;
             }
         }.xorEval,
@@ -158,7 +152,7 @@ fn ZipFn(comptime zip_op: ops.ZipOp, comptime dtype: type) ZipFnType(zip_op, dty
 
 fn CastFnType(comptime old_dtype: type, comptime new_dtype: type) type {
     return @TypeOf(struct {
-        fn cast(_: old_dtype) new_dtype {
+        inline fn cast(_: old_dtype) new_dtype {
             unreachable;
         }
     }.cast);
@@ -171,12 +165,12 @@ fn CastFn(comptime old_dtype: type, comptime new_dtype: type) CastFnType(old_dty
     return comptime switch (new_info) {
         .Float => switch (old_info) {
             .Int => struct {
-                fn cast(x: old_dtype) new_dtype {
+                inline fn cast(x: old_dtype) new_dtype {
                     return @floatFromInt(x);
                 }
             },
             .Float => struct {
-                fn cast(x: old_dtype) new_dtype {
+                inline fn cast(x: old_dtype) new_dtype {
                     return @floatCast(x);
                 }
             },
@@ -184,17 +178,17 @@ fn CastFn(comptime old_dtype: type, comptime new_dtype: type) CastFnType(old_dty
         },
         .Int => switch (old_info) {
             .Float => struct {
-                fn cast(x: old_dtype) new_dtype {
+                inline fn cast(x: old_dtype) new_dtype {
                     return @intFromFloat(x);
                 }
             },
             .Bool => struct {
-                fn cast(x: old_dtype) new_dtype {
+                inline fn cast(x: old_dtype) new_dtype {
                     return @intFromBool(x);
                 }
             },
             .Int => struct {
-                fn cast(x: old_dtype) new_dtype {
+                inline fn cast(x: old_dtype) new_dtype {
                     return @intCast(x);
                 }
             },
@@ -212,13 +206,15 @@ pub fn asType(_: *const ZigBackend, comptime new_dtype: type, x: anytype, out: *
 }
 
 pub fn map(_: *const ZigBackend, comptime op: ops.MapOp, x: anytype, out: *@TypeOf(x)) void {
-    const mapFn = MapFn(op, @TypeOf(x).dtype);
+    const dtype: type = @TypeOf(x).dtype;
+    const mapFn = MapFn(op, dtype);
     const size = @TypeOf(out.*).size;
+    const default_vec_len: usize = std.simd.suggestVectorLength(dtype) orelse 4;
     const num_vecs = @divFloor(size, default_vec_len);
     for (0..num_vecs) |vec_i| {
         const vec_start_i = vec_i * default_vec_len;
         const stop_i = vec_start_i + default_vec_len;
-        const x_vec: @Vector(default_vec_len, @TypeOf(x).dtype) = x.storage.?.Zig.data[vec_start_i..stop_i][0..default_vec_len].*;
+        const x_vec: @Vector(default_vec_len, dtype) = x.storage.?.Zig.data[vec_start_i..stop_i][0..default_vec_len].*;
         out.storage.?.Zig.data[vec_start_i..stop_i][0..default_vec_len].* = @call(.always_inline, mapFn, .{x_vec});
     }
     for (num_vecs * default_vec_len..size) |i| {
@@ -226,50 +222,38 @@ pub fn map(_: *const ZigBackend, comptime op: ops.MapOp, x: anytype, out: *@Type
     }
 }
 
-fn view_common_max_final_dim(shape_a: anytype, shape_b: anytype) void {
-    var flatten_shape_a: [shape_a.len]usize = undefined;
-    var prod: usize = 1;
-    for (0..shape_a.len) |d| {
-        prod *= shape_a[shape_a.len - d - 1];
-        flatten_shape_a[shape_a.len - d - 1] = prod;
-    }
+pub fn ZipPlan(a: anytype, b: anytype, out: *@TypeOf(a).Broadcast(@TypeOf(b))) void {
+    const size = @TypeOf(out.*).size;
+    const dtype = @TypeOf(out.*).dtype;
+    const default_vec_len = std.simd.suggestVectorLength(dtype) orelse 4;
+    const num_vecs = @divFloor(size, default_vec_len);
+    _ = num_vecs;
+    std.debug.print("vectorLength = {d}\n", .{default_vec_len});
 
-    var flatten_shape_b: [shape_b.len]usize = undefined;
-    prod = 1;
-    for (0..shape_a.len) |d| {
-        prod *= shape_b[shape_b.len - d - 1];
-        flatten_shape_b[shape_b.len - d - 1] = prod;
+    for (0..size) |i| {
+        const out_index = out.unflattenIndex(i);
+        std.debug.print("out[{}] = a[{}] + b[{}] \n", .{
+            i,
+            a.flattenIndex(a.broadcastIndex(out_index)),
+            b.flattenIndex(b.broadcastIndex(out_index)),
+        });
     }
-
-    // @compileLog(shape_a);
-    // @compileLog(flatten_shape_a);
-    // @compileLog(shape_b);
-    // @compileLog(flatten_shape_b);
 }
 
 pub fn zip(_: *const ZigBackend, comptime op: ops.ZipOp, a: anytype, b: anytype, out: *@TypeOf(a).Broadcast(@TypeOf(b))) void {
     const zipFn = ZipFn(op, @TypeOf(a).dtype);
-    // TODO: Simplify the shapes of the input tensors in order to maximize the common size of the last dimension
-    // Then, use that common size as the vector size for SIMD
-    // @compileLog(@TypeOf(a).shape);
-    // @compileLog(@TypeOf(a).strides);
-    // @compileLog(@TypeOf(b).shape);
-    // @compileLog(@TypeOf(b).strides);
-    // @compileLog(@TypeOf(out.*).shape);
-    // @compileLog(@TypeOf(out.*).strides);
-
-    // comptime view_common_max_final_dim(@TypeOf(a).shape, @TypeOf(b).shape);
-    for (0..@TypeOf(out.*).size) |dst| {
-        const out_index = out.unflattenIndex(dst);
-        // std.debug.print("out[{}] = a[{}] ({}) + b[{}] ({}) \n", .{
-        //     dst,
-        //     a.flattenIndex(a.broadcastIndex(out_index)),
-        //     a.storage.?.Zig.data[a.flattenIndex(a.broadcastIndex(out_index))],
-        //     b.flattenIndex(b.broadcastIndex(out_index)),
-        //     b.storage.?.Zig.data[b.flattenIndex(b.broadcastIndex(out_index))],
-        // });
-
-        out.storage.?.Zig.data[dst] = @call(
+    ZipPlan(a, b, out);
+    const dtype = @TypeOf(out.*).dtype;
+    const size = @TypeOf(out.*).size;
+    const default_vec_len: usize = std.simd.suggestVectorLength(dtype) orelse 4;
+    const num_vecs = @divFloor(size, default_vec_len);
+    for (0..num_vecs) |vec_i| {
+        _ = vec_i;
+    }
+    for (0..size) |i| {
+        // for (num_vecs * default_vec_len..size) |i| {
+        const out_index = out.unflattenIndex(i);
+        out.storage.?.Zig.data[i] = @call(
             .always_inline,
             zipFn,
             .{
@@ -281,7 +265,8 @@ pub fn zip(_: *const ZigBackend, comptime op: ops.ZipOp, a: anytype, b: anytype,
 }
 
 inline fn reduceArray(comptime op: ops.ReduceOp, comptime dtype: type, array: anytype, comptime len: usize) dtype {
-    const zipFn = ZipFn(comptime switch (op) {
+    const default_vec_len = std.simd.suggestVectorLength(dtype) orelse 4;
+    const zipFn = comptime ZipFn(switch (op) {
         .Sum => .Add,
         .Max => .Maximum,
     }, dtype);

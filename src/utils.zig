@@ -26,9 +26,9 @@ pub fn stridesFromShape(shape: anytype) [shape.len + 1]usize {
     const ndims = shape.len;
     var offset: usize = 1;
     var strides: [ndims + 1]usize = undefined;
-    for (0..ndims - 1) |i| {
-        const stride = shape[ndims - i - 1] * offset;
-        strides[ndims - i - 2] = stride;
+    for (0..ndims - 1) |d| {
+        const stride = shape[ndims - d - 1] * offset;
+        strides[ndims - d - 2] = stride;
         offset = stride;
     }
     strides[ndims - 1] = 1;
