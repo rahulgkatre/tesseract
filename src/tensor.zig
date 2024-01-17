@@ -5,20 +5,18 @@ const utils = @import("utils.zig");
 const ops = @import("ops.zig");
 const Backend = @import("backend.zig").Backend;
 
-const InitType = enum { Input, Constant, Result };
-
 pub fn Constant(backend: *const Backend, comptime dtype: type, comptime value: dtype) Tensor(dtype, .{1}) {
     const data: [1]dtype = [_]dtype{value};
-    return Tensor(dtype, .{1}).fromData(backend, @constCast(data[0..]));
-}
-
-pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
-    return AsStrided(dtype, shape, utils.stridesFromShape(shape));
+    return Tensor(dtype, .{1}).fromData(backend, data[0..]);
 }
 
 pub fn Range(backend: *const Backend, comptime dtype: type, comptime start: dtype, comptime stop: dtype) Tensor(dtype, .{stop - start}) {
     const data: [stop - start]dtype = std.simd.iota(dtype, stop - start) + @as(@Vector(stop - start, dtype), @splat(start));
-    return Tensor(dtype, .{stop - start}).fromData(backend, @constCast(data[0..]));
+    return Tensor(dtype, .{stop - start}).fromData(backend, data[0..]);
+}
+
+pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
+    return AsStrided(dtype, shape, utils.stridesFromShape(shape));
 }
 
 fn AsStrided(comptime dtype: type, comptime shape: anytype, comptime strides: anytype) type {
@@ -62,7 +60,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             comptime loadDataFn: ?*const fn (self: *Self) void,
             comptime graphFn: ?*const fn (self: *const Self) void,
         ) Self {
-            const InitImpl = struct {
+            const impl = struct {
                 fn eval(self: *Self) Self {
                     self.initStorage();
                     return self.*;
@@ -79,13 +77,12 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             return .{
                 .backend = backend,
                 .storage = storage,
-                .evalFn = evalFn orelse InitImpl.eval,
-                .loadDataFn = loadDataFn orelse InitImpl.loadData,
-                .graphFn = graphFn orelse InitImpl.graph,
+                .evalFn = evalFn orelse impl.eval,
+                .loadDataFn = loadDataFn orelse impl.loadData,
+                .graphFn = graphFn orelse impl.graph,
             };
         }
 
-        // Exposed functions for initializing
         pub fn input(
             backend: *const Backend,
             storage: ?*Backend.Storage(dtype),
@@ -99,8 +96,8 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             );
         }
 
-        pub fn fromData(backend: *const Backend, data: []dtype) Self {
-            const InitImpl = struct {
+        pub fn fromData(backend: *const Backend, data: *const [size]dtype) Self {
+            const impl = struct {
                 fn graph(self: *const Self) void {
                     if (@inComptime()) {
                         @compileLog(comptimePrint("{s} = FromData {s}", .{ self.str, self.str }));
@@ -116,13 +113,13 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
                 backend,
                 null,
                 null,
-                InitImpl.loadData,
-                InitImpl.graph,
+                impl.loadData,
+                impl.graph,
             );
         }
 
         pub fn full(backend: *const Backend, comptime value: dtype) Self {
-            const InitImpl = struct {
+            const impl = struct {
                 fn graph(self: *const Self) void {
                     if (@inComptime()) {
                         @compileLog(comptimePrint("{s} = Full({d}) {s}", .{ self.str, value, self.str }));
@@ -138,10 +135,11 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
                 backend,
                 null,
                 null,
-                InitImpl.loadData,
-                InitImpl.graph,
+                impl.loadData,
+                impl.graph,
             );
         }
+
         pub fn result(
             backend: *const Backend,
             storage: ?*Backend.Storage(dtype),
@@ -151,18 +149,31 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             return init(backend, storage, evalFn, null, graphFn);
         }
 
-        pub fn eval(self: *const Self) Self {
-            return self.evalFn(@constCast(self));
+        pub fn eval(comptime self: *const Self) Self {
+            // Making a copy of self makes the .always_inline modifier work
+            var runtime_copy: Self = .{
+                .backend = self.backend,
+                .storage = self.storage,
+                .evalFn = self.evalFn,
+                .loadDataFn = self.loadDataFn,
+                .graphFn = self.graphFn,
+            };
+            // Still have to call self.evalFn because it is comptime known which is required for .always_inline
+            // Don't know why &runtime_copy is still a *const Self but @constCast fixes this
+            return @call(.always_inline, self.evalFn, .{@constCast(&runtime_copy)});
         }
+
         pub fn graph(self: *const Self) void {
             self.graphFn(self);
         }
+
         pub fn initStorage(self: *Self) void {
             if (self.storage == null) {
                 self.storage = self.backend.storage(dtype, size);
                 self.loadDataFn(self);
             }
         }
+
         pub fn isContiguous(_: *const Self) bool {
             return comptime utils.isContiguous(ndims, strides);
         }
@@ -208,7 +219,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
         }
         pub fn permute(parent: *const Self, comptime perm: [ndims]u8) Permute(perm) {
             const Output = Permute(perm);
-            const Impl = struct {
+            const impl = struct {
                 fn eval(out: *Output) Output {
                     const parent_eval = @call(.always_inline, @TypeOf(parent.*).eval, .{parent});
                     out.storage = parent_eval.storage;
@@ -224,12 +235,12 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
                 }
             };
 
-            return Output.result(parent.backend, null, Impl.eval, Impl.graph);
+            return Output.result(parent.backend, null, impl.eval, impl.graph);
         }
         pub fn view(parent: *const Self, comptime new_shape: anytype) Tensor(dtype, new_shape) {
             const Output = Tensor(dtype, new_shape);
             if (parent.isContiguous()) {
-                const Impl = struct {
+                const impl = struct {
                     fn eval(out: *Output) Output {
                         const parent_eval = @call(.always_inline, @TypeOf(parent.*).eval, .{parent});
                         out.storage = parent_eval.storage;
@@ -244,7 +255,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
                         }
                     }
                 };
-                return Output.result(parent.backend, null, Impl.eval, Impl.graph);
+                return Output.result(parent.backend, null, impl.eval, impl.graph);
             } else {
                 @compileError("Must be contiguous to view");
             }

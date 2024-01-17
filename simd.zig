@@ -10,11 +10,10 @@ const TestBackend = &Backend{ .Zig = .{} };
 pub fn main() !void {
     // To take advantage of comptime features, all tensor code should be in comptime
     const out = comptime blk: {
-        const x1 = Range(TestBackend, u8, 0, 50).view(.{ 10, 1, 5, 1 }); //.view(.{ 8, 1, 4, 1, 2 });
-        // @compileLog(x1.strides);
-        const x2 = Range(TestBackend, u8, 50, 100).view(.{ 1, 2, 5, 5 }); //.view(.{ 8, 4, 1, 2, 1 });
-        // @compileLog(x2.strides);
-        const x3 = x1.add(x2);
+        const x1 = Range(TestBackend, i32, 0, 32).view(.{ 1, 4, 8 });
+        const x2 = Range(TestBackend, i32, 32, 64).view(.{ 8, 4, 1 });
+        _ = x2;
+        const x3 = x1.neg().sum(null);
         break :blk x3;
     };
 
@@ -22,7 +21,5 @@ pub fn main() !void {
     defer TestBackend.deinit();
 
     out.graph();
-
-    const out_eval = out.eval();
-    std.debug.print("\n{any}\n", .{out_eval.storage.?.Zig});
+    std.debug.print("\n{any}\n", .{out.eval().storage.?.Zig});
 }

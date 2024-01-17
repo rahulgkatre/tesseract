@@ -21,7 +21,7 @@ pub const Backend = union(BackendTypes) {
                     inline else => |*b| b.fill(value),
                 }
             }
-            pub fn load(self: *Self, data: []dtype) void {
+            pub fn load(self: *Self, data: []const dtype) void {
                 switch (self.*) {
                     inline else => |*b| b.load(data),
                 }
@@ -44,9 +44,9 @@ pub const Backend = union(BackendTypes) {
             inline else => |*b| b.deinit(),
         };
     }
-    pub fn asType(self: *const Backend, comptime new_dtype: type, x: anytype) @TypeOf(x).AsType(new_dtype) {
+    pub inline fn asType(self: *const Backend, comptime new_dtype: type, x: anytype) @TypeOf(x).AsType(new_dtype) {
         const Output = @TypeOf(x).AsType(new_dtype);
-        const ResultImpl = struct {
+        const impl = struct {
             fn eval(out: *Output) Output {
                 const x_eval = @call(.always_inline, @TypeOf(x).eval, .{&x});
                 out.initStorage();
@@ -64,12 +64,12 @@ pub const Backend = union(BackendTypes) {
                 }
             }
         };
-        return Output.result(self, null, ResultImpl.eval, ResultImpl.graph);
+        return Output.result(self, null, impl.eval, impl.graph);
     }
 
-    pub fn map(self: *const Backend, op: ops.MapOp, x: anytype) @TypeOf(x) {
+    pub inline fn map(self: *const Backend, op: ops.MapOp, x: anytype) @TypeOf(x) {
         const Output: type = @TypeOf(x);
-        const ResultImpl = struct {
+        const impl = struct {
             fn eval(out: *Output) Output {
                 const x_eval = @call(.always_inline, @TypeOf(x).eval, .{&x});
                 out.initStorage();
@@ -87,11 +87,11 @@ pub const Backend = union(BackendTypes) {
                 }
             }
         };
-        return Output.result(self, null, ResultImpl.eval, ResultImpl.graph);
+        return Output.result(self, null, impl.eval, impl.graph);
     }
-    pub fn zip(self: *const Backend, op: ops.ZipOp, a: anytype, b: anytype) @TypeOf(a).Broadcast(@TypeOf(b)) {
+    pub inline fn zip(self: *const Backend, op: ops.ZipOp, a: anytype, b: anytype) @TypeOf(a).Broadcast(@TypeOf(b)) {
         const Output = @TypeOf(a).Broadcast(@TypeOf(b));
-        const ResultImpl = struct {
+        const impl = struct {
             fn eval(out: *Output) Output {
                 const a_eval = @call(.always_inline, @TypeOf(a).eval, .{&a});
                 const b_eval = @call(.always_inline, @TypeOf(b).eval, .{&b});
@@ -111,11 +111,11 @@ pub const Backend = union(BackendTypes) {
                 }
             }
         };
-        return Output.result(self, null, ResultImpl.eval, ResultImpl.graph);
+        return Output.result(self, null, impl.eval, impl.graph);
     }
-    pub fn reduce(self: *const Backend, op: ops.ReduceOp, x: anytype, comptime dim: ?u8) @TypeOf(x).Reduce(dim) {
+    pub inline fn reduce(self: *const Backend, op: ops.ReduceOp, x: anytype, comptime dim: ?u8) @TypeOf(x).Reduce(dim) {
         const Output = @TypeOf(x).Reduce(dim);
-        const ResultImpl = struct {
+        const impl = struct {
             fn eval(out: *Output) Output {
                 const x_eval = @call(.always_inline, @TypeOf(x).eval, .{&x});
                 out.initStorage();
@@ -134,6 +134,6 @@ pub const Backend = union(BackendTypes) {
                 }
             }
         };
-        return Output.result(self, null, ResultImpl.eval, ResultImpl.graph);
+        return Output.result(self, null, impl.eval, impl.graph);
     }
 };
