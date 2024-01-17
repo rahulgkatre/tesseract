@@ -210,7 +210,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             const Output = Permute(perm);
             const Impl = struct {
                 fn eval(out: *Output) Output {
-                    const parent_eval = parent.eval();
+                    const parent_eval = @call(.always_inline, @TypeOf(parent.*).eval, .{parent});
                     out.storage = parent_eval.storage;
                     return out.*;
                 }
@@ -231,7 +231,7 @@ pub fn BaseTensor(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [
             if (parent.isContiguous()) {
                 const Impl = struct {
                     fn eval(out: *Output) Output {
-                        const parent_eval = parent.eval();
+                        const parent_eval = @call(.always_inline, @TypeOf(parent.*).eval, .{parent});
                         out.storage = parent_eval.storage;
                         return out.*;
                     }
