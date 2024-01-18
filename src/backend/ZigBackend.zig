@@ -1,11 +1,9 @@
-const Allocator = @import("std").mem.Allocator;
 const tensor = @import("../tensor.zig");
 const ops = @import("../ops.zig");
 const Backend = @import("../backend.zig").Backend;
 const ZigBackend = @This();
 const std = @import("std");
-
-const default_vec_len = std.simd.suggestVectorLength(usize) orelse 4;
+const Allocator = std.mem.Allocator;
 
 const GlobalArena = struct {
     var global_arena: std.heap.ArenaAllocator = undefined;
@@ -24,35 +22,34 @@ const GlobalArena = struct {
 pub fn Storage(comptime dtype: type) type {
     return struct {
         const Self = @This();
-        pub const simd_align = @alignOf(@Vector(default_vec_len, dtype));
-        data: []align(simd_align) dtype,
+        pub const vec_len = std.simd.suggestVectorLength(dtype) orelse @sizeOf(dtype);
+        pub const vec_alignment = @alignOf(@Vector(vec_len, dtype));
+        data: []align(vec_alignment) dtype,
         size: usize,
         pub fn fill(self: *Self, value: dtype) void {
             @memset(self.data, value);
         }
-        pub fn load(self: *Self, data: []dtype) void {
+        pub fn load(self: *Self, data: []const dtype) void {
             @memcpy(self.data, data);
         }
     };
 }
 
-// TODO: Replace page with a fixed buffer allocator
+// TODO: Replace page allocator with a fixed buffer allocator
 // Buffer size should be computed at compile time
 pub fn init(_: *const ZigBackend, _: anytype) void {
     GlobalArena.init(std.heap.ArenaAllocator.init(std.heap.page_allocator));
 }
 
-pub fn storage(_: *const ZigBackend, comptime dtype: type, comptime size: usize, comptime data: ?[]dtype) *Backend.Storage(dtype) {
-    const store = GlobalArena.allocator().create(Backend.Storage(dtype)) catch @panic("Out of memory");
+pub fn storage(_: *const ZigBackend, comptime dtype: type, comptime size: usize) *Backend.Storage(dtype) {
+    const store = GlobalArena.allocator().create(Backend.Storage(dtype)) catch unreachable;
+    const store_type = Storage(dtype);
     store.* = .{
         .Zig = .{
-            .data = GlobalArena.allocator().alignedAlloc(dtype, Storage(dtype).simd_align, size) catch @panic("Unable to allocate tensor storage"),
+            .data = GlobalArena.allocator().alignedAlloc(dtype, store_type.vec_alignment, size) catch unreachable,
             .size = size,
         },
     };
-    if (data != null) {
-        @memcpy(store.Zig.data, data.?);
-    }
     return store;
 }
 
@@ -61,7 +58,7 @@ pub fn deinit(_: *const ZigBackend) void {
 }
 
 const MapFnType = @TypeOf(struct {
-    fn f(x: anytype) @TypeOf(x) {
+    inline fn f(x: anytype) @TypeOf(x) {
         unreachable;
     }
 }.f);
@@ -70,33 +67,39 @@ fn MapFn(comptime map_op: ops.MapOp, comptime dtype: type) MapFnType {
     return comptime switch (map_op) {
         .Neg => switch (@typeInfo(dtype)) {
             .Bool => struct {
-                fn negateBoolEval(x: anytype) @TypeOf(x) {
+                inline fn negateBoolEval(x: anytype) @TypeOf(x) {
+                    @setFloatMode(.Optimized);
                     return !x;
                 }
             }.negateBoolEval,
             else => struct {
-                fn negateEval(x: anytype) @TypeOf(x) {
+                inline fn negateEval(x: anytype) @TypeOf(x) {
+                    @setFloatMode(.Optimized);
                     return -x;
                 }
             }.negateEval,
         },
         .Log2 => struct {
-            fn log2Eval(x: anytype) @TypeOf(x) {
+            inline fn log2Eval(x: anytype) @TypeOf(x) {
+                @setFloatMode(.Optimized);
                 return @log2(x);
             }
         }.log2Eval,
         .Exp2 => struct {
-            fn exp2Eval(x: anytype) @TypeOf(x) {
+            inline fn exp2Eval(x: anytype) @TypeOf(x) {
+                @setFloatMode(.Optimized);
                 return @exp2(x);
             }
         }.exp2Eval,
         .Sqrt => struct {
-            fn sqrtEval(x: anytype) @TypeOf(x) {
+            inline fn sqrtEval(x: anytype) @TypeOf(x) {
+                @setFloatMode(.Optimized);
                 return @sqrt(x);
             }
         }.sqrtEval,
         .Recip => struct {
-            fn recipEval(x: anytype) @TypeOf(x) {
+            inline fn recipEval(x: anytype) @TypeOf(x) {
+                @setFloatMode(.Optimized);
                 return switch (@typeInfo(@TypeOf(x))) {
                     .Vector => |v| @as(@Vector(v.len, v.child), @splat(1.0)) / x,
                     else => 1.0 / x,
@@ -109,7 +112,7 @@ fn MapFn(comptime map_op: ops.MapOp, comptime dtype: type) MapFnType {
 
 fn ZipFnType(comptime zip_op: ops.ZipOp, comptime dtype: type) type {
     return @TypeOf(struct {
-        fn f(a: anytype, _: @TypeOf(a)) switch (zip_op) {
+        inline fn f(a: anytype, _: @TypeOf(a)) switch (zip_op) {
             .Lt, .Eq => bool,
             else => dtype,
         } {
@@ -121,34 +124,39 @@ fn ZipFnType(comptime zip_op: ops.ZipOp, comptime dtype: type) type {
 fn ZipFn(comptime zip_op: ops.ZipOp, comptime dtype: type) ZipFnType(zip_op, dtype) {
     return comptime switch (zip_op) {
         .Add => struct {
-            fn addEval(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+            inline fn addEval(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+                @setFloatMode(.Optimized);
                 return a + b;
             }
         }.addEval,
         .Mul => struct {
-            fn mulEval(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+            inline fn mulEval(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+                @setFloatMode(.Optimized);
                 return a * b;
             }
         }.mulEval,
         .Maximum => struct {
-            // Cast to a shared type
-            fn maximumEval(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
-                const cast_type = @TypeOf(@as(dtype, 0) * @as(dtype, 0));
-                return @max(@as(cast_type, a), @as(cast_type, b));
+            inline fn maximumEval(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+                @setFloatMode(.Optimized);
+                return @max(a, b);
             }
         }.maximumEval,
         .Lt => struct {
-            fn lessThanEval(a: anytype, b: @TypeOf(a)) bool {
+            inline fn lessThanEval(a: anytype, b: @TypeOf(a)) bool {
+                @setFloatMode(.Optimized);
                 return a < b;
             }
         }.lessThanEval,
         .Eq => struct {
-            fn equalsEval(a: anytype, b: @TypeOf(a)) bool {
+            inline fn equalsEval(a: anytype, b: @TypeOf(a)) bool {
+                @setFloatMode(.Optimized);
+                // TODO: float a == float b should use isClose
                 return a == b;
             }
         }.equalsEval,
         .Xor => struct {
-            fn xorEval(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+            inline fn xorEval(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+                @setFloatMode(.Optimized);
                 return a ^ b;
             }
         }.xorEval,
@@ -158,7 +166,7 @@ fn ZipFn(comptime zip_op: ops.ZipOp, comptime dtype: type) ZipFnType(zip_op, dty
 
 fn CastFnType(comptime old_dtype: type, comptime new_dtype: type) type {
     return @TypeOf(struct {
-        fn cast(_: old_dtype) new_dtype {
+        inline fn cast(_: old_dtype) new_dtype {
             unreachable;
         }
     }.cast);
@@ -171,12 +179,12 @@ fn CastFn(comptime old_dtype: type, comptime new_dtype: type) CastFnType(old_dty
     return comptime switch (new_info) {
         .Float => switch (old_info) {
             .Int => struct {
-                fn cast(x: old_dtype) new_dtype {
+                inline fn cast(x: old_dtype) new_dtype {
                     return @floatFromInt(x);
                 }
             },
             .Float => struct {
-                fn cast(x: old_dtype) new_dtype {
+                inline fn cast(x: old_dtype) new_dtype {
                     return @floatCast(x);
                 }
             },
@@ -184,17 +192,17 @@ fn CastFn(comptime old_dtype: type, comptime new_dtype: type) CastFnType(old_dty
         },
         .Int => switch (old_info) {
             .Float => struct {
-                fn cast(x: old_dtype) new_dtype {
+                inline fn cast(x: old_dtype) new_dtype {
                     return @intFromFloat(x);
                 }
             },
             .Bool => struct {
-                fn cast(x: old_dtype) new_dtype {
+                inline fn cast(x: old_dtype) new_dtype {
                     return @intFromBool(x);
                 }
             },
             .Int => struct {
-                fn cast(x: old_dtype) new_dtype {
+                inline fn cast(x: old_dtype) new_dtype {
                     return @intCast(x);
                 }
             },
@@ -204,118 +212,73 @@ fn CastFn(comptime old_dtype: type, comptime new_dtype: type) CastFnType(old_dty
     }.cast;
 }
 
-pub fn asType(_: *const ZigBackend, comptime new_dtype: type, x: anytype, out: *@TypeOf(x).AsType(new_dtype)) void {
+pub inline fn asType(_: *const ZigBackend, comptime new_dtype: type, x: anytype, out: *@TypeOf(x).AsType(new_dtype)) void {
     const castFn = CastFn(@TypeOf(x).dtype, new_dtype);
-    for (0..@TypeOf(out.*).size) |flat_index| {
-        out.storage.?.Zig.data[flat_index] = @call(.always_inline, castFn, .{x.storage.?.Zig.data[flat_index]});
+    const _x = x.storage.?.Zig.data;
+    var _out = out.storage.?.Zig.data;
+    for (0..@TypeOf(out.*).size) |i| {
+        _out[i] = @call(.always_inline, castFn, .{_x[i]});
     }
 }
 
-pub fn map(_: *const ZigBackend, comptime op: ops.MapOp, x: anytype, out: *@TypeOf(x)) void {
+pub inline fn map(_: *const ZigBackend, comptime op: ops.MapOp, x: anytype, out: *@TypeOf(x)) void {
     const mapFn = MapFn(op, @TypeOf(x).dtype);
-    const size = @TypeOf(out.*).size;
-    const num_vecs = @divFloor(size, default_vec_len);
+    const dtype: type = @TypeOf(x).dtype;
+    const size: usize = @TypeOf(x).size;
+    const storage_type = Storage(dtype);
+    const _x: []align(storage_type.vec_alignment) dtype = x.storage.?.Zig.data;
+    var _out: []align(storage_type.vec_alignment) dtype = out.storage.?.Zig.data;
+    const vec_len: usize = storage_type.vec_len;
+    const num_vecs: usize = comptime @divTrunc(size, vec_len);
     for (0..num_vecs) |vec_i| {
-        const vec_start_i = vec_i * default_vec_len;
-        const stop_i = vec_start_i + default_vec_len;
-        const x_vec: @Vector(default_vec_len, @TypeOf(x).dtype) = x.storage.?.Zig.data[vec_start_i..stop_i][0..default_vec_len].*;
-        out.storage.?.Zig.data[vec_start_i..stop_i][0..default_vec_len].* = @call(.always_inline, mapFn, .{x_vec});
+        const offset = vec_i * vec_len;
+        @prefetch(_x[offset + vec_len ..], .{ .locality = 0 });
+        const aligned_out: *@Vector(vec_len, dtype) = @alignCast(@ptrCast(_out[offset..][0..vec_len]));
+        aligned_out.* = @call(.always_inline, mapFn, .{@as(*const @Vector(vec_len, dtype), @alignCast(@ptrCast(_x[offset..][0..vec_len]))).*});
     }
-    for (num_vecs * default_vec_len..size) |i| {
-        out.storage.?.Zig.data[i] = @call(.always_inline, mapFn, .{x.storage.?.Zig.data[i]});
+    inline for (comptime vec_len * num_vecs..size) |i| {
+        _out[i] = @call(.always_inline, mapFn, .{_x[i]});
     }
 }
 
-fn view_common_max_final_dim(shape_a: anytype, shape_b: anytype) void {
-    var flatten_shape_a: [shape_a.len]usize = undefined;
-    var prod: usize = 1;
-    for (0..shape_a.len) |d| {
-        prod *= shape_a[shape_a.len - d - 1];
-        flatten_shape_a[shape_a.len - d - 1] = prod;
-    }
-
-    var flatten_shape_b: [shape_b.len]usize = undefined;
-    prod = 1;
-    for (0..shape_a.len) |d| {
-        prod *= shape_b[shape_b.len - d - 1];
-        flatten_shape_b[shape_b.len - d - 1] = prod;
-    }
-
-    // @compileLog(shape_a);
-    // @compileLog(flatten_shape_a);
-    // @compileLog(shape_b);
-    // @compileLog(flatten_shape_b);
-}
-
-pub fn zip(_: *const ZigBackend, comptime op: ops.ZipOp, a: anytype, b: anytype, out: *@TypeOf(a).Broadcast(@TypeOf(b))) void {
+pub inline fn zip(_: *const ZigBackend, comptime op: ops.ZipOp, a: anytype, b: anytype, out: *@TypeOf(a).Broadcast(@TypeOf(b))) void {
     const zipFn = ZipFn(op, @TypeOf(a).dtype);
-    // TODO: Simplify the shapes of the input tensors in order to maximize the common size of the last dimension
-    // Then, use that common size as the vector size for SIMD
-    // @compileLog(@TypeOf(a).shape);
-    // @compileLog(@TypeOf(a).strides);
-    // @compileLog(@TypeOf(b).shape);
-    // @compileLog(@TypeOf(b).strides);
-    // @compileLog(@TypeOf(out.*).shape);
-    // @compileLog(@TypeOf(out.*).strides);
-
-    // comptime view_common_max_final_dim(@TypeOf(a).shape, @TypeOf(b).shape);
-    for (0..@TypeOf(out.*).size) |dst| {
-        const out_index = out.unflattenIndex(dst);
-        // std.debug.print("out[{}] = a[{}] ({}) + b[{}] ({}) \n", .{
-        //     dst,
-        //     a.flattenIndex(a.broadcastIndex(out_index)),
-        //     a.storage.?.Zig.data[a.flattenIndex(a.broadcastIndex(out_index))],
-        //     b.flattenIndex(b.broadcastIndex(out_index)),
-        //     b.storage.?.Zig.data[b.flattenIndex(b.broadcastIndex(out_index))],
-        // });
-
-        out.storage.?.Zig.data[dst] = @call(
-            .always_inline,
-            zipFn,
-            .{
-                a.storage.?.Zig.data[a.flattenIndex(a.broadcastIndex(out_index))],
-                b.storage.?.Zig.data[b.flattenIndex(b.broadcastIndex(out_index))],
-            },
-        );
-    }
-}
-
-inline fn reduceArray(comptime op: ops.ReduceOp, comptime dtype: type, array: anytype, comptime len: usize) dtype {
-    const zipFn = ZipFn(comptime switch (op) {
-        .Sum => .Add,
-        .Max => .Maximum,
-    }, dtype);
-    const vec_reduce_op: std.builtin.ReduceOp = comptime switch (op) {
-        .Sum => .Add,
-        .Max => .Max,
-    };
-    var acc: dtype = undefined;
-    if (comptime len >= default_vec_len) {
-        const init_vec: @Vector(default_vec_len, dtype) = array[0..default_vec_len].*;
-        const num_vecs = @divFloor(len, default_vec_len);
-        acc = @reduce(vec_reduce_op, init_vec);
-
-        var vec_start: usize = undefined;
-        var vec_stop: usize = undefined;
-        for (1..num_vecs) |vec_i| {
-            vec_start = vec_i * default_vec_len;
-            vec_stop = vec_start + default_vec_len;
-            const x_vec: @Vector(default_vec_len, dtype) = array[vec_start..vec_stop][0..default_vec_len].*;
-            acc = @call(.always_inline, zipFn, .{ acc, @reduce(vec_reduce_op, x_vec) });
+    const dtype: type = @TypeOf(a).dtype;
+    const storage_type = Storage(dtype);
+    const _a: []align(storage_type.vec_alignment) dtype = a.storage.?.Zig.data;
+    const _b: []align(storage_type.vec_alignment) dtype = b.storage.?.Zig.data;
+    var _out: []align(storage_type.vec_alignment) dtype = out.storage.?.Zig.data;
+    if (@TypeOf(a) == @TypeOf(b)) {
+        // Vectorize perfectly when a and b have same type (shape, strides, etc.)
+        const size: usize = @TypeOf(a).size;
+        const vec_len: usize = storage_type.vec_len;
+        const num_vecs: usize = comptime @divTrunc(size, vec_len);
+        for (0..num_vecs) |vec_i| {
+            const offset = vec_i * vec_len;
+            @prefetch(_a[offset + vec_len ..], .{ .locality = 0 });
+            @prefetch(_b[offset + vec_len ..], .{ .locality = 0 });
+            const aligned_out: *@Vector(vec_len, dtype) = @alignCast(@ptrCast(_out[offset..][0..vec_len]));
+            aligned_out.* = @call(.always_inline, zipFn, .{
+                @as(*const @Vector(vec_len, dtype), @alignCast(@ptrCast(_a[offset..][0..vec_len]))).*,
+                @as(*const @Vector(vec_len, dtype), @alignCast(@ptrCast(_b[offset..][0..vec_len]))).*,
+            });
         }
-        for (vec_stop..len) |i| {
-            acc = @call(.always_inline, zipFn, .{ acc, array[i] });
+        inline for (comptime vec_len * num_vecs..size) |i| {
+            _out[i] = @call(.always_inline, zipFn, .{ _a[i], _b[i] });
         }
     } else {
-        acc = array[0];
-        for (1..len) |i| {
-            acc = @call(.always_inline, zipFn, .{ acc, array[i] });
+        // TODO: Make this vectorize better
+        for (comptime 0..@TypeOf(out.*).size) |out_i| {
+            const out_index = out.unflattenIndex(out_i);
+            _out[out_i] = @call(.always_inline, zipFn, .{
+                _a[a.flattenIndex(a.broadcastIndex(out_index))],
+                _b[b.flattenIndex(b.broadcastIndex(out_index))],
+            });
         }
     }
-    return acc;
 }
 
-pub fn reduce(
+pub inline fn reduce(
     _: *const ZigBackend,
     comptime op: ops.ReduceOp,
     x: anytype,
@@ -325,17 +288,52 @@ pub fn reduce(
     const dtype: type = @TypeOf(x).dtype;
     const ndims: u8 = @TypeOf(x).ndims;
     const shape: [ndims]usize = @TypeOf(x).shape;
+    const strides: [ndims + 1]usize = @TypeOf(x).strides;
     const size: usize = @TypeOf(x).size;
+    const zipFn = comptime ZipFn(switch (op) {
+        .Sum => .Add,
+        .Max => .Maximum,
+    }, dtype);
     if (ndims == 0 or size == 0 or (dim != null and shape[dim.?] == 0)) {
         @compileError("Cannot reduce over 0 elements");
     }
+
+    const reduceOp: std.builtin.ReduceOp = comptime switch (op) {
+        .Sum => .Add,
+        .Max => .Max,
+    };
+
+    const storage_type = Storage(dtype);
+    const _x: []align(storage_type.vec_alignment) dtype = x.storage.?.Zig.data;
+    var _out: []align(storage_type.vec_alignment) dtype = out.storage.?.Zig.data;
+    const vec_len: usize = storage_type.vec_len;
+    const num_vecs: usize = comptime @divTrunc(size, vec_len);
     if (comptime dim == null) {
-        out.storage.?.Zig.data[0] = reduceArray(op, dtype, x.storage.?.Zig.data, size);
+        var acc: dtype = @reduce(reduceOp, @as(*const @Vector(vec_len, dtype), @alignCast(@ptrCast(_x[0..vec_len]))).*);
+        for (1..num_vecs) |vec_i| {
+            const offset = vec_i * vec_len;
+            @prefetch(_x[offset + vec_len ..], .{ .locality = 0 });
+            acc = @call(.always_inline, zipFn, .{
+                acc,
+                @reduce(reduceOp, @as(*const @Vector(vec_len, dtype), @alignCast(@ptrCast(_x[offset..][0..vec_len]))).*),
+            });
+        }
+        inline for (comptime vec_len * num_vecs..size) |i| {
+            acc = @call(.always_inline, zipFn, .{ acc, _x[i] });
+        }
+        out.storage.?.Zig.data[0] = acc;
     } else {
-        for (0..@TypeOf(out.*).size) |out_i| {
-            const x_start_i = x.flattenIndex(out.unflattenIndex(out_i));
-            const x_stop_i = x_start_i + shape[dim.?];
-            out.storage.?.Zig.data[out_i] = reduceArray(op, dtype, x.storage.?.Zig.data[x_start_i..x_stop_i], shape[dim.?]);
+        // TODO: Make this vectorize better
+        const stride = strides[dim.?];
+        const dimsize = shape[dim.?];
+        for (comptime 0..@TypeOf(out.*).size) |out_i| {
+            const offset = x.flattenIndex(out.unflattenIndex(out_i));
+            var acc = _x[offset];
+            for (comptime 1..dimsize) |i| {
+                const x_i = offset + i * stride;
+                acc = @call(.always_inline, zipFn, .{ acc, _x[x_i] });
+            }
+            _out[out_i] = acc;
         }
     }
 }

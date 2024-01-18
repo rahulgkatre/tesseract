@@ -31,13 +31,13 @@ fn MyTypeGen(comptime size: usize) type {
                     .data = null,
                     .closure = struct {
                         pub fn f() Self {
-                            const temp = allocator.alloc(u8, size) catch @panic("Out of memory");
+                            const temp = allocator.alloc(u8, size) catch unreachable;
                             return .{ .data = temp[0..size].*, .closure = null };
                         }
                     }.f,
                 };
             } else {
-                const temp = allocator.alloc(u8, 5) catch @panic("Out of memory");
+                const temp = allocator.alloc(u8, 5) catch unreachable;
                 return .{ .data = temp, .closure = null };
             }
         }

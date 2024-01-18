@@ -9,3 +9,5 @@ pub const ReduceOp = enum { Sum, Max };
 pub const TypeOp = enum { Permute, View, Cast };
 pub const OpTypes = enum { MapOp, ZipOp, ReduceOp, TypeOp };
 pub const Op = union(OpTypes) { MapOp: MapOp, ZipOp: ZipOp, ReduceOp: ReduceOp, TypeOp: TypeOp };
+
+// TODO: Optional: add a comptime hash map to convert op enums to symbols for graph visualiztion

@@ -21,7 +21,7 @@ pub const Backend = union(BackendTypes) {
                     inline else => |*b| b.fill(value),
                 }
             }
-            pub fn load(self: *Self, data: []dtype) void {
+            pub fn load(self: *Self, data: []const dtype) void {
                 switch (self.*) {
                     inline else => |*b| b.load(data),
                 }
@@ -34,9 +34,9 @@ pub const Backend = union(BackendTypes) {
             inline else => |*b| b.init(args),
         };
     }
-    pub fn storage(self: *const Backend, comptime dtype: type, comptime size: usize, comptime data: ?[]dtype) *Storage(dtype) {
+    pub fn storage(self: *const Backend, comptime dtype: type, comptime size: usize) *Storage(dtype) {
         return switch (self.*) {
-            inline else => |*b| b.storage(dtype, size, data),
+            inline else => |*b| b.storage(dtype, size),
         };
     }
     pub fn deinit(self: *const Backend) void {
@@ -44,12 +44,12 @@ pub const Backend = union(BackendTypes) {
             inline else => |*b| b.deinit(),
         };
     }
-    pub fn asType(self: *const Backend, comptime new_dtype: type, x: anytype) @TypeOf(x).AsType(new_dtype) {
+    pub inline fn asType(self: *const Backend, comptime new_dtype: type, x: anytype) @TypeOf(x).AsType(new_dtype) {
         const Output = @TypeOf(x).AsType(new_dtype);
-        const Impl = struct {
+        const impl = struct {
             fn eval(out: *Output) Output {
-                const x_eval = @call(.auto, x.evalFn, .{@constCast(&x)});
-                out.initStorage(null);
+                const x_eval = @call(.always_inline, @TypeOf(x).eval, .{&x});
+                out.initStorage();
                 switch (self.*) {
                     inline else => |*backend| backend.asType(new_dtype, x_eval, out),
                 }
@@ -64,15 +64,15 @@ pub const Backend = union(BackendTypes) {
                 }
             }
         };
-        return Output.result(self, null, Impl.eval, Impl.graph);
+        return Output.result(self, null, impl.eval, impl.graph);
     }
 
-    pub fn map(self: *const Backend, op: ops.MapOp, x: anytype) @TypeOf(x) {
+    pub inline fn map(self: *const Backend, op: ops.MapOp, x: anytype) @TypeOf(x) {
         const Output: type = @TypeOf(x);
-        const Impl = struct {
+        const impl = struct {
             fn eval(out: *Output) Output {
-                const x_eval = @call(.auto, x.evalFn, .{@constCast(&x)});
-                out.initStorage(null);
+                const x_eval = @call(.always_inline, @TypeOf(x).eval, .{&x});
+                out.initStorage();
                 switch (self.*) {
                     inline else => |*backend| backend.map(op, x_eval, out),
                 }
@@ -87,15 +87,15 @@ pub const Backend = union(BackendTypes) {
                 }
             }
         };
-        return Output.result(self, null, Impl.eval, Impl.graph);
+        return Output.result(self, null, impl.eval, impl.graph);
     }
-    pub fn zip(self: *const Backend, op: ops.ZipOp, a: anytype, b: anytype) @TypeOf(a).Broadcast(@TypeOf(b)) {
+    pub inline fn zip(self: *const Backend, op: ops.ZipOp, a: anytype, b: anytype) @TypeOf(a).Broadcast(@TypeOf(b)) {
         const Output = @TypeOf(a).Broadcast(@TypeOf(b));
-        const Impl = struct {
+        const impl = struct {
             fn eval(out: *Output) Output {
-                const a_eval = @call(.auto, a.evalFn, .{@constCast(&a)});
-                const b_eval = @call(.auto, b.evalFn, .{@constCast(&b)});
-                out.initStorage(null);
+                const a_eval = @call(.always_inline, @TypeOf(a).eval, .{&a});
+                const b_eval = @call(.always_inline, @TypeOf(b).eval, .{&b});
+                out.initStorage();
                 switch (self.*) {
                     inline else => |*backend| backend.zip(op, a_eval, b_eval, out),
                 }
@@ -111,14 +111,14 @@ pub const Backend = union(BackendTypes) {
                 }
             }
         };
-        return Output.result(self, null, Impl.eval, Impl.graph);
+        return Output.result(self, null, impl.eval, impl.graph);
     }
-    pub fn reduce(self: *const Backend, op: ops.ReduceOp, x: anytype, comptime dim: ?u8) @TypeOf(x).Reduce(dim) {
+    pub inline fn reduce(self: *const Backend, op: ops.ReduceOp, x: anytype, comptime dim: ?u8) @TypeOf(x).Reduce(dim) {
         const Output = @TypeOf(x).Reduce(dim);
-        const Impl = struct {
+        const impl = struct {
             fn eval(out: *Output) Output {
-                const x_eval = @call(.auto, x.evalFn, .{@constCast(&x)});
-                out.initStorage(null);
+                const x_eval = @call(.always_inline, @TypeOf(x).eval, .{&x});
+                out.initStorage();
                 switch (self.*) {
                     inline else => |*backend| backend.reduce(op, x_eval, dim, out),
                 }
@@ -134,6 +134,6 @@ pub const Backend = union(BackendTypes) {
                 }
             }
         };
-        return Output.result(self, null, Impl.eval, Impl.graph);
+        return Output.result(self, null, impl.eval, impl.graph);
     }
 };
