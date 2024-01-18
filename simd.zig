@@ -10,10 +10,9 @@ const TestBackend = &Backend{ .Zig = .{} };
 pub fn main() !void {
     // To take advantage of comptime features, all tensor code should be in comptime
     const out = comptime blk: {
-        const x1 = Range(TestBackend, i32, 0, 32).view(.{ 1, 4, 8 });
-        const x2 = Range(TestBackend, i32, 32, 64).view(.{ 8, 4, 1 });
-        _ = x2;
-        const x3 = x1.neg().sum(null);
+        const x1 = Range(TestBackend, f32, 0, 64).view(.{ 4, 4, 4 });
+        const x2 = Range(TestBackend, f32, 64, 128).view(.{ 4, 4, 4 });
+        const x3 = x1.mul(x2).sum(null);
         break :blk x3;
     };
 

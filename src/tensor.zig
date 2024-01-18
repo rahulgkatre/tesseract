@@ -11,6 +11,7 @@ pub fn Constant(backend: *const Backend, comptime dtype: type, comptime value: d
 }
 
 pub fn Range(backend: *const Backend, comptime dtype: type, comptime start: dtype, comptime stop: dtype) Tensor(dtype, .{stop - start}) {
+    @setEvalBranchQuota(@as(u32, 2 * stop));
     const data: [stop - start]dtype = std.simd.iota(dtype, stop - start) + @as(@Vector(stop - start, dtype), @splat(start));
     return Tensor(dtype, .{stop - start}).fromData(backend, data[0..]);
 }
