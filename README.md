@@ -106,6 +106,7 @@ pub fn main() !void {
     // Print the storage to show the data
     const eval_out = out.eval();
     std.debug.print("\n{any}\n", .{eval_out.storage});
+}
 ```
 
 ## Roadmap
@@ -116,7 +117,7 @@ pub fn main() !void {
     - [x] Contiguousness of strides is checked
     - [x] Check if a broadcast between two arrays of different shapes are valid
     - [x] Reducing a tensor along a dim yields a new tensor type where the reduce dim is now 1
-    - [ ] Operations for reshaping, permuting, flattening, etc. a tensor
+    - [x] Operations for reshaping, permuting, flattening, etc. a tensor
 - [x] Building the compute graph at compile time
     - [x] When a function is called, the output tensor receives a closure to evaluate itself
     - [x] The recursive traversal (calling of input evaluate functions) can happen at compile time
