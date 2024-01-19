@@ -48,8 +48,8 @@ pub const Backend = union(BackendTypes) {
         const Output = @TypeOf(x).AsType(new_dtype);
         const impl = struct {
             fn eval(out: *Output) Output {
-                const x_eval = @call(.always_inline, @TypeOf(x).eval, .{&x});
                 out.initStorage();
+                const x_eval = @call(.always_inline, @TypeOf(x).eval, .{&x});
                 switch (self.*) {
                     inline else => |*backend| backend.asType(new_dtype, x_eval, out),
                 }
@@ -71,8 +71,8 @@ pub const Backend = union(BackendTypes) {
         const Output: type = @TypeOf(x);
         const impl = struct {
             fn eval(out: *Output) Output {
-                const x_eval = @call(.always_inline, @TypeOf(x).eval, .{&x});
                 out.initStorage();
+                const x_eval = @call(.always_inline, @TypeOf(x).eval, .{&x});
                 switch (self.*) {
                     inline else => |*backend| backend.map(op, x_eval, out),
                 }
@@ -93,9 +93,9 @@ pub const Backend = union(BackendTypes) {
         const Output = @TypeOf(a).Broadcast(@TypeOf(b));
         const impl = struct {
             fn eval(out: *Output) Output {
+                out.initStorage();
                 const a_eval = @call(.always_inline, @TypeOf(a).eval, .{&a});
                 const b_eval = @call(.always_inline, @TypeOf(b).eval, .{&b});
-                out.initStorage();
                 switch (self.*) {
                     inline else => |*backend| backend.zip(op, a_eval, b_eval, out),
                 }
@@ -117,8 +117,8 @@ pub const Backend = union(BackendTypes) {
         const Output = @TypeOf(x).Reduce(dim);
         const impl = struct {
             fn eval(out: *Output) Output {
-                const x_eval = @call(.always_inline, @TypeOf(x).eval, .{&x});
                 out.initStorage();
+                const x_eval = @call(.always_inline, @TypeOf(x).eval, .{&x});
                 switch (self.*) {
                     inline else => |*backend| backend.reduce(op, x_eval, dim, out),
                 }

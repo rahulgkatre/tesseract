@@ -22,7 +22,7 @@ const GlobalArena = struct {
 pub fn Storage(comptime dtype: type) type {
     return struct {
         const Self = @This();
-        pub const vec_len = std.simd.suggestVectorLength(dtype) orelse @sizeOf(dtype);
+        pub const vec_len = std.simd.suggestVectorSize(dtype) orelse @sizeOf(dtype);
         pub const vec_alignment = @alignOf(@Vector(vec_len, dtype));
         data: []align(vec_alignment) dtype,
         size: usize,
