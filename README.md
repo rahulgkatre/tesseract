@@ -1,6 +1,6 @@
-# deepzig
+# Tesseract
 
-A deep learning library written in Zig that features compile time verification of all tensor operations and advanced acceleration and optimization. 
+A tensor library written in Zig that features compile time verification of all tensor operations and compute graph optimization. The goal is to eventually make this a deep learning library. 
 
 ## Core Principles
 
