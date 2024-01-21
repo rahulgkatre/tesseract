@@ -29,9 +29,10 @@ pub const Backend = union(BackendTypes) {
         };
     }
 
-    pub fn init(self: *const Backend, args: anytype) void {
+    pub fn runtime(self: *const Backend, args: anytype) void {
+        tensor.runtime();
         return switch (self.*) {
-            inline else => |*b| b.init(args),
+            inline else => |*b| b.runtime(args),
         };
     }
     pub fn storage(self: *const Backend, comptime dtype: type, comptime size: usize) *Storage(dtype) {
@@ -39,99 +40,103 @@ pub const Backend = union(BackendTypes) {
             inline else => |*b| b.storage(dtype, size),
         };
     }
-    pub fn deinit(self: *const Backend) void {
+    pub fn finished(self: *const Backend) void {
+        tensor.finished();
         return switch (self.*) {
-            inline else => |*b| b.deinit(),
+            inline else => |*b| b.finished(),
         };
     }
-    pub inline fn asType(self: *const Backend, comptime new_dtype: type, x: anytype) @TypeOf(x).AsType(new_dtype) {
-        const Output = @TypeOf(x).AsType(new_dtype);
+    pub inline fn cast(self: *const Backend, comptime new_dtype: type, x_ptr: anytype) @TypeOf(x_ptr.*).Cast(new_dtype) {
+        const Output = @TypeOf(x_ptr.*).Cast(new_dtype);
         const impl = struct {
-            fn eval(out: *Output) Output {
-                const x_eval = @call(.always_inline, @TypeOf(x).eval, .{&x});
-                out.initStorage();
+            fn eval(out_ptr: *Output) *Output {
+                const x_eval = @call(.always_inline, @TypeOf(x_ptr.*).eval, .{x_ptr});
+                const out_eval = out_ptr.runtime();
                 switch (self.*) {
-                    inline else => |*backend| backend.asType(new_dtype, x_eval, out),
+                    inline else => |*backend| backend.cast(new_dtype, x_eval, out_ptr),
                 }
-                return out.*;
+                return out_eval;
             }
-            fn graph(ptr: *const Output) void {
-                x.graph();
+            fn graph(_: *const Output, id: usize) usize {
+                const next_id = @call(.auto, x_ptr.graphFn, .{ x_ptr, id + 1 });
                 if (@inComptime()) {
-                    @compileLog(comptimePrint("{s} = AsType({any}) {s}", .{ ptr.str, new_dtype, x.str }));
+                    @compileLog(comptimePrint("tensor{d} = Cast({any}) tensor{d}", .{ id, new_dtype, id + 1 }));
                 } else {
-                    std.debug.print("{s}@{d} = AsType({any}) {s}@{d}\n", .{ ptr.str, @intFromPtr(ptr), new_dtype, x.str, @intFromPtr(&x) });
+                    std.debug.print("tensor{d} = Cast({any}) tensor{d}\n", .{ id, new_dtype, id + 1 });
                 }
+                return next_id;
             }
         };
         return Output.result(self, null, impl.eval, impl.graph);
     }
 
-    pub inline fn map(self: *const Backend, op: ops.MapOp, x: anytype) @TypeOf(x) {
-        const Output: type = @TypeOf(x);
+    pub inline fn map(self: *const Backend, op: ops.MapOp, x_ptr: anytype) @TypeOf(x_ptr.*) {
+        const Output: type = @TypeOf(x_ptr.*);
         const impl = struct {
-            fn eval(out: *Output) Output {
-                const x_eval = @call(.always_inline, @TypeOf(x).eval, .{&x});
-                out.initStorage();
+            fn eval(out_ptr: *Output) *Output {
+                const x_eval = @call(.always_inline, @TypeOf(x_ptr.*).eval, .{x_ptr});
+                const out_eval = out_ptr.runtime();
                 switch (self.*) {
-                    inline else => |*backend| backend.map(op, x_eval, out),
+                    inline else => |*backend| backend.map(op, x_eval, out_eval),
                 }
-                return out.*;
+                return out_eval;
             }
-            fn graph(out_ptr: *const Output) void {
-                x.graph();
+            fn graph(_: *const Output, id: usize) usize {
+                const next_id = @call(.auto, x_ptr.graphFn, .{ x_ptr, id + 1 });
                 if (@inComptime()) {
-                    @compileLog(comptimePrint("{s} = {s} {s}", .{ out_ptr.str, @tagName(op), x.str }));
+                    @compileLog(comptimePrint("tensor{d} = {s} tensor{d}", .{ id, @tagName(op), id + 1 }));
                 } else {
-                    std.debug.print("{s}@{d} = {s} {s}@{d}\n", .{ out_ptr.str, @intFromPtr(out_ptr), @tagName(op), x.str, @intFromPtr(&x) });
+                    std.debug.print("tensor{d} = {s} tensor{d}\n", .{ id, @tagName(op), id + 1 });
                 }
+                return next_id;
             }
         };
         return Output.result(self, null, impl.eval, impl.graph);
     }
-    pub inline fn zip(self: *const Backend, op: ops.ZipOp, a: anytype, b: anytype) @TypeOf(a).Broadcast(@TypeOf(b)) {
-        const Output = @TypeOf(a).Broadcast(@TypeOf(b));
+    pub inline fn zip(self: *const Backend, op: ops.ZipOp, a_ptr: anytype, b_ptr: anytype) @TypeOf(a_ptr.*).Broadcast(@TypeOf(b_ptr.*)) {
+        const Output = @TypeOf(a_ptr.*).Broadcast(@TypeOf(b_ptr.*));
         const impl = struct {
-            fn eval(out: *Output) Output {
-                const a_eval = @call(.always_inline, @TypeOf(a).eval, .{&a});
-                const b_eval = @call(.always_inline, @TypeOf(b).eval, .{&b});
-                out.initStorage();
+            fn eval(out_ptr: *Output) *Output {
+                const a_eval = @call(.always_inline, @TypeOf(a_ptr.*).eval, .{a_ptr});
+                const b_eval = @call(.always_inline, @TypeOf(b_ptr.*).eval, .{b_ptr});
+                const out_eval = out_ptr.runtime();
                 switch (self.*) {
-                    inline else => |*backend| backend.zip(op, a_eval, b_eval, out),
+                    inline else => |*backend| backend.zip(op, a_eval, b_eval, out_eval),
                 }
-                return out.*;
+                return out_eval;
             }
-            fn graph(ptr: *const Output) void {
-                a.graph();
-                b.graph();
+            fn graph(_: *const Output, id: usize) usize {
+                const a_next_id = @call(.auto, a_ptr.graphFn, .{ a_ptr, id + 1 });
+                const b_next_id = @call(.auto, b_ptr.graphFn, .{ b_ptr, a_next_id });
                 if (@inComptime()) {
-                    @compileLog(comptimePrint("{s} = {s} {s} {s}", .{ ptr.str, a.str, @tagName(op), b.str }));
+                    @compileLog(comptimePrint("tensor{d} = tensor{d} {s} tensor{d}", .{ id, id + 1, @tagName(op), a_next_id }));
                 } else {
-                    std.debug.print("{s}@{d} = {s}@{d} {s} {s}@{d}\n", .{ ptr.str, @intFromPtr(ptr), a.str, @intFromPtr(&a), @tagName(op), b.str, @intFromPtr(&b) });
+                    std.debug.print("tensor{d} = tensor{d} {s} tensor{d}\n", .{ id, id + 1, @tagName(op), a_next_id });
                 }
+                return b_next_id;
             }
         };
         return Output.result(self, null, impl.eval, impl.graph);
     }
-    pub inline fn reduce(self: *const Backend, op: ops.ReduceOp, x: anytype, comptime dim: ?u8) @TypeOf(x).Reduce(dim) {
-        const Output = @TypeOf(x).Reduce(dim);
+    pub inline fn reduce(self: *const Backend, op: ops.ReduceOp, x_ptr: anytype, comptime dim: ?u8) @TypeOf(x_ptr.*).Reduce(dim) {
+        const Output = @TypeOf(x_ptr.*).Reduce(dim);
         const impl = struct {
-            fn eval(out: *Output) Output {
-                const x_eval = @call(.always_inline, @TypeOf(x).eval, .{&x});
-                out.initStorage();
+            fn eval(out_ptr: *Output) *Output {
+                const x_eval = @call(.always_inline, @TypeOf(x_ptr.*).eval, .{x_ptr});
+                const out_eval = out_ptr.runtime();
                 switch (self.*) {
-                    inline else => |*backend| backend.reduce(op, x_eval, dim, out),
+                    inline else => |*backend| backend.reduce(op, x_eval, dim, out_eval),
                 }
-                return out.*;
+                return out_eval;
             }
-
-            fn graph(ptr: *const Output) void {
-                x.graph();
+            fn graph(_: *const Output, id: usize) usize {
+                const next_id = @call(.auto, x_ptr.graphFn, .{ x_ptr, id + 1 });
                 if (@inComptime()) {
-                    @compileLog(comptimePrint("{s} = {s} {s} {d}", .{ ptr.str, @tagName(op), x.str, dim orelse -1 }));
+                    @compileLog(comptimePrint("tensor{d} = {s} tensor{d} {d}", .{ id, @tagName(op), id + 1, dim orelse -1 }));
                 } else {
-                    std.debug.print("{s}@{d} = {s} {s}@{d} {d}\n", .{ ptr.str, @intFromPtr(ptr), @tagName(op), x.str, @intFromPtr(&x), dim orelse -1 });
+                    std.debug.print("tensor{d} = {s} tensor{d} {d}\n", .{ id, @tagName(op), id + 1, dim orelse -1 });
                 }
+                return next_id;
             }
         };
         return Output.result(self, null, impl.eval, impl.graph);
