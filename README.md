@@ -1,6 +1,6 @@
 # Tesseract
 
-A tensor library written in Zig that features compile time verification of all tensor operations and compute graph optimization. The goal is to eventually make this a deep learning library. 
+A tensor library written in Zig that features compile time verification of all tensor operations and soon, compute graph optimization. The goal is to be able to run differentiable tensor operations on a variety of processors/accelerators (through compiling with LLVM or through codegen), and to power a deep learning framework. 
 
 ## Core Principles
 
@@ -12,38 +12,25 @@ A tensor library written in Zig that features compile time verification of all t
 
 ### Laziness
 
-- Tensors are lazy, no data is modified until later
-- This is a side effect of compile time evaluation, as data does not exist at compile time 
-- The operations still "run" to produce output tensor metadata
+- Tensors are lazy, no data is allocated or operated on until requested
+- This builds on the side effects of compile time evaluation, as data does not exist at compile time
+- The operations still "run" (in compile time) to produce output tensor metadata
 - A function can be called on the output tensor to evaluate the compute graph
 
 ### Efficiency
-- Avoid heap allocation as much as possible
+- Avoid heap allocation as much as possible, and use compile time evaluation to predetermine memory requirements
 - The compute graph will be static and storage for batches of training data can be allocated once. 
-- Fuse operations to reduce memory bandwidth requirements
+- Fuse operations to reduce memory bandwidth requirements during inference
 
 ### Acceleration
 - Interface with high performance hardware by compiling Zig code or through codegen
 - Direct compilation depends heavily on the Zig language's support through LLVM
-- Codegen will emit code that will be compiled by an external compiler
-- Calls compiler a C API to compile and run on the device
+- Codegen will emit code that will be compiled by an external compiler and run on the device
 
 ### Run anywhere
 - No dependencies required, unless targeting a specific accelerator
 - The library ships with a Zig backend for tensor operations that only uses builtins
 - If Zig can compile for a device, code written with this library can run on it
-
-### Why Zig?
-
-I tried a few languages (Nim, Cython) but ultimately chose Zig
-
-- **Compile time code execution via comptime** 
-    - Enables simplification, verification, and optimization
-- **SIMD via @Vector**
-    - Simple API for SIMD that is built into the langugage
-- **C interop via @cImport** 
-    - Zig can natively import C/C++ files and compile with them
-    - This is useful for importing neural accelrator C APIs
 
 ## Structure
 
@@ -53,7 +40,7 @@ The library consists of a few prevailing structures: ops, backends, storage, and
 - Enums for unary (map), binary (zip), reduce ops, and others
 - Defines the core set of operations that any backend must implement
 - To make it easy to write a backend, the number of ops is kept small
-- Can be mapped to a function to actually perform the computation
+- Each op maps to a function defined by each backend to actually perform the computation
 
 ### Backends 
 - Provide implementations of ops, and higher level functions that are composed of multiple ops
@@ -64,10 +51,10 @@ For example, when writing a CUDA backend, the ops might be implemented as CUDA k
 
 ### Storage
 - A reserved section of memory that contains the data for a tensor in a 1D format
-- Highly associated with a backend, each backend must provide a Storage implementation
+- Highly coupled to a single backend, each backend must provide a Storage implementation
 - Storage does not exist at compile time, as no memory can be allocated during compile time evaluation
 
-### Tensor
+### Tensor / TensorView
 - Generic type defined by the element type, shape, and strides
 - Contains a backend and the backend's associated storage 
 - Provides a multidimensional view into the 1 dimensional storage using shape and strides
@@ -85,7 +72,7 @@ const Tensor = @import("src/tensor.zig").Tensor;
 const Backend = @import("src/backend.zig").Backend;
 
 pub fn main() !void {
-    // To take advantage of comptime features, all tensor code should be in comptime
+    // All tensor code must be in comptime
     const out = comptime blk: {
         const x1 = fn1();
         const x2 = fn2(x1);
@@ -100,8 +87,8 @@ pub fn main() !void {
     out.graph();
 
     // Initialize the backend which will allow for allocation of tensor storage
-    TestBackend.init(.{});
-    defer TestBackend.deinit();
+    TestBackend.runtime(.{});
+    defer TestBackend.finished();
 
     // Print the storage to show the data
     const eval_out = out.eval();

@@ -1,24 +1,27 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const Tensor = @import("src/tensor.zig").Tensor;
-const Range = @import("src/tensor.zig").Range;
-
+const Tensor = @import("src/tensor.zig");
 const Backend = @import("src/backend.zig").Backend;
 
 const TestBackend = &Backend{ .Zig = .{} };
 
 pub fn main() !void {
-    // To take advantage of comptime features, all tensor code should be in comptime
     const out = comptime blk: {
-        const x1 = Range(TestBackend, f32, 0, 64).view(.{ 4, 4, 4 });
-        const x2 = Range(TestBackend, f32, 64, 128).view(.{ 4, 4, 4 });
-        const x3 = x1.mul(x2).sum(null);
-        break :blk x3;
+        const dim1 = 256;
+        const dim2 = 2 * dim1;
+        const x1 = Tensor.range(TestBackend, f32, 0, dim1 * dim2);
+        const x2 = x1.view(.{ 1, dim1, dim2 });
+        const x3 = x2.neg();
+        const x4 = Tensor.range(TestBackend, f32, dim1 * dim2, 2 * dim1 * dim2);
+        const x5 = x4.view(.{ dim1, 1, dim2 });
+        const x6 = x5.neg();
+        const x7 = x3.mul(x6);
+        const x8 = x7.sum(null);
+        break :blk x8;
     };
 
     TestBackend.init(.{});
-    defer TestBackend.deinit();
-
     out.graph();
-    std.debug.print("\n{any}\n", .{out.eval().storage.?.Zig});
+    const res = out.eval();
+    std.debug.print("{any}\n", .{res.storage.?.Zig.data});
 }

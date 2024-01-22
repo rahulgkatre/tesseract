@@ -1,6 +1,5 @@
 const std = @import("std");
 const comptimePrint = std.fmt.comptimePrint;
-const Tensor = @import("tensor.zig").BaseTensor;
 
 pub fn storageSizeForTensor(comptime ndims: u8, shape: [ndims]usize, strides: [ndims + 1]usize) usize {
     // The storage size is 1 + last index calculated by the strides and shape
@@ -24,6 +23,11 @@ pub fn stridesFromShape(shape: anytype) [shape.len + 1]usize {
     }
     strides[ndims - 1] = 1;
     strides[ndims] = 0;
+    for (0..ndims) |d| {
+        if (shape[d] == 0 or shape[d] == 1) {
+            strides[d] = 0;
+        }
+    }
     return strides;
 }
 pub fn permuteArray(comptime len: u8, array: [len]usize, perm: [len]u8) [len]usize {
@@ -42,7 +46,7 @@ pub fn permuteArray(comptime len: u8, array: [len]usize, perm: [len]u8) [len]usi
     }
     for (used) |u| {
         if (!u) {
-            const msg = "Invalid permutation: " ++ comptimePrint("{any}", .{perm});
+            const msg = comptimePrint("Invalid permutation: {any}", .{perm});
             if (@inComptime()) {
                 @compileError(msg);
             } else {
@@ -57,7 +61,6 @@ pub fn permuteArray(comptime len: u8, array: [len]usize, perm: [len]u8) [len]usi
     return new_array;
 }
 pub fn isContiguous(comptime ndims: u8, strides: [ndims + 1]usize) bool {
-    // Check if the strides are contiguous (decreasing order)
     var prev = strides[0];
     for (strides[1..ndims]) |s| {
         if (s > prev and s > 0) {
@@ -67,4 +70,3 @@ pub fn isContiguous(comptime ndims: u8, strides: [ndims + 1]usize) bool {
     }
     return true;
 }
-// TODO: Add functions to expand along one dim
