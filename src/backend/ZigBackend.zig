@@ -25,7 +25,7 @@ const StorageArena = struct {
 pub fn Storage(comptime dtype: type) type {
     return struct {
         const Self = @This();
-        pub const vec_len = std.simd.suggestVectorSize(dtype) orelse @sizeOf(dtype);
+        pub const vec_len = std.simd.suggestVectorLength(dtype) orelse @sizeOf(dtype);
         pub const vec_alignment = @alignOf(@Vector(vec_len, dtype));
         data: []align(vec_alignment) dtype,
         size: usize,
@@ -312,13 +312,7 @@ pub inline fn zip(_: *const ZigBackend, comptime op: ops.ZipOp, a_ptr: anytype, 
     }
 }
 
-pub inline fn reduce(
-    _: *const ZigBackend,
-    comptime op: ops.ReduceOp,
-    x_ptr: anytype,
-    comptime dim: ?u8,
-    out: *@TypeOf(x_ptr.*).Reduce(dim),
-) void {
+pub inline fn reduce(_: *const ZigBackend, comptime op: ops.ReduceOp, x_ptr: anytype, comptime dim: ?u8, out: *@TypeOf(x_ptr.*).Reduce(dim)) void {
     const dtype: type = @TypeOf(x_ptr.*).dtype;
     const ndims: u8 = @TypeOf(x_ptr.*).ndims;
     const shape: [ndims]usize = @TypeOf(x_ptr.*).shape;
