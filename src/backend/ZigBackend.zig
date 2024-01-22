@@ -197,7 +197,12 @@ fn getCastFn(comptime old_dtype: type, comptime new_dtype: type) CastFn(old_dtyp
     }.cast;
 }
 
-pub inline fn cast(_: *const ZigBackend, comptime new_dtype: type, x_ptr: anytype, out: *@TypeOf(x_ptr.*).Cast(new_dtype)) void {
+pub inline fn cast(
+    _: *const ZigBackend,
+    comptime new_dtype: type,
+    x_ptr: anytype,
+    out: *@TypeOf(x_ptr.*).Cast(new_dtype),
+) void {
     const castFn = getCastFn(@TypeOf(x_ptr.*).dtype, new_dtype);
     const _x = x_ptr.storage.?.Zig.data;
     var _out = out.storage.?.Zig.data;
@@ -262,7 +267,13 @@ fn getZipFn(comptime zip_op: ops.ZipOp, comptime dtype: type) ZipFn(zip_op, dtyp
         else => @compileError("Not implemented"),
     };
 }
-pub inline fn zip(_: *const ZigBackend, comptime op: ops.ZipOp, a_ptr: anytype, b_ptr: anytype, out: *@TypeOf(a_ptr.*).Broadcast(@TypeOf(b_ptr.*))) void {
+pub inline fn zip(
+    _: *const ZigBackend,
+    comptime op: ops.ZipOp,
+    a_ptr: anytype,
+    b_ptr: anytype,
+    out: *@TypeOf(a_ptr.*).Broadcast(@TypeOf(b_ptr.*)),
+) void {
     const zip_fn = getZipFn(op, @TypeOf(a_ptr.*).dtype);
     const dtype: type = @TypeOf(a_ptr.*).dtype;
     const storage_type = Storage(dtype);
@@ -312,7 +323,13 @@ pub inline fn zip(_: *const ZigBackend, comptime op: ops.ZipOp, a_ptr: anytype, 
     }
 }
 
-pub inline fn reduce(_: *const ZigBackend, comptime op: ops.ReduceOp, x_ptr: anytype, comptime dim: ?u8, out: *@TypeOf(x_ptr.*).Reduce(dim)) void {
+pub inline fn reduce(
+    _: *const ZigBackend,
+    comptime op: ops.ReduceOp,
+    x_ptr: anytype,
+    comptime dim: ?u8,
+    out: *@TypeOf(x_ptr.*).Reduce(dim),
+) void {
     const dtype: type = @TypeOf(x_ptr.*).dtype;
     const ndims: u8 = @TypeOf(x_ptr.*).ndims;
     const shape: [ndims]usize = @TypeOf(x_ptr.*).shape;

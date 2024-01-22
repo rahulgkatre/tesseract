@@ -30,8 +30,7 @@ pub fn finished() void {
 }
 
 pub fn constant(backend: *const Backend, comptime dtype: type, comptime value: dtype) Tensor(dtype, .{1}) {
-    const data: [1]dtype = [_]dtype{value};
-    return Tensor(dtype, .{1}).fromData(backend, data[0..]);
+    return Tensor(dtype, .{1}).full(backend, value);
 }
 
 pub fn range(backend: *const Backend, comptime dtype: type, comptime start: dtype, comptime stop: dtype) Tensor(dtype, .{stop - start}) {
@@ -63,7 +62,7 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         pub const strides: [ndims + 1]usize = _strides;
         pub const size = utils.storageSizeForTensor(ndims, shape, strides);
         pub const str = comptimePrint(
-            "Tensor({any},{any})",
+            "Tensor{{{any},{any}}}",
             .{ dtype, shape },
         );
 
@@ -93,9 +92,9 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 }
                 fn graph(self: *const Self, id: usize) usize {
                     if (@inComptime()) {
-                        @compileLog(comptimePrint("tensor{d} = {s}\n", .{ id, self.str }));
+                        @compileLog(comptimePrint("t{d} = {s}\n", .{ id, self.str }));
                     } else {
-                        std.debug.print("tensor{d} = {s}\n", .{ id, self.str });
+                        std.debug.print("t{d} = {s}\n", .{ id, self.str });
                     }
                     return id + 1;
                 }
@@ -121,9 +120,9 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             const impl = struct {
                 fn graph(self: *const Self, id: usize) usize {
                     if (@inComptime()) {
-                        @compileLog(comptimePrint("tensor{d} = FromData {s}", .{ id, self.str }));
+                        @compileLog(comptimePrint("t{d} = FromData {s}", .{ id, self.str }));
                     } else {
-                        std.debug.print("tensor{d} = FromData {s}\n", .{ id, self.str });
+                        std.debug.print("t{d} = FromData {s}\n", .{ id, self.str });
                     }
                     return id + 1;
                 }
@@ -138,9 +137,9 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             const impl = struct {
                 fn graph(self: *const Self, id: usize) usize {
                     if (@inComptime()) {
-                        @compileLog(comptimePrint("tensor{d} = Full({any}) {s}", .{ id, value, self.str }));
+                        @compileLog(comptimePrint("t{d} = Full({any}) {s}", .{ id, value, self.str }));
                     } else {
-                        std.debug.print("tensor{d} = Full({any}) {s}\n", .{ id, value, self.str });
+                        std.debug.print("t{d} = Full({any}) {s}\n", .{ id, value, self.str });
                     }
                     return id + 1;
                 }
@@ -229,44 +228,44 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             );
         }
         pub fn permute(parent: *const Self, comptime perm: [ndims]u8) Permute(perm) {
-            const Output = Permute(perm);
+            const Out = Permute(perm);
             const impl = struct {
-                fn eval(out: *Output) *Output {
+                fn eval(out: *Out) *Out {
                     out.storage = @call(.always_inline, @TypeOf(parent.*).eval, .{parent}).storage;
                     return out;
                 }
-                fn graph(_: *const Output, id: usize) usize {
+                fn graph(_: *const Out, id: usize) usize {
                     const next_id = @call(.auto, parent.graphFn, .{ parent, id + 1 });
                     if (@inComptime()) {
-                        @compileLog(comptimePrint("tensor{d} = Permute({any}) tensor{d}", .{ id, perm, id + 1 }));
+                        @compileLog(comptimePrint("t{d} = Permute({any}) t{d}", .{ id, perm, id + 1 }));
                     } else {
-                        std.debug.print("tensor{d} = Permute({any}) tensor{d}\n", .{ id, perm, id + 1 });
+                        std.debug.print("t{d} = Permute({any}) t{d}\n", .{ id, perm, id + 1 });
                     }
                     return next_id;
                 }
             };
-            return Output.result(parent.backend, null, impl.eval, impl.graph);
+            return Out.result(parent.backend, null, impl.eval, impl.graph);
         }
         pub fn view(parent: *const Self, comptime new_shape: anytype) Tensor(dtype, new_shape) {
-            const Output = Tensor(dtype, new_shape);
-            std.debug.assert(Output.size == size);
+            const Out = Tensor(dtype, new_shape);
+            std.debug.assert(Out.size == size);
             if (parent.isContiguous()) {
                 const impl = struct {
-                    fn eval(out: *Output) *Output {
+                    fn eval(out: *Out) *Out {
                         out.storage = @call(.always_inline, @TypeOf(parent.*).eval, .{parent}).storage;
                         return out;
                     }
-                    fn graph(_: *const Output, id: usize) usize {
+                    fn graph(_: *const Out, id: usize) usize {
                         const next_id = @call(.auto, parent.graphFn, .{ parent, id + 1 });
                         if (@inComptime()) {
-                            @compileLog(comptimePrint("tensor{d} = View({any}) tensor{d}", .{ id, new_shape, id + 1 }));
+                            @compileLog(comptimePrint("t{d} = View({any}) t{d}", .{ id, new_shape, id + 1 }));
                         } else {
-                            std.debug.print("tensor{d} = View({any}) tensor{d}\n", .{ id, new_shape, id + 1 });
+                            std.debug.print("t{d} = View({any}) t{d}\n", .{ id, new_shape, id + 1 });
                         }
                         return next_id;
                     }
                 };
-                return Output.result(parent.backend, null, impl.eval, impl.graph);
+                return Out.result(parent.backend, null, impl.eval, impl.graph);
             } else {
                 @compileError("Must be contiguous to view");
             }
