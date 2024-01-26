@@ -371,14 +371,14 @@ pub inline fn reduce(
     } else {
         const stride = strides[dim.?];
         const dimsize = shape[dim.?];
-        for (comptime 0..@TypeOf(out.*).size) |out_i| {
-            const offset = x_ptr.idxToPos(out.posToIdx(out_i));
-            var acc = _x[offset];
-            for (comptime 1..dimsize) |i| {
-                const x_i = offset + i * stride;
-                acc = @call(.always_inline, zip_fn, .{ acc, _x[x_i] });
+        for (comptime 0..@TypeOf(out.*).size) |i| {
+            const base = x_ptr.idxToPos(out.posToIdx(i));
+            var acc = _x[base];
+            for (comptime 1..dimsize) |j| {
+                const k = base + j * stride;
+                acc = @call(.always_inline, zip_fn, .{ acc, _x[k] });
             }
-            _out[out_i] = acc;
+            _out[i] = acc;
         }
     }
 }

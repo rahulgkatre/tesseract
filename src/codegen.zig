@@ -1,4 +1,5 @@
 const ZigCodegen = @import("codegen/ZigCodegen.zig");
+const ops = @import("ops.zig");
 
 pub const CodegenTypes = enum {
     Zig,
@@ -6,10 +7,10 @@ pub const CodegenTypes = enum {
 
 pub const Codegen = union(CodegenTypes) {
     Zig: ZigCodegen,
+    const Self = @This();
 };
 
-// TODO: I think these expression codegen functions can be moved to codegen.zig
-// All programming languages we would target support the same arithmetic expressions
+// All programming languages we would target support the same arithmetic expressions and formatting
 pub fn idxToPos(comptime tensor_type: type) void {
     _ = tensor_type;
 }
@@ -19,6 +20,8 @@ pub fn broadcastIdxToPos(comptime tensor_type1: type, comptime tensor_type2: typ
     _ = tensor_type1;
 }
 
-pub fn posToIdx(comptime tensor_type: type) void {
+pub fn posToIdx(
+    comptime tensor_type: type,
+) void {
     _ = tensor_type;
 }
