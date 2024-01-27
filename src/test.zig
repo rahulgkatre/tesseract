@@ -187,3 +187,72 @@ test "as_type" {
     };
     runEval("as_type", out);
 }
+
+// TODO
+// Eventually these tests should be called through eval() with CodegenBackend
+// but still output the same code
+
+test "cast codegen" {
+    const actual = comptime gen: {
+        var t1 = tensor.range(TestBackend, f32, 4.0, 16.0);
+        var t2 = t1.cast(i32);
+        const cg = @import("codegen/ZigCodegen.zig"){};
+        break :gen cg.castCodegen(i32, @constCast(&t1), 1, @constCast(&t2), 0);
+    };
+    const expected =
+        \\for (0..12) |i| {
+        \\    t0[i] = @intFromFloat(t1[i]);  
+        \\}
+    ;
+    try expectEqual(expected[0..expected.len].*, actual[0..actual.len].*);
+}
+
+test "map codegen" {
+    const actual = comptime gen: {
+        var t1 = tensor.range(TestBackend, f32, 4.0, 16.0);
+        var t2 = t1.neg();
+        const cg = @import("codegen/ZigCodegen.zig"){};
+        break :gen cg.mapCodegen(.Neg, @constCast(&t1), 1, @constCast(&t2), 0);
+    };
+    const expected =
+        \\for (0..12) |i| {
+        \\    t0[i] = -(t1[i]);  
+        \\}
+    ;
+    try expectEqual(expected[0..expected.len].*, actual[0..actual.len].*);
+}
+
+test "zip no broadcast codegen" {
+    const actual = comptime gen: {
+        var t1 = tensor.range(TestBackend, f32, 4.0, 16.0);
+        var t2 = tensor.range(TestBackend, f32, 4.0, 16.0);
+        var t3 = t1.add(t2);
+        const cg = @import("codegen/ZigCodegen.zig"){};
+        break :gen cg.zipCodegen(.Add, @constCast(&t1), 1, @constCast(&t2), 2, @constCast(&t3), 0);
+    };
+    const expected =
+        \\for (0..12) |i| {
+        \\    t0[i] = ((t1[i]) + (t2[i]));  
+        \\}
+    ;
+    try expectEqual(expected[0..expected.len].*, actual[0..actual.len].*);
+}
+
+test "reduce all codegen" {
+    const actual = comptime gen: {
+        var t1 = tensor.range(TestBackend, f32, 4.0, 16.0);
+        var t2 = t1.sum(null);
+        const cg = @import("codegen/ZigCodegen.zig"){};
+        break :gen cg.reduceCodegen(.Sum, @constCast(&t1), 1, null, @constCast(&t2), 0);
+    };
+    const expected =
+        \\{
+        \\    var acc = t1[0];
+        \\    for (1..12) |i| {
+        \\        acc = ((acc) + (t1[i]));
+        \\    }
+        \\    t0[0] = acc;
+        \\}
+    ;
+    try expectEqual(expected[0..expected.len].*, actual[0..actual.len].*);
+}

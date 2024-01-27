@@ -8,18 +8,18 @@ const CodegenBackend = @import("backend/CodegenBackend.zig");
 
 pub const BackendTypes = enum {
     Zig,
-    Codegen,
+    // Codegen,
 };
 
 pub const Backend = union(BackendTypes) {
     Zig: ZigBackend,
-    Codegen: CodegenBackend,
+    // Codegen: CodegenBackend,
 
     pub fn Storage(comptime dtype: type) type {
         return union(BackendTypes) {
             const Self = @This();
             Zig: ZigBackend.Storage(dtype),
-            Codegen: CodegenBackend.Storage(dtype),
+            // Codegen: void,
 
             pub fn fill(self: *Self, value: dtype) void {
                 switch (self.*) {

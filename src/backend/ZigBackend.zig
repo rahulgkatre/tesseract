@@ -149,15 +149,7 @@ pub inline fn map(_: *const ZigBackend, comptime op: ops.MapOp, x_ptr: anytype, 
     }
 }
 
-fn CastFn(comptime old_dtype: type, comptime new_dtype: type) type {
-    return @TypeOf(struct {
-        inline fn cast(_: old_dtype) new_dtype {
-            unreachable;
-        }
-    }.cast);
-}
-
-fn getCastFn(comptime old_dtype: type, comptime new_dtype: type) CastFn(old_dtype, new_dtype) {
+fn getCastFn(comptime old_dtype: type, comptime new_dtype: type) (fn (old_dtype) callconv(.Inline) new_dtype) {
     const old_info = @typeInfo(old_dtype);
     const new_info = @typeInfo(new_dtype);
     const err_msg = std.fmt.comptimePrint("Cannot cast dtype {} to {}", .{ old_dtype, new_dtype });
