@@ -43,7 +43,7 @@ inline fn Func(comptime op: ops.Op) FuncType(op) {
         },
         .ZipOp => struct {
             inline fn f(self: anytype, other: anytype) @TypeOf(self.*).Broadcast(@TypeOf(other)) {
-                return zip(self, op.ZipOp, @constCast(&other));
+                return zip(self, op.ZipOp, &other);
             }
         },
         .ReduceOp => struct {
@@ -59,7 +59,7 @@ inline fn Func(comptime op: ops.Op) FuncType(op) {
 inline fn mapZipFunc(comptime map_op: ops.MapOp, comptime zip_op: ops.ZipOp) FuncType(.{ .ZipOp = zip_op }) {
     return struct {
         inline fn f(a_ptr: anytype, b: anytype) @TypeOf(a_ptr.*).Broadcast(@TypeOf(b)) {
-            return zip(@constCast(&map(a_ptr, map_op)), zip_op, b);
+            return zip(&map(a_ptr, map_op), zip_op, b);
         }
     }.f;
 }
@@ -67,7 +67,7 @@ inline fn mapZipFunc(comptime map_op: ops.MapOp, comptime zip_op: ops.ZipOp) Fun
 inline fn zipMapFunc(comptime map_op: ops.MapOp, comptime zip_op: ops.ZipOp) FuncType(.{ .MapOp = map_op }) {
     return struct {
         inline fn f(a_ptr: anytype, b: anytype) @TypeOf(a_ptr.*).Broadcast(@TypeOf(b)) {
-            return map(@constCast(&zip(a_ptr, zip_op, b)), map_op);
+            return map(&zip(a_ptr, zip_op, b), map_op);
         }
     }.f;
 }
@@ -75,7 +75,7 @@ inline fn zipMapFunc(comptime map_op: ops.MapOp, comptime zip_op: ops.ZipOp) Fun
 inline fn composeFunc(comptime map_op_f: ops.MapOp, comptime map_op_g: ops.MapOp) FuncType(.{ .MapOp = map_op_f }) {
     return struct {
         inline fn f(a_ptr: anytype) @TypeOf(a_ptr.*) {
-            return map(@constCast(&map(a_ptr, map_op_g)), map_op_f);
+            return map(&map(a_ptr, map_op_g), map_op_f);
         }
     }.f;
 }

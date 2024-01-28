@@ -17,7 +17,6 @@ fn runEval(comptime test_name: anytype, comptime out: anytype) void {
     TestBackend.runtime(.{});
     if (show_graph) {
         std.debug.print("\nGRAPH\n", .{});
-        out.graph();
     }
     const out_eval = out.eval();
     if (eval_logging) {
@@ -119,15 +118,15 @@ test "zip reduce" {
 
 test "lazy with realization" {
     const NewBackend = &backend.Backend{ .Zig = .{} };
-    const tensor1 = comptime Tensor(i32, .{ 2, 3, 4 }).full(NewBackend, 0);
+    const tensor1 = comptime Tensor(i32, .{ 2, 3, 4 }).full(NewBackend, 5);
     NewBackend.runtime(.{});
     defer NewBackend.finished();
 
-    const runtime_tensor = tensor1.runtime(0);
-    try expectEqual(true, runtime_tensor.storage != null);
-    std.debug.print("{any}", .{runtime_tensor.storage.?.Zig.data.len});
-    try expectEqual(true, runtime_tensor.storage.?.Zig.data.len == 24);
-    try expectEqual([_]i32{0} ** 24, runtime_tensor.storage.?.Zig.data[0..24].*);
+    const tensor_eval = tensor1.eval();
+    try expectEqual(true, tensor_eval.storage != null);
+    std.debug.print("{any}", .{tensor_eval.storage.?.Zig.data.len});
+    try expectEqual(true, tensor_eval.storage.?.Zig.data.len == 24);
+    try expectEqual([_]i32{5} ** 24, tensor_eval.storage.?.Zig.data[0..24].*);
 }
 
 fn fn1() Tensor(i32, .{ 2, 1, 4 }) {
@@ -194,7 +193,7 @@ test "cast codegen" {
         var t1 = tensor.range(TestBackend, f32, 4.0, 16.0);
         var t2 = t1.cast(i32);
         const cg = @import("codegen/ZigCodegen.zig"){};
-        break :gen cg.cast(i32, @constCast(&t1), 1, @constCast(&t2), 0);
+        break :gen cg.cast(i32, &t1, 1, @constCast(&t2), 0);
     };
     _ = actual;
     const expected =
@@ -211,7 +210,7 @@ test "map codegen" {
         var t1 = tensor.range(TestBackend, f32, 4.0, 16.0);
         var t2 = t1.neg();
         const cg = @import("codegen/ZigCodegen.zig"){};
-        break :gen cg.map(.Neg, @constCast(&t1), 1, @constCast(&t2), 0);
+        break :gen cg.map(.Neg, &t1, 1, @constCast(&t2), 0);
     };
     _ = actual;
     const expected =
@@ -229,7 +228,7 @@ test "zip no broadcast codegen" {
         var t2 = tensor.range(TestBackend, f32, 4.0, 16.0);
         var t3 = t1.add(t2);
         const cg = @import("codegen/ZigCodegen.zig"){};
-        break :gen cg.zip(.Add, @constCast(&t1), 1, @constCast(&t2), 2, @constCast(&t3), 0);
+        break :gen cg.zip(.Add, &t1, 1, &t2, 2, @constCast(&t3), 0);
     };
     _ = actual;
     const expected =
@@ -246,7 +245,7 @@ test "reduce all codegen" {
         var t1 = tensor.range(TestBackend, f32, 4.0, 16.0);
         var t2 = t1.sum(null);
         const cg = @import("codegen/ZigCodegen.zig"){};
-        break :gen cg.reduce(.Sum, @constCast(&t1), 1, null, @constCast(&t2), 0);
+        break :gen cg.reduce(.Sum, &t1, 1, null, @constCast(&t2), 0);
     };
     _ = actual;
     const expected =

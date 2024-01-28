@@ -5,12 +5,16 @@ const utils = @import("utils.zig");
 const ops = @import("ops.zig");
 const Backend = @import("backend.zig").Backend;
 
+pub var debug = true;
+
 // TensorArena provides an allocator for the tensor metadata
 // No actual elements of the tensor are stored by this allocator
 pub const TensorArena = struct {
     var global_arena: ?std.heap.ArenaAllocator = null;
+    var runtime_tensor_cache: std.AutoHashMap(usize, usize) = undefined;
     fn init(arena: std.heap.ArenaAllocator) void {
         global_arena = arena;
+        runtime_tensor_cache = std.AutoHashMap(usize, usize).init(global_arena.?.allocator());
     }
     fn deinit() void {
         global_arena.?.deinit();
@@ -18,6 +22,24 @@ pub const TensorArena = struct {
     }
     fn allocator() std.mem.Allocator {
         return global_arena.?.allocator();
+    }
+    fn convert_to_runtime(comptime tensor_type: type, comptime_tensor_ptr: anytype, id: usize) *tensor_type {
+        const runtime_tensor_ptr = runtime_tensor_cache.get(@intFromPtr(comptime_tensor_ptr));
+        if (runtime_tensor_ptr != null) {
+            return @ptrFromInt(runtime_tensor_ptr.?);
+        }
+        const runtime_tensor: *tensor_type = TensorArena.allocator().create(tensor_type) catch unreachable;
+        if (debug) {
+            std.debug.print("Comptime tensor {s}@{d} -> Runtime tensor {s}@{d}\n", .{ comptime_tensor_ptr.str, @intFromPtr(comptime_tensor_ptr), comptime_tensor_ptr.str, @intFromPtr(runtime_tensor) });
+        }
+        runtime_tensor.* = .{
+            .id = id,
+            .backend = comptime_tensor_ptr.backend,
+            .storage = comptime_tensor_ptr.backend.storage(tensor_type.dtype, tensor_type.size),
+            .evalFn = comptime_tensor_ptr.evalFn,
+        };
+        runtime_tensor_cache.putNoClobber(@intFromPtr(comptime_tensor_ptr), @intFromPtr(runtime_tensor)) catch unreachable;
+        return runtime_tensor;
     }
 };
 
@@ -68,6 +90,7 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         );
 
         id: ?usize = null,
+        evaluated: bool = false,
         ndims: u8 = ndims,
         shape: [ndims]usize = shape,
         size: usize = size,
@@ -78,36 +101,27 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
 
         // Callbacks for recursive traversal of compute graph
         evalFn: *const fn (self: *Self) *Self,
-        loadDataFn: *const fn (self: *Self) void,
-        graphFn: *const fn (self: *const Self, id: usize) usize,
 
         fn init(
             backend: *const Backend,
             storage: ?*Backend.Storage(dtype),
             comptime evalFn: ?*const fn (self: *Self) *Self,
-            comptime loadDataFn: ?*const fn (self: *Self) void,
-            comptime graphFn: ?*const fn (self: *const Self, id: usize) usize,
         ) Self {
             const impl = struct {
-                var out_id: ?usize = null;
                 fn eval(self: *Self) *Self {
+                    if (!self.evaluated) {
+                        if (debug) {
+                            std.debug.print("t{d} = {s}\n", .{ self.id.?, self.str });
+                        }
+                    }
+                    self.evaluated = true;
                     return self;
                 }
-                fn graph(self: *const Self, id: usize) usize {
-                    if (out_id == null) {
-                        out_id = id;
-                        std.debug.print("t{d} = {s}\n", .{ id, self.str });
-                    }
-                    return out_id.?;
-                }
-                fn loadData(_: *Self) void {}
             };
             return .{
                 .backend = backend,
                 .storage = storage,
                 .evalFn = evalFn orelse impl.eval,
-                .loadDataFn = loadDataFn orelse impl.loadData,
-                .graphFn = graphFn orelse impl.graph,
             };
         }
 
@@ -115,37 +129,35 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         // Not a slice because this guarantees that the size requirement is met and verified in comptime
         pub fn fromData(backend: *const Backend, data: *const [size]dtype) Self {
             const impl = struct {
-                fn graph(self: *const Self, id: usize) usize {
-                    if (@inComptime()) {
-                        @compileLog(comptimePrint("t{d} = FromData {s}", .{ id, self.str }));
-                    } else {
-                        std.debug.print("t{d} = FromData {s}\n", .{ id, self.str });
+                fn eval(self: *Self) *Self {
+                    if (!self.evaluated) {
+                        self.storage.?.load(data);
+                        if (debug) {
+                            std.debug.print("t{d} = FromData {s}\n", .{ self.id.?, self.str });
+                        }
                     }
-                    return id;
-                }
-                fn loadData(self: *Self) void {
-                    self.storage.?.load(data);
+                    self.evaluated = true;
+                    return self;
                 }
             };
-            return init(backend, null, null, impl.loadData, impl.graph);
+            return init(backend, null, impl.eval);
         }
 
         // Fill a tensor with a value
         pub fn full(backend: *const Backend, comptime value: dtype) Self {
             const impl = struct {
-                var out_id: ?usize = null;
-                fn graph(self: *const Self, id: usize) usize {
-                    if (out_id == null) {
-                        out_id = id;
-                        std.debug.print("t{d} = Full({any}) {s}\n", .{ id, value, self.str });
+                fn eval(self: *Self) *Self {
+                    if (!self.evaluated) {
+                        self.storage.?.fill(value);
+                        if (debug) {
+                            std.debug.print("t{d} = Full({any}) {s}\n", .{ self.id.?, value, self.str });
+                        }
                     }
-                    return out_id.?;
-                }
-                fn loadData(self: *Self) void {
-                    self.storage.?.fill(value);
+                    self.evaluated = true;
+                    return self;
                 }
             };
-            return init(backend, null, null, impl.loadData, impl.graph);
+            return init(backend, null, impl.eval);
         }
 
         // Utility function for initializing a tensor which is the result of an operation
@@ -155,32 +167,17 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             backend: *const Backend,
             storage: ?*Backend.Storage(dtype),
             comptime evalFn: ?*const fn (self: *Self) *Self,
-            comptime graphFn: ?*const fn (self: *const Self, id: usize) usize,
         ) Self {
-            return init(backend, storage, evalFn, null, graphFn);
+            return init(backend, storage, evalFn);
         }
 
         // TODO: Might not be necessary if codegen is the only way to run the tensor code
-        pub fn runtime(self: *const Self, id: ?usize) *Self {
-            const runtime_tensor: *Self = TensorArena.allocator().create(Self) catch unreachable;
-            runtime_tensor.* = .{
-                .id = id orelse 0,
-                .backend = self.backend,
-                .storage = self.backend.storage(dtype, size),
-                .evalFn = self.evalFn,
-                .loadDataFn = self.loadDataFn,
-                .graphFn = self.graphFn,
-            };
-            self.loadDataFn(runtime_tensor);
-            return runtime_tensor;
+        pub fn runtime(self: *const Self, id: usize) *Self {
+            return TensorArena.convert_to_runtime(Self, self, id);
         }
 
         pub fn eval(comptime self: *const Self) *Self {
-            return @call(.auto, self.evalFn, .{self.runtime(null)});
-        }
-
-        pub fn graph(self: *const Self) void {
-            _ = self.graphFn(self, 0);
+            return self.evalFn(self.runtime(0));
         }
 
         pub fn isContiguous(_: *const Self) bool {
@@ -225,52 +222,48 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 utils.permuteArray(ndims + 1, strides, strides_perm),
             );
         }
-        pub fn permute(parent: *const Self, comptime perm: [ndims]u8) Permute(perm) {
+        pub fn permute(self: *const Self, comptime perm: [ndims]u8) Permute(perm) {
             const Out = Permute(perm);
             const impl = struct {
-                var out_id: ?usize = null;
                 fn eval(out: *Out) *Out {
-                    out.storage = @call(.always_inline, @TypeOf(parent.*).eval, .{parent}).storage;
+                    if (!out.evaluated) {
+                        const self_eval = self.eval();
+                        out.storage = self_eval.storage;
+                        out.evaluated = true;
+                        if (debug) {
+                            std.debug.print("t{d} = Permute({any}) t{d}\n", .{ out.id.?, perm, self_eval.id.? });
+                        }
+                    }
                     return out;
                 }
-                fn graph(_: *const Out, id: usize) usize {
-                    const parent_id = @call(.auto, parent.graphFn, .{ parent, id });
-                    if (out_id == null) {
-                        out_id = parent_id + 1;
-                        std.debug.print("t{d} = Permute({any}) t{d}\n", .{ out_id.?, perm, parent_id });
-                    }
-                    return out_id.?;
-                }
             };
-            return Out.result(parent.backend, null, impl.eval, impl.graph);
+            return Out.result(self.backend, null, impl.eval);
         }
-        pub fn view(parent: *const Self, comptime new_shape: anytype) Tensor(dtype, new_shape) {
+        pub fn view(self: *const Self, comptime new_shape: anytype) Tensor(dtype, new_shape) {
             const Out = Tensor(dtype, new_shape);
             std.debug.assert(Out.size == size);
-            if (parent.isContiguous()) {
+            if (self.isContiguous()) {
                 const impl = struct {
-                    var out_id: ?usize = null;
                     fn eval(out: *Out) *Out {
-                        out.storage = @call(.always_inline, @TypeOf(parent.*).eval, .{parent}).storage;
+                        if (!out.evaluated) {
+                            const self_eval = self.eval();
+                            out.storage = self_eval.storage;
+                            out.evaluated = true;
+                            if (debug) {
+                                std.debug.print("t{d} = View({any}) t{d}\n", .{ out.id.?, new_shape, self_eval.id.? });
+                            }
+                        }
                         return out;
                     }
-                    fn graph(_: *const Out, id: usize) usize {
-                        if (out_id == null) {
-                            const parent_id = @call(.auto, parent.graphFn, .{ parent, id });
-                            out_id = parent_id + 1;
-                            std.debug.print("t{d} = Permute({any}) t{d}\n", .{ out_id.?, new_shape, parent_id });
-                        }
-                        return out_id.?;
-                    }
                 };
-                return Out.result(parent.backend, null, impl.eval, impl.graph);
+                return Out.result(self.backend, null, impl.eval);
             } else {
                 @compileError("Must be contiguous to view");
             }
         }
 
         pub fn asStrided(self: *const Self, comptime new_shape: anytype, comptime new_strides: anytype) AsStrided(dtype, new_shape, new_strides) {
-            return AsStrided(dtype, new_shape, new_strides).result(self.backend, self.storage, null, null);
+            return AsStrided(dtype, new_shape, new_strides).result(self.backend, self.storage, null);
         }
 
         pub fn Cast(comptime new_dtype: type) type {
