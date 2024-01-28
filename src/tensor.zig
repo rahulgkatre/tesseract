@@ -50,7 +50,8 @@ fn AsStrided(comptime dtype: type, comptime shape: anytype, comptime strides: an
     return TensorView(dtype, shape.len, shape, strides);
 }
 
-// A Tensor is actually a TensorView, this is probably the best name for it
+// A Tensor is actually a TensorView, this is probably the best name for it because
+// its generic parameters directly affect how data is accessed (viewed)
 // While TensorView provides the API, the constructor is not the friendliest
 // hence there is a simpler Tensor constructor
 fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndims]usize, comptime _strides: [_ndims + 1]usize) type {
@@ -66,6 +67,7 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             .{ dtype, shape },
         );
 
+        id: ?usize = null,
         ndims: u8 = ndims,
         shape: [ndims]usize = shape,
         size: usize = size,
@@ -75,20 +77,20 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         storage: ?*Backend.Storage(dtype),
 
         // Callbacks for recursive traversal of compute graph
-        evalFn: *const fn (self: *Self) *Self,
+        evalFn: *const fn (self: *Self, id: usize) *Self,
         loadDataFn: *const fn (self: *Self) void,
         graphFn: *const fn (self: *const Self, id: usize) usize,
 
         fn init(
             backend: *const Backend,
             storage: ?*Backend.Storage(dtype),
-            comptime evalFn: ?*const fn (self: *Self) *Self,
+            comptime evalFn: ?*const fn (self: *Self, id: usize) *Self,
             comptime loadDataFn: ?*const fn (self: *Self) void,
             comptime graphFn: ?*const fn (self: *const Self, id: usize) usize,
         ) Self {
             const impl = struct {
-                fn eval(self: *Self) *Self {
-                    return self.runtime();
+                fn eval(self: *Self, id: usize) *Self {
+                    return self.runtime(id);
                 }
                 fn graph(self: *const Self, id: usize) usize {
                     if (@inComptime()) {
@@ -109,13 +111,8 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             };
         }
 
-        pub fn input(
-            backend: *const Backend,
-            storage: ?*Backend.Storage(dtype),
-        ) Self {
-            return init(backend, storage, null, null, null);
-        }
-
+        // Load the tensor's data from an array pointer
+        // Not a slice because this guarantees that the size requirement is met and verified in comptime
         pub fn fromData(backend: *const Backend, data: *const [size]dtype) Self {
             const impl = struct {
                 fn graph(self: *const Self, id: usize) usize {
@@ -133,6 +130,7 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             return init(backend, null, null, impl.loadData, impl.graph);
         }
 
+        // Fill a tensor with a value
         pub fn full(backend: *const Backend, comptime value: dtype) Self {
             const impl = struct {
                 fn graph(self: *const Self, id: usize) usize {
@@ -150,28 +148,25 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             return init(backend, null, null, impl.loadData, impl.graph);
         }
 
+        // Utility function for initializing a tensor which is the result of an operation
+        // It will share the same backend but has callbacks provided by the backend
+        // that link it to the rest of the computation graph
         pub fn result(
             backend: *const Backend,
             storage: ?*Backend.Storage(dtype),
-            comptime evalFn: ?*const fn (self: *Self) *Self,
+            comptime evalFn: ?*const fn (self: *Self, id: usize) *Self,
             comptime graphFn: ?*const fn (self: *const Self, id: usize) usize,
         ) Self {
             return init(backend, storage, evalFn, null, graphFn);
         }
 
-        pub fn eval(comptime self: *const Self) *Self {
-            return @call(.always_inline, self.evalFn, .{self.runtime()});
-        }
-
-        pub fn graph(self: *const Self) void {
-            _ = self.graphFn(self, 0);
-        }
-
-        pub fn runtime(self: *const Self) *Self {
+        // TODO: Might not be necessary if codegen is the only way to run the tensor code
+        pub fn runtime(self: *const Self, id: usize) *Self {
             var runtime_tensor: *Self = undefined;
             if (self.storage == null) {
                 runtime_tensor = TensorArena.allocator().create(Self) catch unreachable;
                 runtime_tensor.* = .{
+                    .id = id,
                     .backend = self.backend,
                     .storage = self.backend.storage(dtype, size),
                     .evalFn = self.evalFn,
@@ -183,6 +178,14 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 runtime_tensor = @constCast(self);
             }
             return runtime_tensor;
+        }
+
+        pub fn eval(comptime self: *const Self) *Self {
+            return @call(.auto, self.evalFn, .{ self.runtime(0), 0 });
+        }
+
+        pub fn graph(self: *const Self) void {
+            _ = self.graphFn(self, 0);
         }
 
         pub fn isContiguous(_: *const Self) bool {
@@ -230,7 +233,8 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         pub fn permute(parent: *const Self, comptime perm: [ndims]u8) Permute(perm) {
             const Out = Permute(perm);
             const impl = struct {
-                fn eval(out: *Out) *Out {
+                fn eval(out: *Out, id: usize) *Out {
+                    _ = id;
                     out.storage = @call(.always_inline, @TypeOf(parent.*).eval, .{parent}).storage;
                     return out;
                 }
@@ -251,7 +255,8 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             std.debug.assert(Out.size == size);
             if (parent.isContiguous()) {
                 const impl = struct {
-                    fn eval(out: *Out) *Out {
+                    fn eval(out: *Out, id: usize) *Out {
+                        _ = id;
                         out.storage = @call(.always_inline, @TypeOf(parent.*).eval, .{parent}).storage;
                         return out;
                     }
@@ -301,6 +306,7 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 }
                 bc_shape[bc_ndims - i - 1] = if (dim1 == dim2 or dim2 == 1) dim1 else dim2;
             }
+            // Broadcasting can sometimes change the type so the new dtype needs to be specified
             return Tensor(dtype, bc_shape);
         }
 

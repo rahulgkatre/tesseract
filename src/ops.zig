@@ -5,6 +5,10 @@ pub const ZipOp = enum { Add, Mul, Maximum, Mod, Lt, Eq, Xor };
 pub const ReduceOp = enum { Sum, Max };
 
 pub const OpTypes = enum { MapOp, ZipOp, ReduceOp };
-pub const Op = union(OpTypes) { MapOp: MapOp, ZipOp: ZipOp, ReduceOp: ReduceOp };
+pub const Op = union(OpTypes) {
+    MapOp: MapOp,
+    ZipOp: ZipOp,
+    ReduceOp: ReduceOp,
+};
 
 // TODO: Optional: add a comptime hash map to convert op enums to symbols for graph visualiztion

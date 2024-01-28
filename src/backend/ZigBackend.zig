@@ -5,9 +5,6 @@ const ZigBackend = @This();
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-const VectorizationMode = enum { Scalar, Chunked, Automatic };
-const global_vec_mode: VectorizationMode = .Scalar;
-
 const StorageArena = struct {
     var global_arena: std.heap.ArenaAllocator = undefined;
     fn init(arena: std.heap.ArenaAllocator) void {
@@ -117,39 +114,14 @@ pub inline fn map(_: *const ZigBackend, comptime op: ops.MapOp, x_ptr: anytype, 
     const dtype: type = @TypeOf(x_ptr.*).dtype;
     const size: usize = @TypeOf(x_ptr.*).size;
     const storage_type = Storage(dtype);
-    const vec_len: usize = storage_type.vec_len;
-    const num_vecs: usize = comptime @divTrunc(size, vec_len);
-
     const _x: []align(storage_type.vec_alignment) dtype = x_ptr.*.storage.?.Zig.data;
     var _out: []align(storage_type.vec_alignment) dtype = out.storage.?.Zig.data;
-    switch (global_vec_mode) {
-        .Scalar => {
-            for (0..size) |i| {
-                _out[i] = @call(.always_inline, map_fn, .{_x[i]});
-            }
-        },
-        .Chunked => {
-            for (0..num_vecs) |vec_i| {
-                const offset = vec_i * vec_len;
-                @prefetch(_x[offset + vec_len ..], .{ .locality = 0 });
-                const aligned_out: *@Vector(vec_len, dtype) = @alignCast(@ptrCast(_out[offset..][0..vec_len]));
-                aligned_out.* = @call(.always_inline, map_fn, .{@as(*const @Vector(vec_len, dtype), @alignCast(@ptrCast(_x[offset..][0..vec_len]))).*});
-            }
-            inline for (comptime vec_len * num_vecs..size) |i| {
-                _out[i] = @call(.always_inline, map_fn, .{_x[i]});
-            }
-        },
-        .Automatic => {
-            const vec_x = @as(@Vector(size, dtype), _x[0..size].*);
-            const result = @as([]dtype, @constCast(@ptrCast(@as([size]dtype, @call(.always_inline, map_fn, .{vec_x}))[0..])));
-            @memcpy(_out, result);
-            // This emits unaligned (vmovups)
-            // _out[0..size].* = result[0..size].*;
-        },
+    for (0..size) |i| {
+        _out[i] = @call(.always_inline, map_fn, .{_x[i]});
     }
 }
 
-fn getCastFn(comptime old_dtype: type, comptime new_dtype: type) (fn (old_dtype) callconv(.Inline) new_dtype) {
+fn getCastFn(comptime old_dtype: type, comptime new_dtype: type) (fn (_: old_dtype) callconv(.Inline) new_dtype) {
     const old_info = @typeInfo(old_dtype);
     const new_info = @typeInfo(new_dtype);
     const err_msg = std.fmt.comptimePrint("Cannot cast dtype {} to {}", .{ old_dtype, new_dtype });
@@ -217,6 +189,7 @@ fn ZipFn(comptime zip_op: ops.ZipOp, comptime dtype: type) type {
         },
     }.func);
 }
+
 fn getZipFn(comptime zip_op: ops.ZipOp, comptime dtype: type) ZipFn(zip_op, dtype) {
     return comptime switch (zip_op) {
         .Add => struct {
@@ -273,36 +246,9 @@ pub inline fn zip(
     const _b: []align(storage_type.vec_alignment) dtype = b_ptr.storage.?.Zig.data;
     var _out: []align(storage_type.vec_alignment) dtype = out.storage.?.Zig.data;
     if (@TypeOf(a_ptr.*) == @TypeOf(b_ptr.*)) {
-        const size: usize = @TypeOf(a_ptr.*).size;
-        switch (global_vec_mode) {
-            .Scalar => {
-                for (0..size) |i| {
-                    _out[i] = @call(.always_inline, zip_fn, .{ _a[i], _b[i] });
-                }
-            },
-            .Chunked => {
-                const vec_len: usize = storage_type.vec_len;
-                const num_vecs: usize = comptime @divTrunc(size, vec_len);
-                for (0..num_vecs) |vec_i| {
-                    const offset = vec_i * vec_len;
-                    @prefetch(_a[offset + vec_len ..], .{ .locality = 0 });
-                    @prefetch(_b[offset + vec_len ..], .{ .locality = 0 });
-                    const aligned_out: *@Vector(vec_len, dtype) = @alignCast(@ptrCast(_out[offset..][0..vec_len]));
-                    aligned_out.* = @call(.always_inline, zip_fn, .{
-                        @as(*const @Vector(vec_len, dtype), @alignCast(@ptrCast(_a[offset..][0..vec_len]))).*,
-                        @as(*const @Vector(vec_len, dtype), @alignCast(@ptrCast(_b[offset..][0..vec_len]))).*,
-                    });
-                }
-                inline for (vec_len * num_vecs..size) |i| {
-                    _out[i] = @call(.always_inline, zip_fn, .{ _a[i], _b[i] });
-                }
-            },
-            .Automatic => {
-                const aligned_src_a = @as(*const @Vector(size, dtype), @alignCast(@ptrCast(_b)));
-                const aligned_src_b = @as(*const @Vector(size, dtype), @alignCast(@ptrCast(_b)));
-                const result = @as([]align(storage_type.vec_alignment) dtype, @alignCast(@constCast(@ptrCast(@as([size]dtype, @call(.always_inline, zip_fn, .{ aligned_src_a.*, aligned_src_b.* }))[0..]))));
-                @memcpy(_out, result);
-            },
+        const size = @TypeOf(out.*).size;
+        for (0..size) |i| {
+            _out[i] = @call(.always_inline, zip_fn, .{ _a[i], _b[i] });
         }
     } else {
         for (0..@TypeOf(out.*).size) |out_i| {
@@ -356,7 +302,7 @@ pub inline fn reduce(
                 @reduce(vec_reduce_op, @as(*const @Vector(vec_len, dtype), @alignCast(@ptrCast(_x[offset..][0..vec_len]))).*),
             });
         }
-        inline for (comptime vec_len * num_vecs..size) |i| {
+        for (comptime vec_len * num_vecs..size) |i| {
             acc = @call(.always_inline, zip_fn, .{ acc, _x[i] });
         }
         out.storage.?.Zig.data[0] = acc;

@@ -8,18 +8,18 @@ const CodegenBackend = @import("backend/CodegenBackend.zig");
 
 pub const BackendTypes = enum {
     Zig,
-    // Codegen,
+    Codegen,
 };
 
 pub const Backend = union(BackendTypes) {
     Zig: ZigBackend,
-    // Codegen: CodegenBackend,
+    Codegen: CodegenBackend,
 
     pub fn Storage(comptime dtype: type) type {
         return union(BackendTypes) {
             const Self = @This();
             Zig: ZigBackend.Storage(dtype),
-            // Codegen: void,
+            Codegen: CodegenBackend.Storage(dtype),
 
             pub fn fill(self: *Self, value: dtype) void {
                 switch (self.*) {
@@ -54,9 +54,9 @@ pub const Backend = union(BackendTypes) {
     pub inline fn cast(self: *const Backend, comptime new_dtype: type, x_ptr: anytype) @TypeOf(x_ptr.*).Cast(new_dtype) {
         const Out: type = @TypeOf(x_ptr.*).Cast(new_dtype);
         const impl = struct {
-            fn eval(out_ptr: *Out) *Out {
-                const x_eval = @call(.always_inline, @TypeOf(x_ptr.*).eval, .{x_ptr});
-                const out_eval = out_ptr.runtime();
+            fn eval(out_ptr: *Out, id: usize) *Out {
+                const x_eval = @call(.auto, x_ptr.evalFn, .{ x_ptr.runtime(id + 1), id + 1 });
+                const out_eval = out_ptr.runtime(id);
                 switch (self.*) {
                     inline else => |*backend| backend.cast(new_dtype, x_eval, out_ptr),
                 }
@@ -80,9 +80,9 @@ pub const Backend = union(BackendTypes) {
     pub inline fn map(self: *const Backend, op: ops.MapOp, x_ptr: anytype) @TypeOf(x_ptr.*) {
         const Out: type = @TypeOf(x_ptr.*);
         const impl = struct {
-            fn eval(out_ptr: *Out) *Out {
-                const x_eval = @call(.always_inline, @TypeOf(x_ptr.*).eval, .{x_ptr});
-                const out_eval = out_ptr.runtime();
+            fn eval(out_ptr: *Out, id: usize) *Out {
+                const x_eval = @call(.auto, x_ptr.evalFn, .{ x_ptr.runtime(id + 1), id + 1 });
+                const out_eval = out_ptr.runtime(id);
                 switch (self.*) {
                     inline else => |*backend| backend.map(op, x_eval, out_eval),
                 }
@@ -105,10 +105,10 @@ pub const Backend = union(BackendTypes) {
     pub inline fn zip(self: *const Backend, op: ops.ZipOp, a_ptr: anytype, b_ptr: anytype) @TypeOf(a_ptr.*).Broadcast(@TypeOf(b_ptr.*)) {
         const Out: type = @TypeOf(a_ptr.*).Broadcast(@TypeOf(b_ptr.*));
         const impl = struct {
-            fn eval(out_ptr: *Out) *Out {
-                const a_eval = @call(.always_inline, @TypeOf(a_ptr.*).eval, .{a_ptr});
-                const b_eval = @call(.always_inline, @TypeOf(b_ptr.*).eval, .{b_ptr});
-                const out_eval = out_ptr.runtime();
+            fn eval(out_ptr: *Out, id: usize) *Out {
+                const a_eval = @call(.auto, a_ptr.evalFn, .{ a_ptr.runtime(id + 1), id + 1 });
+                const b_eval = @call(.auto, b_ptr.evalFn, .{ b_ptr.runtime(a_eval.id.? + 1), a_eval.id.? + 1 });
+                const out_eval = out_ptr.runtime(id);
                 switch (self.*) {
                     inline else => |*backend| backend.zip(op, a_eval, b_eval, out_eval),
                 }
@@ -132,9 +132,9 @@ pub const Backend = union(BackendTypes) {
     pub inline fn reduce(self: *const Backend, op: ops.ReduceOp, x_ptr: anytype, comptime dim: ?u8) @TypeOf(x_ptr.*).Reduce(dim) {
         const Out: type = @TypeOf(x_ptr.*).Reduce(dim);
         const impl = struct {
-            fn eval(out_ptr: *Out) *Out {
-                const x_eval = @call(.always_inline, @TypeOf(x_ptr.*).eval, .{x_ptr});
-                const out_eval = out_ptr.runtime();
+            fn eval(out_ptr: *Out, id: usize) *Out {
+                const x_eval = @call(.auto, x_ptr.evalFn, .{ x_ptr.runtime(id + 1), id + 1 });
+                const out_eval = out_ptr.runtime(id);
                 switch (self.*) {
                     inline else => |*backend| backend.reduce(op, x_eval, dim, out_eval),
                 }
