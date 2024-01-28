@@ -10,16 +10,13 @@ const ops = @import("ops.zig");
 const utils = @import("utils.zig");
 
 const TestBackend = &backend.Backend{ .Zig = .{} };
-const comptime_graph = false;
-const runtime_graph = true;
+const show_graph = true;
 const eval_logging = true;
 fn runEval(comptime test_name: anytype, comptime out: anytype) void {
+    _ = test_name;
     TestBackend.runtime(.{});
-    if (comptime_graph) {
-        @compileLog(test_name);
-        comptime out.graph();
-    } else if (runtime_graph) {
-        std.debug.print("\n", .{});
+    if (show_graph) {
+        std.debug.print("\nGRAPH\n", .{});
         out.graph();
     }
     const out_eval = out.eval();
