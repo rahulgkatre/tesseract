@@ -5,40 +5,41 @@ const utils = @import("utils.zig");
 const ops = @import("ops.zig");
 const Backend = @import("backend.zig").Backend;
 
-pub var debug = true;
+pub var debug = false;
 
 // TensorArena provides an allocator for the tensor metadata
 // No actual elements of the tensor are stored by this allocator
 pub const TensorArena = struct {
-    var global_arena: ?std.heap.ArenaAllocator = null;
-    var runtime_tensor_cache: std.AutoHashMap(usize, usize) = undefined;
-    fn init(arena: std.heap.ArenaAllocator) void {
-        global_arena = arena;
-        runtime_tensor_cache = std.AutoHashMap(usize, usize).init(global_arena.?.allocator());
+    var arena: ?std.heap.ArenaAllocator = null;
+    var cache: std.AutoHashMap(usize, usize) = undefined;
+    fn init(_arena: std.heap.ArenaAllocator) void {
+        arena = _arena;
+        cache = std.AutoHashMap(usize, usize).init(arena.?.allocator());
     }
     fn deinit() void {
-        global_arena.?.deinit();
-        global_arena = null;
+        arena.?.deinit();
+        arena = null;
     }
     fn allocator() std.mem.Allocator {
-        return global_arena.?.allocator();
+        return arena.?.allocator();
     }
-    fn convert_to_runtime(comptime tensor_type: type, comptime_tensor_ptr: anytype, id: usize) *tensor_type {
-        const runtime_tensor_ptr = runtime_tensor_cache.get(@intFromPtr(comptime_tensor_ptr));
+    // This function implements the caching to prevent the allocation of duplicate runtime tensors that
+    // correspond to the same comptime tensor
+    // This is done by using the raw comptime address as the key and the raw runtime address as the value
+    fn comptime_to_runtime(comptime tensor_type: type, comptime_tensor_ptr: anytype, id: usize) *tensor_type {
+        // TODO: Is there an idiomatic way to do this?
+        const runtime_tensor_ptr = cache.get(@intFromPtr(comptime_tensor_ptr));
         if (runtime_tensor_ptr != null) {
             return @ptrFromInt(runtime_tensor_ptr.?);
         }
-        const runtime_tensor: *tensor_type = TensorArena.allocator().create(tensor_type) catch unreachable;
-        if (debug) {
-            std.debug.print("Comptime tensor {s}@{d} -> Runtime tensor {s}@{d}\n", .{ comptime_tensor_ptr.str, @intFromPtr(comptime_tensor_ptr), comptime_tensor_ptr.str, @intFromPtr(runtime_tensor) });
-        }
+        const runtime_tensor: *tensor_type = TensorArena.allocator().create(tensor_type) catch @panic("Out of memory");
         runtime_tensor.* = .{
             .id = id,
             .backend = comptime_tensor_ptr.backend,
             .storage = comptime_tensor_ptr.backend.storage(tensor_type.dtype, tensor_type.size),
             .evalFn = comptime_tensor_ptr.evalFn,
         };
-        runtime_tensor_cache.putNoClobber(@intFromPtr(comptime_tensor_ptr), @intFromPtr(runtime_tensor)) catch unreachable;
+        cache.put(@intFromPtr(comptime_tensor_ptr), @intFromPtr(runtime_tensor)) catch @panic("Out of memory");
         return runtime_tensor;
     }
 };
@@ -173,7 +174,7 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
 
         // TODO: Might not be necessary if codegen is the only way to run the tensor code
         pub fn runtime(self: *const Self, id: usize) *Self {
-            return TensorArena.convert_to_runtime(Self, self, id);
+            return TensorArena.comptime_to_runtime(Self, self, id);
         }
 
         pub fn eval(comptime self: *const Self) *Self {

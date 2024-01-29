@@ -3,7 +3,7 @@ const Allocator = std.mem.Allocator;
 const Tensor = @import("src/tensor.zig").Tensor;
 const Backend = @import("src/backend.zig").Backend;
 
-const TestBackend = &Backend{ .Zig = .{} };
+const TestBackend = &Backend{ .Codegen = .{} };
 
 fn fn1() Tensor(i32, .{ 2, 1, 4 }) {
     const tensor1 = Tensor(i32, .{ 2, 1, 4 }).full(TestBackend, 1);
@@ -36,12 +36,11 @@ pub fn main() !void {
     // as they have memory addresses
 
     // Initialize the backend which will allow for allocation of tensor storage
-    TestBackend.runtime(.{ .filename = "demo_codegen.zig" });
+    TestBackend.runtime(.{ .filename = "demo_codegen_out.zig" });
     defer TestBackend.finished();
 
     // Print the storage to show the data
-    const eval_out = out.eval();
-    std.debug.print("\n{any}\n", .{eval_out.storage});
+    _ = out.eval();
 
     // The data is the same as the following numpy code
     // >>> import numpy as np

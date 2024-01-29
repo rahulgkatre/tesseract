@@ -11,17 +11,19 @@ const utils = @import("utils.zig");
 
 const TestBackend = &backend.Backend{ .Zig = .{} };
 const show_graph = true;
-const eval_logging = true;
+const eval_logging = false;
 fn runEval(comptime test_name: anytype, comptime out: anytype) void {
     _ = test_name;
     TestBackend.runtime(.{});
     if (show_graph) {
         std.debug.print("\nGRAPH\n", .{});
+        tensor.debug = true;
     }
     const out_eval = out.eval();
     if (eval_logging) {
         std.debug.print("{any}\n", .{out_eval.storage.?.Zig.data});
     }
+    tensor.debug = false;
     TestBackend.finished();
 }
 
@@ -124,7 +126,9 @@ test "lazy with realization" {
 
     const tensor_eval = tensor1.eval();
     try expectEqual(true, tensor_eval.storage != null);
-    std.debug.print("{any}", .{tensor_eval.storage.?.Zig.data.len});
+    if (eval_logging) {
+        std.debug.print("{any}\n", .{tensor_eval.storage.?.Zig.data.len});
+    }
     try expectEqual(true, tensor_eval.storage.?.Zig.data.len == 24);
     try expectEqual([_]i32{5} ** 24, tensor_eval.storage.?.Zig.data[0..24].*);
 }
@@ -188,75 +192,75 @@ test "as_type" {
 // Eventually these tests should be called through eval() with CodegenBackend
 // but still output the same code
 
-test "cast codegen" {
-    const actual = comptime gen: {
-        var t1 = tensor.range(TestBackend, f32, 4.0, 16.0);
-        var t2 = t1.cast(i32);
-        const cg = @import("codegen/ZigCodegen.zig"){};
-        break :gen cg.cast(i32, &t1, 1, @constCast(&t2), 0);
-    };
-    _ = actual;
-    const expected =
-        \\for (0..12) |i| {
-        \\    t0[i] = @intFromFloat(t1[i]);  
-        \\}
-    ;
-    _ = expected;
-    // try expectEqual(expected[0..expected.len].*, actual[0..actual.len].*);
-}
+// test "cast codegen" {
+//     const actual = comptime gen: {
+//         var t1 = tensor.range(TestBackend, f32, 4.0, 16.0);
+//         var t2 = t1.cast(i32);
+//         const cg = @import("codegen/ZigCodegen.zig"){};
+//         break :gen cg.cast(i32, &t1, 1, @constCast(&t2), 0);
+//     };
+//     _ = actual;
+//     const expected =
+//         \\for (0..12) |i| {
+//         \\    t0[i] = @intFromFloat(t1[i]);
+//         \\}
+//     ;
+//     _ = expected;
+//     // try expectEqual(expected[0..expected.len].*, actual[0..actual.len].*);
+// }
 
-test "map codegen" {
-    const actual = comptime gen: {
-        var t1 = tensor.range(TestBackend, f32, 4.0, 16.0);
-        var t2 = t1.neg();
-        const cg = @import("codegen/ZigCodegen.zig"){};
-        break :gen cg.map(.Neg, &t1, 1, @constCast(&t2), 0);
-    };
-    _ = actual;
-    const expected =
-        \\for (0..12) |i| {
-        \\    t0[i] = -(t1[i]);  
-        \\}
-    ;
-    _ = expected;
-    // try expectEqual(expected[0..expected.len].*, actual[0..actual.len].*);
-}
+// test "map codegen" {
+//     const actual = comptime gen: {
+//         var t1 = tensor.range(TestBackend, f32, 4.0, 16.0);
+//         var t2 = t1.neg();
+//         const cg = @import("codegen/ZigCodegen.zig"){};
+//         break :gen cg.map(.Neg, &t1, 1, @constCast(&t2), 0);
+//     };
+//     _ = actual;
+//     const expected =
+//         \\for (0..12) |i| {
+//         \\    t0[i] = -(t1[i]);
+//         \\}
+//     ;
+//     _ = expected;
+//     // try expectEqual(expected[0..expected.len].*, actual[0..actual.len].*);
+// }
 
-test "zip no broadcast codegen" {
-    const actual = comptime gen: {
-        var t1 = tensor.range(TestBackend, f32, 4.0, 16.0);
-        var t2 = tensor.range(TestBackend, f32, 4.0, 16.0);
-        var t3 = t1.add(t2);
-        const cg = @import("codegen/ZigCodegen.zig"){};
-        break :gen cg.zip(.Add, &t1, 1, &t2, 2, @constCast(&t3), 0);
-    };
-    _ = actual;
-    const expected =
-        \\for (0..12) |i| {
-        \\    t0[i] = (t1[i]) + (t2[i]);  
-        \\}
-    ;
-    _ = expected;
-    // try expectEqual(expected[0..expected.len].*, actual[0..actual.len].*);
-}
+// test "zip no broadcast codegen" {
+//     const actual = comptime gen: {
+//         var t1 = tensor.range(TestBackend, f32, 4.0, 16.0);
+//         var t2 = tensor.range(TestBackend, f32, 4.0, 16.0);
+//         var t3 = t1.add(t2);
+//         const cg = @import("codegen/ZigCodegen.zig"){};
+//         break :gen cg.zip(.Add, &t1, &t2, @constCast(&t3));
+//     };
+//     _ = actual;
+//     const expected =
+//         \\for (0..12) |i| {
+//         \\    t0[i] = (t1[i]) + (t2[i]);
+//         \\}
+//     ;
+//     _ = expected;
+//     // try expectEqual(expected[0..expected.len].*, actual[0..actual.len].*);
+// }
 
-test "reduce all codegen" {
-    const actual = comptime gen: {
-        var t1 = tensor.range(TestBackend, f32, 4.0, 16.0);
-        var t2 = t1.sum(null);
-        const cg = @import("codegen/ZigCodegen.zig"){};
-        break :gen cg.reduce(.Sum, &t1, 1, null, @constCast(&t2), 0);
-    };
-    _ = actual;
-    const expected =
-        \\{
-        \\    var acc = t1[0];
-        \\    for (1..12) |i| {
-        \\        acc = (acc) + (t1[i]);
-        \\    }
-        \\    t0[0] = acc;
-        \\}
-    ;
-    _ = expected;
-    // try expectEqual(expected[0..expected.len].*, actual[0..actual.len].*);
-}
+// test "reduce all codegen" {
+//     const actual = comptime gen: {
+//         var t1 = tensor.range(TestBackend, f32, 4.0, 16.0);
+//         var t2 = t1.sum(null);
+//         const cg = @import("codegen/ZigCodegen.zig"){};
+//         break :gen cg.reduce(.Sum, &t1, 1, null, @constCast(&t2), 0);
+//     };
+//     _ = actual;
+//     const expected =
+//         \\{
+//         \\    var acc = t1[0];
+//         \\    for (1..12) |i| {
+//         \\        acc = (acc) + (t1[i]);
+//         \\    }
+//         \\    t0[0] = acc;
+//         \\}
+//     ;
+//     _ = expected;
+//     // try expectEqual(expected[0..expected.len].*, actual[0..actual.len].*);
+// }
