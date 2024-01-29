@@ -1,5 +1,6 @@
 const ZigCodegen = @import("codegen/ZigCodegen.zig");
 const ops = @import("ops.zig");
+const comptimePrint = @import("std").fmt.comptimePrint;
 
 pub const CodegenTypes = enum {
     Zig,
@@ -26,24 +27,35 @@ pub const Codegen = union(CodegenTypes) {
 };
 
 // All programming languages we would target support the same arithmetic expressions and formatting
-pub fn idxToPos(comptime tensor_type: type, comptime idx_name: []const u8) []const u8 {
-    _ = idx_name;
-    _ = tensor_type;
-    return "0";
+pub fn idxToPos(comptime Tensor: type, comptime loop_var_prefix: []const u8) []const u8 {
+    return comptime str: {
+        var expr: []const u8 = comptimePrint("{d}", .{Tensor.strides[Tensor.ndims]});
+        for (0..Tensor.ndims) |d| {
+            const rev_d = Tensor.ndims - 1 - d;
+            if (Tensor.strides[rev_d] != 0) {
+                if (Tensor.strides[rev_d] == 1) {
+                    expr = expr ++ comptimePrint("+{s}{d}", .{ loop_var_prefix, rev_d });
+                } else {
+                    expr = expr ++ comptimePrint("+{s}{d}*{d}", .{ loop_var_prefix, rev_d, Tensor.strides[rev_d] });
+                }
+            }
+        }
+        break :str expr;
+    };
 }
 
-pub fn broadcastIdxToPos(comptime tensor_type1: type, comptime tensor_type2: type, comptime idx_name: []const u8) []const u8 {
-    _ = idx_name;
-    _ = tensor_type2;
-    _ = tensor_type1;
-    return "0";
-}
-
-pub fn posToIdx(
-    comptime tensor_type: type,
-    comptime idx_name: []const u8,
-) []const u8 {
-    _ = idx_name;
-    _ = tensor_type;
-    return "0";
+pub fn broadcastIdxToPos(comptime Tensor: type, comptime BroadcastTensor: type, comptime loop_var_prefix: []const u8) []const u8 {
+    return comptime str: {
+        var expr: []const u8 = comptimePrint("{d}", .{Tensor.strides[Tensor.ndims]});
+        for (0..Tensor.ndims) |d| {
+            if (Tensor.shape[Tensor.ndims - 1 - d] == BroadcastTensor.shape[BroadcastTensor.ndims - 1 - d]) {
+                if (Tensor.strides[Tensor.ndims - 1 - d] == 1) {
+                    expr = expr ++ comptimePrint("+{s}{d}", .{ loop_var_prefix, BroadcastTensor.ndims - 1 - d });
+                } else if (Tensor.strides[Tensor.ndims - 1 - d] != 0) {
+                    expr = expr ++ comptimePrint("+{s}{d}*{d}", .{ loop_var_prefix, BroadcastTensor.ndims - 1 - d, Tensor.strides[BroadcastTensor.ndims - 1 - d] });
+                }
+            }
+        }
+        break :str expr;
+    };
 }

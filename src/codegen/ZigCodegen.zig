@@ -8,14 +8,23 @@ const ZigCodegen = @This();
 
 const header_fmt =
     \\const std = @import("std");
-    \\fn main({s}) !void {{
-    \\    const allocator = std.heap.GeneralPurposeAllocator(.{{}});
+    \\pub fn main({s}) !void {{
+    \\    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    \\    const allocator = arena.allocator();
+    \\
+    \\
 ;
 pub fn header(_: *const ZigCodegen, writer: anytype) void {
-    _ = writer.write(comptimePrint(header_fmt, .{""})) catch unreachable;
+    _ = writer.print(header_fmt, .{""}) catch unreachable;
 }
+
+const footer_code =
+    \\    std.debug.print("{any}\n", .{tensor_0});
+    \\}
+    \\
+;
 pub fn footer(_: *const ZigCodegen, writer: anytype) void {
-    _ = writer.write("}\n") catch unreachable;
+    _ = writer.write(footer_code) catch unreachable;
 }
 
 const storage_alloc =
@@ -29,6 +38,7 @@ pub fn alloc(_: *const ZigCodegen, writer: anytype, id: usize, comptime dtype: t
 const memset_fmt =
     \\@memset(tensor_{d}, {any});
     \\
+    \\
 ;
 pub fn memset(_: *const ZigCodegen, writer: anytype, id: usize, comptime dtype: type, value: dtype) void {
     writer.print(memset_fmt, .{ id, value }) catch unreachable;
@@ -41,7 +51,6 @@ const no_broadcast_loop =
     \\}}}}
     \\
 ;
-
 pub fn cast(
     _: *const ZigCodegen,
     writer: anytype,
@@ -141,27 +150,32 @@ pub fn zip(
         });
         try writer.print(fmt, .{ Out.size, out.id.?, a.id.?, "i", b.id.?, "i" });
     } else {
-        const broadcast_loop =
-            \\for (0..{{d}}) |i| {{{{
-            \\    const idx = {{s}};
-            \\    tensor_{{d}}[i] = {s};
-            \\}}}}
-            \\
+        const loop_fmt =
+            \\for (0..{d}) |i_{d}| {{{{{{{{
+            \\    {s}
+            \\}}}}}}}}
         ;
-        const fmt = comptimePrint(broadcast_loop, .{
+        const nested_loop_fmt = comptime gen: {
+            var tmp: []const u8 = "{s}";
+            for (0..Out.ndims) |d| {
+                tmp = comptimePrint(loop_fmt, .{ Out.shape[Out.ndims - 1 - d], Out.ndims - 1 - d, tmp });
+            }
+            break :gen tmp;
+        };
+        const inner_expression_fmt = comptimePrint("tensor_{{d}}[{{s}}] = {s};", .{
             comptimePrint(op_fmt, .{
                 data_read,
                 data_read,
             }),
         });
-        try writer.print(fmt, .{
-            Out.size,
-            codegen.posToIdx(Out, "i"),
+        const final_fmt = comptimePrint(nested_loop_fmt, .{inner_expression_fmt});
+        try writer.print(final_fmt ++ "\n", .{
             out.id.?,
+            codegen.idxToPos(Out, "i_"),
             a.id.?,
-            codegen.broadcastIdxToPos(A, Out, "idx"),
+            codegen.broadcastIdxToPos(A, Out, "i_"),
             b.id.?,
-            codegen.broadcastIdxToPos(B, Out, "idx"),
+            codegen.broadcastIdxToPos(B, Out, "i_"),
         });
     }
 }

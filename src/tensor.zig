@@ -12,9 +12,11 @@ pub var debug = false;
 pub const TensorArena = struct {
     var arena: ?std.heap.ArenaAllocator = null;
     var cache: std.AutoHashMap(usize, usize) = undefined;
+    var id_table: std.AutoHashMap(usize, usize) = undefined;
     fn init(_arena: std.heap.ArenaAllocator) void {
         arena = _arena;
         cache = std.AutoHashMap(usize, usize).init(arena.?.allocator());
+        id_table = std.AutoHashMap(usize, usize).init(arena.?.allocator());
     }
     fn deinit() void {
         arena.?.deinit();
@@ -33,7 +35,10 @@ pub const TensorArena = struct {
             return @ptrFromInt(runtime_tensor_ptr.?);
         }
         const runtime_tensor: *tensor_type = TensorArena.allocator().create(tensor_type) catch @panic("Out of memory");
+        const runtime_tensor_id = id_table.count();
+        id_table.put(@intFromPtr(comptime_tensor_ptr), runtime_tensor_id) catch @panic("Out of memory");
         runtime_tensor.* = .{
+            .id = runtime_tensor_id,
             .backend = comptime_tensor_ptr.backend,
             .evalFn = comptime_tensor_ptr.evalFn,
         };
@@ -151,9 +156,9 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
 
         // TODO: Might not be necessary if codegen is the only way to run the tensor code
         pub fn create(self: *const Self) *Self {
-            var runtime_tensor = TensorArena.comptime_to_runtime(Self, self);
-            runtime_tensor.id = @intFromPtr(self);
-            return runtime_tensor;
+            return TensorArena.comptime_to_runtime(Self, self);
+            // runtime_tensor.id = @intFromPtr(self);
+            // return runtime_tensor;
         }
 
         pub fn eval(comptime self: *const Self) *Self {
