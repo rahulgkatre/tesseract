@@ -6,30 +6,38 @@ const comptimePrint = std.fmt.comptimePrint;
 const codegen = @import("../codegen.zig");
 const ZigCodegen = @This();
 
-const header =
+const header_fmt =
     \\const std = @import("std");
     \\fn main({s}) !void {{
-    \\
+    \\    const allocator = std.heap.GeneralPurposeAllocator(.{{}});
 ;
-pub fn write_header(_: *const ZigCodegen, writer: anytype) void {
-    _ = writer.write(comptimePrint(header, .{""})) catch unreachable;
+pub fn header(_: *const ZigCodegen, writer: anytype) void {
+    _ = writer.write(comptimePrint(header_fmt, .{""})) catch unreachable;
 }
-pub fn write_footer(_: *const ZigCodegen, writer: anytype) void {
+pub fn footer(_: *const ZigCodegen, writer: anytype) void {
     _ = writer.write("}\n") catch unreachable;
 }
 
 const storage_alloc =
-    \\var t{d} = try allocator.alloc({s}, {d});
+    \\{s} tensor_{d} = try allocator.alloc({s}, {d});
     \\
 ;
-pub fn write_alloc(_: *const ZigCodegen, writer: anytype, id: usize, comptime dtype: type, size: usize) void {
-    writer.print(storage_alloc, .{ id, @typeName(dtype), size }) catch unreachable;
+pub fn alloc(_: *const ZigCodegen, writer: anytype, id: usize, comptime dtype: type, size: usize, constant: bool) void {
+    writer.print(storage_alloc, .{ if (constant) "const" else "var", id, @typeName(dtype), size }) catch unreachable;
 }
 
-const data_read = "t{d}[{s}]";
+const memset_fmt =
+    \\@memset(tensor_{d}, {any});
+    \\
+;
+pub fn memset(_: *const ZigCodegen, writer: anytype, id: usize, comptime dtype: type, value: dtype) void {
+    writer.print(memset_fmt, .{ id, value }) catch unreachable;
+}
+
+const data_read = "tensor_{d}[{s}]";
 const no_broadcast_loop =
     \\for (0..{s}) |i| {{{{
-    \\    t{s}[i] = {s};  
+    \\    tensor_{s}[i] = {s};  
     \\}}}}
     \\
 ;
@@ -136,7 +144,7 @@ pub fn zip(
         const broadcast_loop =
             \\for (0..{{d}}) |i| {{{{
             \\    const idx = {{s}};
-            \\    t{{d}}[i] = {s};
+            \\    tensor_{{d}}[i] = {s};
             \\}}}}
             \\
         ;
@@ -175,11 +183,11 @@ pub fn reduce(
     if (dim == null) {
         const reduce_all_loop =
             \\{{{{
-            \\    var acc = t{{d}}[0];
+            \\    var acc = tensor_{{d}}[0];
             \\    for (1..{{d}}) |i| {{{{
             \\        acc = {s};
             \\    }}}}
-            \\    t{{d}}[0] = acc;
+            \\    tensor_{{d}}[0] = acc;
             \\}}}}
             \\
         ;
@@ -198,11 +206,11 @@ pub fn reduce(
             \\for (0..{{d}}) |i| {{{{
             \\    const idx = {{s}};
             \\    const pos = {{s}};
-            \\    var acc = t{{d}}[pos];
+            \\    var acc = tensor_{{d}}[pos];
             \\    for (1..{{d}}) |j| {{{{
             \\        acc = {s};
             \\    }}}}
-            \\    t{{d}}[i] = acc;
+            \\    tensor_{{d}}[i] = acc;
             \\}}}}
             \\
         ;

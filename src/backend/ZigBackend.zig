@@ -35,7 +35,8 @@ pub fn Storage(comptime dtype: type) type {
     };
 }
 
-pub fn storage(_: *const ZigBackend, comptime dtype: type, comptime size: usize) *Backend.Storage(dtype) {
+pub fn storage(_: *const ZigBackend, _: usize, comptime dtype: type, comptime size: usize, constant: bool) *Backend.Storage(dtype) {
+    _ = constant;
     const store = StorageArena.allocator().create(Backend.Storage(dtype)) catch unreachable;
     const store_type = Storage(dtype);
     store.* = .{

@@ -39,9 +39,9 @@ pub const Backend = union(BackendTypes) {
             inline else => |*b| b.runtime(args),
         };
     }
-    pub fn storage(back: *const Backend, comptime dtype: type, comptime size: usize) *Storage(dtype) {
+    pub fn storage(back: *const Backend, id: usize, comptime dtype: type, comptime size: usize, constant: bool) *Storage(dtype) {
         return switch (back.*) {
-            inline else => |*b| b.storage(dtype, size),
+            inline else => |*b| b.storage(id, dtype, size, constant),
         };
     }
     pub fn finished(back: *const Backend) void {
@@ -50,89 +50,94 @@ pub const Backend = union(BackendTypes) {
             inline else => |*b| b.finished(),
         };
     }
-    pub inline fn cast(back: *const Backend, comptime new_dtype: type, x_ptr: anytype) @TypeOf(x_ptr.*).Cast(new_dtype) {
-        const Out: type = @TypeOf(x_ptr.*).Cast(new_dtype);
+    pub inline fn cast(back: *const Backend, comptime new_dtype: type, x: anytype) @TypeOf(x.*).Cast(new_dtype) {
+        const Out: type = @TypeOf(x.*).Cast(new_dtype);
         const impl = struct {
             fn eval(out: *Out) *Out {
                 if (!out.evaluated) {
-                    if (x_ptr.evaluated) {
-                        std.debug.print("Already evaluated {s}", .{x_ptr.str});
+                    const x_done = x.eval();
+                    if (out.storage == null) {
+                        out.storage = out.backend.storage(out.id.?, Out.dtype, Out.size, false);
                     }
-                    const x_eval = @call(.always_inline, x_ptr.evalFn, .{x_ptr.runtime(0)});
-                    out.id = x_eval.id.? + 1;
                     if (tensor.debug) {
-                        std.debug.print("t{d} = Cast({s}) t{d}\n", .{ out.id.?, @typeName(new_dtype), x_eval.id.? });
+                        std.debug.print("tensor_{d} = Cast({s}) tensor_{d}\n", .{ out.id.?, @typeName(new_dtype), x_done.id.? });
                     }
                     switch (back.*) {
-                        inline else => |*backend| backend.cast(new_dtype, x_eval, out),
+                        inline else => |*backend| backend.cast(new_dtype, x_done, out),
                     }
                     out.evaluated = true;
                 }
                 return out;
             }
         };
-        return Out.result(back, null, impl.eval);
+        return Out.init(back, impl.eval);
     }
 
-    pub inline fn map(back: *const Backend, op: ops.MapOp, x_ptr: anytype) @TypeOf(x_ptr.*) {
-        const Out: type = @TypeOf(x_ptr.*);
+    pub inline fn map(back: *const Backend, op: ops.MapOp, x: anytype) @TypeOf(x.*) {
+        const Out: type = @TypeOf(x.*);
         const impl = struct {
             fn eval(out: *Out) *Out {
                 if (!out.evaluated) {
-                    const x_eval = @call(.auto, x_ptr.evalFn, .{x_ptr.runtime(0)});
-                    out.id = x_eval.id.? + 1;
+                    const x_done = x.eval();
+                    if (out.storage == null) {
+                        out.storage = out.backend.storage(out.id.?, Out.dtype, Out.size, false);
+                    }
                     if (tensor.debug) {
-                        std.debug.print("t{d} = {s} t{d}\n", .{ out.id.?, @tagName(op), x_eval.id.? });
+                        std.debug.print("tensor_{d} = {s} tensor_{d}\n", .{ out.id.?, @tagName(op), x_done.id.? });
                     }
                     switch (back.*) {
-                        inline else => |*backend| backend.map(op, x_eval, out),
+                        inline else => |*backend| backend.map(op, x_done, out),
                     }
                     out.evaluated = true;
                 }
                 return out;
             }
         };
-        return Out.result(back, null, impl.eval);
+        return Out.init(back, impl.eval);
     }
-    pub inline fn zip(back: *const Backend, op: ops.ZipOp, a_ptr: anytype, b_ptr: anytype) @TypeOf(a_ptr.*).Broadcast(@TypeOf(b_ptr.*)) {
-        const Out: type = @TypeOf(a_ptr.*).Broadcast(@TypeOf(b_ptr.*));
+    pub inline fn zip(back: *const Backend, op: ops.ZipOp, a: anytype, b: anytype) @TypeOf(a.*).Broadcast(@TypeOf(b.*)) {
+        const Out: type = @TypeOf(a.*).Broadcast(@TypeOf(b.*));
         const impl = struct {
             fn eval(out: *Out) *Out {
                 if (!out.evaluated) {
-                    const a_eval = a_ptr.eval();
-                    const b_eval = b_ptr.evalFn(b_ptr.runtime(a_eval.id.? + 1));
-                    out.id = b_eval.id.? + 1;
+                    const a_done = a.eval();
+                    const b_done = b.eval();
+                    if (out.storage == null) {
+                        out.storage = out.backend.storage(out.id.?, Out.dtype, Out.size, false);
+                    }
                     if (tensor.debug) {
-                        std.debug.print("t{d} = t{d} {s} t{d}\n", .{ out.id.?, a_eval.id.?, @tagName(op), b_eval.id.? });
+                        std.debug.print("tensor_{d} = tensor_{d} {s} tensor_{d}\n", .{ out.id.?, a_done.id.?, @tagName(op), b_done.id.? });
                     }
                     switch (back.*) {
-                        inline else => |*backend| backend.zip(op, a_eval, b_eval, out),
+                        inline else => |*backend| backend.zip(op, a_done, b_done, out),
                     }
                     out.evaluated = true;
                 }
                 return out;
             }
         };
-        return Out.result(back, null, impl.eval);
+        return Out.init(back, impl.eval);
     }
-    pub inline fn reduce(back: *const Backend, op: ops.ReduceOp, x_ptr: anytype, comptime dim: ?u8) @TypeOf(x_ptr.*).Reduce(dim) {
-        const Out: type = @TypeOf(x_ptr.*).Reduce(dim);
+    pub inline fn reduce(back: *const Backend, op: ops.ReduceOp, x: anytype, comptime dim: ?u8) @TypeOf(x.*).Reduce(dim) {
+        const Out: type = @TypeOf(x.*).Reduce(dim);
         const impl = struct {
             fn eval(out: *Out) *Out {
                 if (!out.evaluated) {
-                    const x_eval = x_ptr.eval();
-                    out.id = x_eval.id.? + 1;
+                    const x_done = x.eval();
+                    if (out.storage == null) {
+                        out.storage = out.backend.storage(out.id.?, Out.dtype, Out.size, false);
+                    }
                     if (tensor.debug) {
-                        std.debug.print("t{d} = {s}{s} t{d}\n", .{ out.id.?, @tagName(op), if (dim != null) comptimePrint("({d})", .{dim.?}) else "", x_eval.id.? });
+                        std.debug.print("tensor_{d} = {s}{s} tensor_{d}\n", .{ out.id.?, @tagName(op), if (dim != null) comptimePrint("({d})", .{dim.?}) else "", x_done.id.? });
                     }
                     switch (back.*) {
-                        inline else => |*backend| backend.reduce(op, x_eval, dim, out),
+                        inline else => |*backend| backend.reduce(op, x_done, dim, out),
                     }
                     out.evaluated = true;
                 }
                 return out;
             }
         };
-        return Out.result(back, null, impl.eval);
+        return Out.init(back, impl.eval);
     }
 };

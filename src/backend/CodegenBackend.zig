@@ -29,7 +29,7 @@ const CodeGenerator = struct {
     fn init(_generator: codegen.Codegen, filename: []const u8) void {
         generator = _generator;
         file = std.fs.cwd().createFile(filename, .{}) catch @panic("Unable to create codegen output file");
-        generator.?.write_header(writer());
+        generator.?.header(writer());
     }
     fn gen() codegen.Codegen {
         return generator.?;
@@ -38,7 +38,7 @@ const CodeGenerator = struct {
         return file.?.writer();
     }
     fn deinit() void {
-        generator.?.write_footer(writer());
+        generator.?.footer(writer());
         file.?.close();
     }
 };
@@ -51,33 +51,40 @@ pub fn Storage(comptime dtype: type) type {
         // pub const vec_alignment = @alignOf(@Vector(vec_len, dtype));
         // data: []align(vec_alignment) dtype,
         // size: usize,
+        id: usize,
         pub fn fill(self: *Self, value: dtype) void {
-            _ = value;
-            _ = self;
             //@memset(self.data, value);
+            switch (CodeGenerator.gen()) {
+                inline else => |cg| cg.memset(CodeGenerator.writer(), self.id, dtype, value),
+            }
         }
         pub fn load(self: *Self, data: []const dtype) void {
             _ = data;
             _ = self;
+            // TODO: Need to load from mmap
             // @memcpy(self.data, data);
         }
     };
 }
 
-pub fn storage(_: *const CodegenBackend, comptime dtype: type, comptime size: usize) *Backend.Storage(dtype) {
-    _ = size;
+pub fn storage(_: *const CodegenBackend, id: usize, comptime dtype: type, comptime size: usize, constant: bool) *Backend.Storage(dtype) {
     const store = StorageArena.allocator().create(Backend.Storage(dtype)) catch unreachable;
-    const store_type = Storage(dtype);
-    _ = store_type;
     store.* = .{
-        .Codegen = .{},
+        .Codegen = .{
+            .id = id,
+        },
     };
+    switch (CodeGenerator.gen()) {
+        inline else => |cg| cg.alloc(CodeGenerator.writer(), id, dtype, size, constant),
+    }
+
     return store;
 }
 
 pub fn runtime(_: *const CodegenBackend, args: anytype) void {
+    _ = args;
     StorageArena.init(std.heap.ArenaAllocator.init(std.heap.page_allocator));
-    CodeGenerator.init(codegen.Codegen{ .Zig = .{} }, args.filename);
+    CodeGenerator.init(codegen.Codegen{ .Zig = .{} }, "demo_codegen_out.zig");
 }
 
 pub fn finished(_: *const CodegenBackend) void {

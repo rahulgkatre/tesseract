@@ -1,6 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const Tensor = @import("src/tensor.zig").Tensor;
+const tensor = @import("src/tensor.zig");
+
+const Tensor = tensor.Tensor;
 const Backend = @import("src/backend.zig").Backend;
 
 const TestBackend = &Backend{ .Codegen = .{} };
@@ -40,6 +42,7 @@ pub fn main() !void {
     defer TestBackend.finished();
 
     // Print the storage to show the data
+    tensor.debug = true;
     _ = out.eval();
 
     // The data is the same as the following numpy code

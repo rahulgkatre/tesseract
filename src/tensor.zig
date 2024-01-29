@@ -26,7 +26,7 @@ pub const TensorArena = struct {
     // This function implements the caching to prevent the allocation of duplicate runtime tensors that
     // correspond to the same comptime tensor
     // This is done by using the raw comptime address as the key and the raw runtime address as the value
-    fn comptime_to_runtime(comptime tensor_type: type, comptime_tensor_ptr: anytype, id: usize) *tensor_type {
+    fn comptime_to_runtime(comptime tensor_type: type, comptime_tensor_ptr: anytype) *tensor_type {
         // TODO: Is there an idiomatic way to do this?
         const runtime_tensor_ptr = cache.get(@intFromPtr(comptime_tensor_ptr));
         if (runtime_tensor_ptr != null) {
@@ -34,9 +34,7 @@ pub const TensorArena = struct {
         }
         const runtime_tensor: *tensor_type = TensorArena.allocator().create(tensor_type) catch @panic("Out of memory");
         runtime_tensor.* = .{
-            .id = id,
             .backend = comptime_tensor_ptr.backend,
-            .storage = comptime_tensor_ptr.backend.storage(tensor_type.dtype, tensor_type.size),
             .evalFn = comptime_tensor_ptr.evalFn,
         };
         cache.put(@intFromPtr(comptime_tensor_ptr), @intFromPtr(runtime_tensor)) catch @panic("Out of memory");
@@ -98,32 +96,16 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         strides: [ndims + 1]usize = strides,
         str: @TypeOf(str) = str,
         backend: *const Backend,
-        storage: ?*Backend.Storage(dtype),
+        storage: ?*Backend.Storage(dtype) = null,
 
         // Callbacks for recursive traversal of compute graph
         evalFn: *const fn (self: *Self) *Self,
 
-        fn init(
+        pub fn init(
             backend: *const Backend,
-            storage: ?*Backend.Storage(dtype),
-            comptime evalFn: ?*const fn (self: *Self) *Self,
+            comptime evalFn: *const fn (self: *Self) *Self,
         ) Self {
-            const impl = struct {
-                fn eval(self: *Self) *Self {
-                    if (!self.evaluated) {
-                        if (debug) {
-                            std.debug.print("t{d} = {s}\n", .{ self.id.?, self.str });
-                        }
-                    }
-                    self.evaluated = true;
-                    return self;
-                }
-            };
-            return .{
-                .backend = backend,
-                .storage = storage,
-                .evalFn = evalFn orelse impl.eval,
-            };
+            return .{ .backend = backend, .evalFn = evalFn };
         }
 
         // Load the tensor's data from an array pointer
@@ -132,16 +114,19 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             const impl = struct {
                 fn eval(self: *Self) *Self {
                     if (!self.evaluated) {
-                        self.storage.?.load(data);
+                        if (self.storage == null) {
+                            self.storage = self.backend.storage(self.id.?, dtype, size, true);
+                            self.storage.?.load(data);
+                        }
                         if (debug) {
-                            std.debug.print("t{d} = FromData {s}\n", .{ self.id.?, self.str });
+                            std.debug.print("tensor_{d} = FromData {s}\n", .{ self.id.?, self.str });
                         }
                     }
                     self.evaluated = true;
                     return self;
                 }
             };
-            return init(backend, null, impl.eval);
+            return init(backend, impl.eval);
         }
 
         // Fill a tensor with a value
@@ -149,36 +134,30 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             const impl = struct {
                 fn eval(self: *Self) *Self {
                     if (!self.evaluated) {
-                        self.storage.?.fill(value);
+                        if (self.storage == null) {
+                            self.storage = self.backend.storage(self.id.?, dtype, size, true);
+                            self.storage.?.fill(value);
+                        }
                         if (debug) {
-                            std.debug.print("t{d} = Full({any}) {s}\n", .{ self.id.?, value, self.str });
+                            std.debug.print("tensor_{d} = Full({any}) {s}\n", .{ self.id.?, value, self.str });
                         }
                     }
                     self.evaluated = true;
                     return self;
                 }
             };
-            return init(backend, null, impl.eval);
-        }
-
-        // Utility function for initializing a tensor which is the result of an operation
-        // It will share the same backend but has callbacks provided by the backend
-        // that link it to the rest of the computation graph
-        pub fn result(
-            backend: *const Backend,
-            storage: ?*Backend.Storage(dtype),
-            comptime evalFn: ?*const fn (self: *Self) *Self,
-        ) Self {
-            return init(backend, storage, evalFn);
+            return init(backend, impl.eval);
         }
 
         // TODO: Might not be necessary if codegen is the only way to run the tensor code
-        pub fn runtime(self: *const Self, id: usize) *Self {
-            return TensorArena.comptime_to_runtime(Self, self, id);
+        pub fn create(self: *const Self) *Self {
+            var runtime_tensor = TensorArena.comptime_to_runtime(Self, self);
+            runtime_tensor.id = @intFromPtr(self);
+            return runtime_tensor;
         }
 
         pub fn eval(comptime self: *const Self) *Self {
-            return self.evalFn(self.runtime(0));
+            return self.evalFn(self.create());
         }
 
         pub fn isContiguous(_: *const Self) bool {
@@ -228,17 +207,17 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             const impl = struct {
                 fn eval(out: *Out) *Out {
                     if (!out.evaluated) {
-                        const self_eval = self.eval();
-                        out.storage = self_eval.storage;
+                        const self_done = self.eval();
+                        out.storage = self_done.storage;
                         out.evaluated = true;
                         if (debug) {
-                            std.debug.print("t{d} = Permute({any}) t{d}\n", .{ out.id.?, perm, self_eval.id.? });
+                            std.debug.print("tensor_{d} = Permute({any}) tensor_{d}\n", .{ out.id.?, perm, self_done.id.? });
                         }
                     }
                     return out;
                 }
             };
-            return Out.result(self.backend, null, impl.eval);
+            return Out.init(self.backend, impl.eval);
         }
         pub fn view(self: *const Self, comptime new_shape: anytype) Tensor(dtype, new_shape) {
             const Out = Tensor(dtype, new_shape);
@@ -247,24 +226,38 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 const impl = struct {
                     fn eval(out: *Out) *Out {
                         if (!out.evaluated) {
-                            const self_eval = self.eval();
-                            out.storage = self_eval.storage;
+                            const self_done = self.eval();
+                            out.storage = self_done.storage;
                             out.evaluated = true;
                             if (debug) {
-                                std.debug.print("t{d} = View({any}) t{d}\n", .{ out.id.?, new_shape, self_eval.id.? });
+                                std.debug.print("tensor_{d} = View({any}) tensor_{d}\n", .{ out.id.?, new_shape, self_done.id.? });
                             }
                         }
                         return out;
                     }
                 };
-                return Out.result(self.backend, null, impl.eval);
+                return Out.init(self.backend, impl.eval);
             } else {
                 @compileError("Must be contiguous to view");
             }
         }
 
         pub fn asStrided(self: *const Self, comptime new_shape: anytype, comptime new_strides: anytype) AsStrided(dtype, new_shape, new_strides) {
-            return AsStrided(dtype, new_shape, new_strides).result(self.backend, self.storage, null);
+            const Out = AsStrided(dtype, new_shape, new_strides);
+            const impl = struct {
+                fn eval(out: *Out) *Out {
+                    if (!out.evaluated) {
+                        const self_done = self.eval();
+                        out.storage = self_done.storage;
+                        out.evaluated = true;
+                        if (debug) {
+                            std.debug.print("tensor_{d} = View({any}) tensor_{d}\n", .{ out.id.?, new_shape, self_done.id.? });
+                        }
+                    }
+                    return out;
+                }
+            };
+            return Out.init(self.backend, impl.eval);
         }
 
         pub fn Cast(comptime new_dtype: type) type {

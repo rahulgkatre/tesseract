@@ -8,19 +8,19 @@ pub const CodegenTypes = enum {
 pub const Codegen = union(CodegenTypes) {
     Zig: ZigCodegen,
     const Self = @This();
-    pub fn write_header(gen: *const Codegen, writer: anytype) void {
+    pub fn header(gen: *const Codegen, writer: anytype) void {
         switch (gen.*) {
-            inline else => |*cg| cg.write_header(writer),
+            inline else => |*cg| cg.header(writer),
         }
     }
-    pub fn write_footer(gen: *const Codegen, writer: anytype) void {
+    pub fn footer(gen: *const Codegen, writer: anytype) void {
         switch (gen.*) {
-            inline else => |*cg| cg.write_footer(writer),
+            inline else => |*cg| cg.footer(writer),
         }
     }
-    pub fn write_alloc(gen: *const Codegen, writer: anytype, id: usize, comptime dtype: type, size: usize) void {
+    pub fn alloc(gen: *const Codegen, writer: anytype, id: usize, comptime dtype: type, size: usize) void {
         switch (gen.*) {
-            inline else => |*cg| cg.write_storage(writer, id, dtype, size),
+            inline else => |*cg| cg.alloc(writer, id, dtype, size),
         }
     }
 };
