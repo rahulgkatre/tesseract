@@ -50,7 +50,7 @@ pub fn Storage(comptime dtype: type) type {
         // pub const vec_len = std.simd.suggestVectorLength(dtype) orelse @sizeOf(dtype);
         // pub const vec_alignment = @alignOf(@Vector(vec_len, dtype));
         // data: []align(vec_alignment) dtype,
-        // size: usize,
+        size: usize,
         id: usize,
         pub fn fill(self: *Self, value: dtype) void {
             //@memset(self.data, value);
@@ -61,7 +61,7 @@ pub fn Storage(comptime dtype: type) type {
         pub fn load(self: *Self, data: []const dtype) void {
             _ = data;
             _ = self;
-            // TODO: Need to load from mmap
+            // TODO: Need to load from
             // @memcpy(self.data, data);
         }
     };
@@ -72,6 +72,7 @@ pub fn storage(_: *const CodegenBackend, id: usize, comptime dtype: type, compti
     store.* = .{
         .Codegen = .{
             .id = id,
+            .size = size,
         },
     };
     switch (CodeGenerator.gen()) {
