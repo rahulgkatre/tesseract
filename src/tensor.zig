@@ -120,7 +120,7 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 fn eval(self: *Self) *Self {
                     if (!self.evaluated) {
                         if (self.storage == null) {
-                            self.storage = self.backend.storage(self.id.?, dtype, size, true);
+                            self.storage = self.backend.storage(self.id.?, dtype, size);
                             self.storage.?.load(data);
                         }
                         if (debug) {
@@ -140,7 +140,7 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 fn eval(self: *Self) *Self {
                     if (!self.evaluated) {
                         if (self.storage == null) {
-                            self.storage = self.backend.storage(self.id.?, dtype, size, true);
+                            self.storage = self.backend.storage(self.id.?, dtype, size);
                             self.storage.?.fill(value);
                         }
                         if (debug) {
@@ -154,11 +154,8 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             return init(backend, impl.eval);
         }
 
-        // TODO: Might not be necessary if codegen is the only way to run the tensor code
         pub fn create(self: *const Self) *Self {
             return TensorArena.comptime_to_runtime(Self, self);
-            // runtime_tensor.id = @intFromPtr(self);
-            // return runtime_tensor;
         }
 
         pub fn eval(comptime self: *const Self) *Self {

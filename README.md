@@ -1,12 +1,12 @@
 # Tesseract
 
-A tensor library written in Zig that features compile time verification of all tensor operations and soon, compute graph optimization. The goal is to be able to run differentiable tensor operations on a variety of processors/accelerators (through compiling with LLVM or through codegen), and to power a deep learning framework. 
+A tensor library written in Zig that features compile time verification of all tensor operations and soon, compute graph optimization. The goal is to be able to run differentiable tensor operations on a variety of processors/accelerators and to power a deep learning framework. 
 
 ## Core Principles
 
 ### Do as much as possible at compile time
 
-- Take advantage of Zig's compile time evaluation to evaluate tensor operations
+- Take advantage of Zig's compile time evaluation to trace tensor operations
 - Verify that all shapes and dtypes for inputs/outputs are valid using Zig's type system and generics
 - Errors involving broadcasting between two tensors will no longer exist at runtime
 
@@ -18,19 +18,26 @@ A tensor library written in Zig that features compile time verification of all t
 - A function can be called on the output tensor to evaluate the compute graph
 
 ### Efficiency
-- Avoid heap allocation as much as possible, and use compile time evaluation to predetermine memory requirements
+- Avoid heap allocation as much as possible, use compile time evaluation to predetermine memory requirements
 - The compute graph will be static and storage for batches of training data can be allocated once. 
 - Fuse operations to reduce memory bandwidth requirements during inference
 
+
+### Codegen
+
+- Required in order to do compute graph rewriting when fusing operations 
+- Take advantage of Zig's incremental compilation to generate a source file or IR code
+- Call a more specialized compiler for the desired output
+
 ### Acceleration
-- Interface with high performance hardware by compiling Zig code or through codegen
-- Direct compilation depends heavily on the Zig language's support through LLVM
-- Codegen will emit code that will be compiled by an external compiler and run on the device
+- Compile models for high performance accelerator hardware
+- Some architectures may be supported through Zig's compiler
+- Other architectures, IRs for other compilers, etc. can be supported through codegen
 
 ### Run anywhere
 - No dependencies required, unless targeting a specific accelerator
-- The library ships with a Zig backend for tensor operations that only uses builtins
-- If Zig can compile for a device, code written with this library can run on it
+- Ships with a Zig backend that only uses builtins and standard library
+- If Zig can compile for a device, Tesseract can run on it
 
 ## Structure
 
@@ -46,8 +53,6 @@ The library consists of a few prevailing structures: ops, backends, storage, and
 - Provide implementations of ops, and higher level functions that are composed of multiple ops
 - Use device specific APIs to provide an interface for managing memory (allocation, freeing)
 - The implementations of ops will directly manipulate data in the storage
-
-For example, when writing a CUDA backend, the ops might be implemented as CUDA kernels that manipulate data in the CUDA device's memory. 
 
 ### Storage
 - A reserved section of memory that contains the data for a tensor in a 1D format
@@ -73,18 +78,12 @@ const Backend = @import("src/backend.zig").Backend;
 
 pub fn main() !void {
     // All tensor code must be in comptime
+    const Backend = 
     const out = comptime blk: {
         const x1 = fn1();
         const x2 = fn2(x1);
         break :blk x2;
     };
-
-    // Use comptime on the graph call to see the compute graph
-    // comptime out.graph();
-
-    // Print the tensors created during compile time, which now exist at runtime
-    // as they have memory addresses
-    out.graph();
 
     // Initialize the backend which will allow for allocation of tensor storage
     TestBackend.runtime(.{});
@@ -105,18 +104,15 @@ pub fn main() !void {
     - [x] Check if a broadcast between two arrays of different shapes are valid
     - [x] Reducing a tensor along a dim yields a new tensor type where the reduce dim is now 1
     - [x] Operations for reshaping, permuting, flattening, etc. a tensor
-- [x] Building the compute graph at compile time
+- [x] Building the compute graph
     - [x] When a function is called, the output tensor receives a closure to evaluate itself
-    - [x] The recursive traversal (calling of input evaluate functions) can happen at compile time
-    - [ ] Automated fusion of operators to reduce memory bandwidth requirements
 - [x] Using the compute graph to perform computations on tensors
-    - [x] Implementations of ops for the Zig backend
-    - [ ] Implement matrix multiplication (GEMM)
-    - [ ] Use SIMD via @Vector and multithreading as needed to accelerate the Zig backend
+    - [x] Implementations of ops in Zig
+    - [ ] Generating code to evaluate the compute graph
+- [ ] Optimization passes
+    - [ ] Automated fusion of operators to reduce memory bandwidth requirements
 - [ ] Backpropagation and calculatation of gradients
-- [ ] Model definition, traning, and inference and purely using this library
-    - [ ] Implementations of gradient descent based optimizers
-    - [ ] Convolutional neural network for the MNIST dataset
+
 
 ### Future Goals
  

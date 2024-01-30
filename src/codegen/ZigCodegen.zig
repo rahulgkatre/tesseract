@@ -9,9 +9,6 @@ const ZigCodegen = @This();
 const header_fmt =
     \\const std = @import("std");
     \\pub fn main({s}) !void {{
-    \\    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    \\    const allocator = arena.allocator();
-    \\
     \\
 ;
 pub fn header(_: *const ZigCodegen, writer: anytype) void {
@@ -19,7 +16,7 @@ pub fn header(_: *const ZigCodegen, writer: anytype) void {
 }
 
 const footer_code =
-    \\    std.debug.print("{any}\n", .{tensor_0});
+    \\    //std.debug.print("{any}\n", .{tensor_0});
     \\}
     \\
 ;
@@ -27,16 +24,16 @@ pub fn footer(_: *const ZigCodegen, writer: anytype) void {
     _ = writer.write(footer_code) catch unreachable;
 }
 
-const storage_alloc =
-    \\{s} tensor_{d} = try allocator.alloc({s}, {d});
+const alloc_fmt =
+    \\var tensor_{d}: [{d}]{s} = undefined;
     \\
 ;
-pub fn alloc(_: *const ZigCodegen, writer: anytype, id: usize, comptime dtype: type, size: usize, constant: bool) void {
-    writer.print(storage_alloc, .{ if (constant) "const" else "var", id, @typeName(dtype), size }) catch unreachable;
+pub fn alloc(_: *const ZigCodegen, writer: anytype, id: usize, comptime dtype: type, size: usize) void {
+    writer.print(alloc_fmt, .{ id, size, @typeName(dtype) }) catch unreachable;
 }
 
 const memset_fmt =
-    \\@memset(tensor_{d}, {any});
+    \\@memset(&tensor_{d}, {any});
     \\
     \\
 ;
@@ -51,6 +48,7 @@ const no_broadcast_loop =
     \\}}}}
     \\
 ;
+
 pub fn cast(
     _: *const ZigCodegen,
     writer: anytype,
@@ -216,27 +214,41 @@ pub fn reduce(
             out.id.?,
         });
     } else {
-        const reduce_dim_loop =
-            \\for (0..{{d}}) |i| {{{{
-            \\    const idx = {{s}};
-            \\    const pos = {{s}};
-            \\    var acc = tensor_{{d}}[pos];
-            \\    for (1..{{d}}) |j| {{{{
-            \\        acc = {s};
-            \\    }}}}
-            \\    tensor_{{d}}[i] = acc;
-            \\}}}}
+        const no_acc_loop_fmt =
+            \\for (0..{d}) |i_{d}| {{{{{{{{
+            \\    {s}
+            \\}}}}}}}}
+        ;
+        const acc_loop_fmt =
+            \\const pos = {{{{s}}}};
+            \\var acc = tensor_{{{{d}}}}[pos];
+            \\for (1..{d}) |i_{d}| {{{{{{{{
+            \\    {s}
+            \\}}}}}}}}
+            \\tensor_{{{{d}}}}[pos] = acc;
             \\
         ;
-        const fmt = comptimePrint(reduce_dim_loop, .{op_fmt});
-        try writer.print(fmt, .{
-            Out.size,
-            codegen.posToIdx(@TypeOf(out.*), "i"),
-            codegen.idxToPos(@TypeOf(x.*), "idx"),
+        const nested_loop_fmt = comptime gen: {
+            var tmp: []const u8 = "{s}";
+            for (0..X.ndims) |d| {
+                if (X.ndims - 1 - d == dim.?) {
+                    tmp = comptimePrint(acc_loop_fmt, .{ X.shape[X.ndims - 1 - d], X.ndims - 1 - d, tmp });
+                }
+            }
+            for (0..X.ndims) |d| {
+                if (X.ndims - 1 - d != dim.?) {
+                    tmp = comptimePrint(no_acc_loop_fmt, .{ X.shape[X.ndims - 1 - d], X.ndims - 1 - d, tmp });
+                }
+            }
+            break :gen tmp;
+        };
+        const inner_expression_fmt = comptimePrint("acc = {s};", .{op_fmt});
+        const final_fmt = comptimePrint(nested_loop_fmt, .{inner_expression_fmt});
+        try writer.print(final_fmt, .{
+            codegen.idxToPos(Out, "i_"),
             x.id.?,
-            X.shape[dim.?],
             x.id.?,
-            comptimePrint("pos + j * {d}", .{X.strides[dim.?]}),
+            comptimePrint("pos + i_{d} * {d}", .{ dim.?, X.strides[dim.?] }),
             out.id.?,
         });
     }

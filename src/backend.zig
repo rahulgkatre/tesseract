@@ -7,18 +7,18 @@ const ZigBackend = @import("backend/ZigBackend.zig");
 const CodegenBackend = @import("backend/CodegenBackend.zig");
 
 pub const BackendTypes = enum {
-    Zig,
+    // Zig,
     Codegen,
 };
 
 pub const Backend = union(BackendTypes) {
-    Zig: ZigBackend,
+    // Zig: ZigBackend,
     Codegen: CodegenBackend,
 
     pub fn Storage(comptime dtype: type) type {
         return union(BackendTypes) {
             const StorageType = @This();
-            Zig: ZigBackend.Storage(dtype),
+            // Zig: ZigBackend.Storage(dtype),
             Codegen: CodegenBackend.Storage(dtype),
             pub fn fill(store: *StorageType, value: dtype) void {
                 switch (store.*) {
@@ -39,9 +39,9 @@ pub const Backend = union(BackendTypes) {
             inline else => |*b| b.runtime(args),
         };
     }
-    pub fn storage(back: *const Backend, id: usize, comptime dtype: type, comptime size: usize, constant: bool) *Storage(dtype) {
+    pub fn storage(back: *const Backend, id: usize, comptime dtype: type, comptime size: usize) *Storage(dtype) {
         return switch (back.*) {
-            inline else => |*b| b.storage(id, dtype, size, constant),
+            inline else => |*b| b.storage(id, dtype, size),
         };
     }
     pub fn finished(back: *const Backend) void {
@@ -57,7 +57,7 @@ pub const Backend = union(BackendTypes) {
                 if (!out.evaluated) {
                     const x_done = x.eval();
                     if (out.storage == null) {
-                        out.storage = out.backend.storage(out.id.?, Out.dtype, Out.size, false);
+                        out.storage = out.backend.storage(out.id.?, Out.dtype, Out.size);
                     }
                     if (tensor.debug) {
                         std.debug.print("tensor_{d} = Cast({s}) tensor_{d}\n", .{ out.id.?, @typeName(new_dtype), x_done.id.? });
@@ -80,7 +80,7 @@ pub const Backend = union(BackendTypes) {
                 if (!out.evaluated) {
                     const x_done = x.eval();
                     if (out.storage == null) {
-                        out.storage = out.backend.storage(out.id.?, Out.dtype, Out.size, false);
+                        out.storage = out.backend.storage(out.id.?, Out.dtype, Out.size);
                     }
                     if (tensor.debug) {
                         std.debug.print("tensor_{d} = {s} tensor_{d}\n", .{ out.id.?, @tagName(op), x_done.id.? });
@@ -103,7 +103,7 @@ pub const Backend = union(BackendTypes) {
                     const a_done = a.eval();
                     const b_done = b.eval();
                     if (out.storage == null) {
-                        out.storage = out.backend.storage(out.id.?, Out.dtype, Out.size, false);
+                        out.storage = out.backend.storage(out.id.?, Out.dtype, Out.size);
                     }
                     if (tensor.debug) {
                         std.debug.print("tensor_{d} = tensor_{d} {s} tensor_{d}\n", .{ out.id.?, a_done.id.?, @tagName(op), b_done.id.? });
@@ -125,7 +125,7 @@ pub const Backend = union(BackendTypes) {
                 if (!out.evaluated) {
                     const x_done = x.eval();
                     if (out.storage == null) {
-                        out.storage = out.backend.storage(out.id.?, Out.dtype, Out.size, false);
+                        out.storage = out.backend.storage(out.id.?, Out.dtype, Out.size);
                     }
                     if (tensor.debug) {
                         std.debug.print("tensor_{d} = {s}{s} tensor_{d}\n", .{ out.id.?, @tagName(op), if (dim != null) comptimePrint("({d})", .{dim.?}) else "", x_done.id.? });

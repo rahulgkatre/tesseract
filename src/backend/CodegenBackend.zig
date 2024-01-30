@@ -67,7 +67,7 @@ pub fn Storage(comptime dtype: type) type {
     };
 }
 
-pub fn storage(_: *const CodegenBackend, id: usize, comptime dtype: type, comptime size: usize, constant: bool) *Backend.Storage(dtype) {
+pub fn storage(_: *const CodegenBackend, id: usize, comptime dtype: type, comptime size: usize) *Backend.Storage(dtype) {
     const store = StorageArena.allocator().create(Backend.Storage(dtype)) catch unreachable;
     store.* = .{
         .Codegen = .{
@@ -75,7 +75,7 @@ pub fn storage(_: *const CodegenBackend, id: usize, comptime dtype: type, compti
         },
     };
     switch (CodeGenerator.gen()) {
-        inline else => |cg| cg.alloc(CodeGenerator.writer(), id, dtype, size, constant),
+        inline else => |cg| cg.alloc(CodeGenerator.writer(), id, dtype, size),
     }
 
     return store;

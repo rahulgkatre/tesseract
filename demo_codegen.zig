@@ -5,14 +5,13 @@ const tensor = @import("src/tensor.zig");
 const Tensor = tensor.Tensor;
 const Backend = @import("src/backend.zig").Backend;
 
-const TestBackend = &Backend{ .Codegen = .{} };
-
 pub fn main() !void {
     // To take advantage of comptime features, all tensor code should be in comptime
+    const TestBackend = &Backend{ .Codegen = .{} };
     const out = comptime blk: {
-        const x1 = Tensor(f32, .{ 2, 4, 1 }).full(TestBackend, 3);
-        const x2 = Tensor(f32, .{ 1, 3 }).full(TestBackend, 2);
-        break :blk x1.add(x2);
+        const x1 = Tensor(i32, .{ 2, 4, 1 }).full(TestBackend, 3);
+        const x2 = Tensor(i32, .{ 1, 3 }).full(TestBackend, 2);
+        break :blk x1.mul(x2).sum(1);
     };
 
     // Use comptime on the graph call to see the compute graph
@@ -28,17 +27,4 @@ pub fn main() !void {
     // Print the storage to show the data
     tensor.debug = true;
     _ = out.eval();
-
-    // The data is the same as the following numpy code
-    // >>> import numpy as np
-    // >>> t1 = np.ones((2,1,4))
-    // >>> t2 = 2 * np.ones((2,3,1))
-    // >>> t3 = (t1 + t2).sum(1)
-    // >>> t4 = 3 * t1
-    // >>> t5 = 4 * np.ones((2,3,1))
-    // >>> t6 = (t4 * t5).sum(1)+t3
-    // >>> t6
-    // array([[45., 45., 45., 45.],
-    //     [45., 45., 45., 45.]])
-    // >>>
 }
