@@ -1,7 +1,6 @@
 const std = @import("std");
 const tensor = @import("../tensor.zig");
 const ops = @import("../ops.zig");
-const Backend = @import("../backend.zig").Backend;
 const comptimePrint = std.fmt.comptimePrint;
 const codegen = @import("../codegen.zig");
 const ZigCodegen = @This();
@@ -54,7 +53,7 @@ pub fn cast(
     writer: anytype,
     comptime new_dtype: type,
     x: anytype,
-    out: *@TypeOf(x.*).Cast(new_dtype),
+    out: *@TypeOf(x.*).as_type(new_dtype),
 ) !void {
     const Out: type = @TypeOf(out.*);
     const out_dtype: type = @TypeOf(x.*).dtype;
@@ -119,8 +118,8 @@ fn zipOpFmt(comptime op: ops.ZipOp) []const u8 {
         .Add => "({s}) + ({s})",
         .Mul => "({s}) * ({s})",
         .Maximum => "@max({s}, {s})",
-        .Lt => "({s}) < ({s})",
-        .Eq => "({s}) == ({s})",
+        .LessThan => "({s}) < ({s})",
+        .Equals => "({s}) == ({s})",
         .Xor => "({s}) ^ ({s})",
         else => @compileError("Not implemented"),
     };
@@ -189,8 +188,8 @@ pub fn reduce(
     const Out: type = @TypeOf(out.*);
     const X: type = @TypeOf(x.*);
     const op_fmt = comptimePrint(switch (op) {
-        .Sum => zipOpFmt(.Add),
-        .Max => zipOpFmt(.Maximum),
+        .Sum => zipOpFmt(.add),
+        .Max => zipOpFmt(.maximum),
     }, .{ "acc", data_read });
     if (dim == null) {
         const reduce_all_loop =

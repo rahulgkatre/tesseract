@@ -1,6 +1,16 @@
 const std = @import("std");
 const comptimePrint = std.fmt.comptimePrint;
 
+pub fn tensorString(comptime TensorType: type) []const u8 {
+    return comptime blk: {
+        var tmp: []const u8 = "tensor<";
+        for (0..TensorType.ndims) |d| {
+            tmp = tmp ++ comptimePrint("{d}x", .{TensorType.shape[d]});
+        }
+        tmp = tmp ++ @typeName(TensorType.dtype) ++ ">";
+        break :blk tmp;
+    };
+}
 pub fn storageSizeForTensor(comptime ndims: u8, shape: [ndims]usize, strides: [ndims + 1]usize) usize {
     // The storage size is 1 + last index calculated by the strides and shape
     // shape[d] - 1 is the last index in dimension d

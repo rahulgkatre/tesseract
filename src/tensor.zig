@@ -5,11 +5,6 @@ const utils = @import("utils.zig");
 const ops = @import("ops.zig");
 const Graph = @import("Graph.zig");
 
-pub var debug = false;
-
-// TensorArena provides an allocator for the tensor metadata
-// No actual elements of the tensor are stored by this allocator
-
 pub fn constant(comptime dtype: type, comptime value: dtype) Tensor(dtype, .{1}) {
     return Tensor(dtype, .{1}).full(value);
 }
@@ -62,7 +57,7 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             _ = data;
             const impl = struct {
                 fn trace(self: *const Self) void {
-                    Graph.new_node(self, .{ .InitOp = .{ .op = .FromData } }, Self);
+                    Graph.new_node(self, .{ .InitOp = .{ .op = .from_data } }, Self);
                 }
             };
             return init(impl.trace);
@@ -100,7 +95,7 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         pub inline fn idxToPos(_: anytype, index: [ndims]usize) usize {
             const index_vec: @Vector(ndims, usize) = index;
             const strides_vec: @Vector(ndims, usize) = strides[0..ndims].*;
-            return @reduce(.Add, index_vec * strides_vec) + strides[ndims];
+            return @reduce(.add, index_vec * strides_vec) + strides[ndims];
         }
         pub inline fn posToIdx(_: anytype, flat_index: usize) [ndims]usize {
             var index: [ndims]usize = undefined;
@@ -125,8 +120,8 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 utils.permuteArray(ndims + 1, strides, strides_perm),
             );
         }
-        pub fn permute(self: *const Self, comptime perm: [ndims]u8) Permute(perm) {
-            const Out = Permute(perm);
+        pub fn permute(self: *const Self, comptime perm: [ndims]u8) permute(perm) {
+            const Out = permute(perm);
             const impl = struct {
                 fn trace(out: *const Out) void {
                     self.trace();
@@ -135,7 +130,7 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             };
             return Out.init(impl.trace);
         }
-        pub fn view(self: *const Self, comptime new_shape: anytype) Tensor(dtype, new_shape) {
+        pub fn View(self: *const Self, comptime new_shape: anytype) Tensor(dtype, new_shape) {
             const Out = Tensor(dtype, new_shape);
             std.debug.assert(Out.size == size);
             if (self.isContiguous()) {
@@ -151,7 +146,7 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             }
         }
 
-        pub fn asStrided(self: *const Self, comptime new_shape: anytype, comptime new_strides: anytype) AsStrided(dtype, new_shape, new_strides) {
+        pub fn as_strided(self: *const Self, comptime new_shape: anytype, comptime new_strides: anytype) AsStrided(dtype, new_shape, new_strides) {
             const Out = AsStrided(dtype, new_shape, new_strides);
             const impl = struct {
                 fn trace(out: *const Out) void {
@@ -162,10 +157,10 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             return init(impl.trace);
         }
 
-        pub fn Cast(comptime new_dtype: type) type {
+        pub fn AsType(comptime new_dtype: type) type {
             return TensorView(new_dtype, ndims, shape, strides);
         }
-        pub fn cast(self: *const Self, comptime new_dtype: type) Cast(new_dtype) {
+        pub fn as_type(self: *const Self, comptime new_dtype: type) AsType(new_dtype) {
             return self.graph.?.cast(new_dtype, self);
         }
 

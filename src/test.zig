@@ -214,7 +214,7 @@ test "as_type" {
 //         var t1 = tensor.range(TestBackend, f32, 4.0, 16.0);
 //         var t2 = t1.neg();
 //         const cg = @import("codegen/ZigCodegen.zig"){};
-//         break :gen cg.map(.Neg, &t1, 1, @constCast(&t2), 0);
+//         break :gen cg.map(.neg, &t1, 1, @constCast(&t2), 0);
 //     };
 //     _ = actual;
 //     const expected =
@@ -232,7 +232,7 @@ test "as_type" {
 //         var t2 = tensor.range(TestBackend, f32, 4.0, 16.0);
 //         var t3 = t1.add(t2);
 //         const cg = @import("codegen/ZigCodegen.zig"){};
-//         break :gen cg.zip(.Add, &t1, &t2, @constCast(&t3));
+//         break :gen cg.zip(.add, &t1, &t2, @constCast(&t3));
 //     };
 //     _ = actual;
 //     const expected =
@@ -249,7 +249,7 @@ test "as_type" {
 //         var t1 = tensor.range(TestBackend, f32, 4.0, 16.0);
 //         var t2 = t1.sum(null);
 //         const cg = @import("codegen/ZigCodegen.zig"){};
-//         break :gen cg.reduce(.Sum, &t1, 1, null, @constCast(&t2), 0);
+//         break :gen cg.reduce(.sum, &t1, 1, null, @constCast(&t2), 0);
 //     };
 //     _ = actual;
 //     const expected =

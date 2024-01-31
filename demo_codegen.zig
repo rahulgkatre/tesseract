@@ -15,16 +15,17 @@ fn softmax(x: anytype, comptime dim: u8) @TypeOf(x) {
 
 const Graph = @import("src/Graph.zig");
 pub fn main() !void {
-    // To take advantage of comptime features, all tensor code should be in comptime
+    // Initialize the global graph
+    Graph.init();
+    defer Graph.deinit();
+
+    // All tensor code should must be in comptime
     const out = comptime blk: {
         const x = Tensor(f32, .{ 2, 16 }).full(3);
         break :blk softmax(x, 1);
     };
-    Graph.init();
-    defer Graph.deinit();
 
     // Print the storage to show the data
-    tensor.debug = true;
     out.trace();
     Graph.print();
 }
