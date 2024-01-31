@@ -27,5 +27,5 @@ pub fn main() !void {
 
     // Print the storage to show the data
     out.trace();
-    Graph.print();
+    Graph.show();
 }

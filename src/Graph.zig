@@ -60,7 +60,7 @@ const Node = struct {
     shape: []const usize,
     strides: []const usize,
 
-    pub fn print(node: *Node) void {
+    pub fn show(node: *Node) void {
         if (node.link != null) {
             switch (node.link.?) {
                 .MapOp => |link| {
@@ -68,40 +68,40 @@ const Node = struct {
                         return;
                     }
                     node.visited = true;
-                    link.x.print();
-                    std.debug.print("%{d} = \"ops.MapOp.{s}\" (%{d}) : ({s}) -> {s}\n", .{ node.id, @tagName(link.op), link.x.id, link.x.str, node.str });
+                    link.x.show();
+                    std.debug.print("\t%{d} = \"ops.MapOp.{s}\" (%{d}) : ({s}) -> {s}\n", .{ node.id, @tagName(link.op), link.x.id, link.x.str, node.str });
                 },
                 .ZipOp => |link| {
                     if (node.visited) {
                         return;
                     }
                     node.visited = true;
-                    link.a.print();
-                    link.b.print();
-                    std.debug.print("%{d} = \"ops.ZipOp.{s}\" (%{d}, %{d}) : ({s}, {s}) -> {s} \n", .{ node.id, @tagName(link.op), link.a.id, link.b.id, link.a.str, link.b.str, node.str });
+                    link.a.show();
+                    link.b.show();
+                    std.debug.print("\t%{d} = \"ops.ZipOp.{s}\" (%{d}, %{d}) : ({s}, {s}) -> {s} \n", .{ node.id, @tagName(link.op), link.a.id, link.b.id, link.a.str, link.b.str, node.str });
                 },
                 .ReduceOp => |link| {
                     if (node.visited) {
                         return;
                     }
                     node.visited = true;
-                    link.x.print();
-                    std.debug.print("%{d} = \"ops.ReduceOp.{s}\" (%{d}) {{ dim = {?} }} : ({s}) -> {s}\n", .{ node.id, @tagName(link.op), link.x.id, link.dim, link.x.str, node.str });
+                    link.x.show();
+                    std.debug.print("\t%{d} = \"ops.ReduceOp.{s}\" (%{d}) {{ dim = {?} }} : ({s}) -> {s}\n", .{ node.id, @tagName(link.op), link.x.id, link.dim, link.x.str, node.str });
                 },
                 .TypeOp => |link| {
                     if (node.visited) {
                         return;
                     }
                     node.visited = true;
-                    link.x.print();
-                    std.debug.print("%{d} = \"ops.TypeOp.{s}\" (%{d}) : ({s}) -> {s}\n", .{ node.id, @tagName(link.op), link.x.id, link.x.str, node.str });
+                    link.x.show();
+                    std.debug.print("\t%{d} = \"ops.TypeOp.{s}\" (%{d}) : ({s}) -> {s}\n", .{ node.id, @tagName(link.op), link.x.id, link.x.str, node.str });
                 },
                 .InitOp => |link| {
                     if (node.visited) {
                         return;
                     }
                     node.visited = true;
-                    std.debug.print("%{d} = \"ops.InitOp.{s}\" () -> {s}\n", .{ node.id, @tagName(link.op), node.str });
+                    std.debug.print("\t%{d} = \"ops.InitOp.{s}\" () -> {s}\n", .{ node.id, @tagName(link.op), node.str });
                 },
             }
         }
@@ -133,8 +133,11 @@ pub fn get_node(ptr: anytype) *Node {
     return nodes.get(id).?;
 }
 
-pub fn print() void {
-    last_node.?.print();
+pub fn show() void {
+    std.debug.print("func @main() {{\n", .{});
+    last_node.?.show();
+    std.debug.print("\t\"return\" (%{d}) : ({s}) -> ()\n", .{ last_node.?.id, last_node.?.str });
+    std.debug.print("}}\n", .{});
 }
 
 pub fn cast(comptime new_dtype: type, x: anytype) @TypeOf(x.*).as_type(new_dtype) {
