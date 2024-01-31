@@ -4,22 +4,23 @@ const comptimePrint = std.fmt.comptimePrint;
 const utils = @import("utils.zig");
 const ops = @import("ops.zig");
 const Graph = @import("Graph.zig");
+const dtypes = @import("dtypes.zig");
 
-pub fn constant(comptime dtype: type, comptime value: dtype) Tensor(dtype, .{1}) {
+pub fn constant(comptime dtype: dtypes.DType, comptime value: anytype) Tensor(dtype, .{1}) {
     return Tensor(dtype, .{1}).full(value);
 }
 
-pub fn range(comptime dtype: type, comptime start: dtype, comptime stop: dtype) Tensor(dtype, .{stop - start}) {
+pub fn range(comptime dtype: dtypes.DType, comptime start: dtype, comptime stop: dtype) Tensor(dtype, .{stop - start}) {
     @setEvalBranchQuota(@as(u32, 2 * stop));
     const data: [stop - start]dtype = std.simd.iota(dtype, stop - start) + @as(@Vector(stop - start, dtype), @splat(start));
     return Tensor(dtype, .{stop - start}).from(data[0..]);
 }
 
-pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
+pub fn Tensor(comptime dtype: dtypes.DType, comptime shape: anytype) type {
     return AsStrided(dtype, shape, utils.stridesFromShape(shape));
 }
 
-fn AsStrided(comptime dtype: type, comptime shape: anytype, comptime strides: anytype) type {
+fn AsStrided(comptime dtype: dtypes.DType, comptime shape: anytype, comptime strides: anytype) type {
     if (shape.len + 1 != strides.len) {
         @compileError("Provided shape ndims not compatible with provided strides ndims, you may be missing the storage offset (strides[ndims])");
     }
@@ -30,10 +31,10 @@ fn AsStrided(comptime dtype: type, comptime shape: anytype, comptime strides: an
 // its generic parameters directly affect how data is accessed (viewed)
 // While TensorView provides the API, the constructor is not the friendliest
 // hence there is a simpler Tensor constructor
-fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndims]usize, comptime _strides: [_ndims + 1]usize) type {
+fn TensorView(comptime _dtype: dtypes.DType, comptime _ndims: u8, comptime _shape: [_ndims]usize, comptime _strides: [_ndims + 1]usize) type {
     return struct {
         const Self = @This();
-        pub const dtype: type = _dtype;
+        pub const dtype: dtypes.DType = _dtype;
         pub const ndims: u8 = _ndims;
         pub const shape: [ndims]usize = _shape;
         pub const strides: [ndims + 1]usize = _strides;
@@ -53,18 +54,18 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
 
         // Load the tensor's data from an array pointer
         // Not a slice because this guarantees that the size requirement is met and verified in comptime
-        pub fn from(data: *const [size]dtype) Self {
-            _ = data;
-            const traceFn = struct {
-                fn trace(self: *const Self) void {
-                    Graph.Node.new(self, .{ .InitOp = .{ .op = .From } }, Self);
-                }
-            }.trace;
-            return init(traceFn);
-        }
+        // pub fn from(data: *const [size]anytype) Self {
+        //     _ = data;
+        //     const traceFn = struct {
+        //         fn trace(self: *const Self) void {
+        //             Graph.Node.new(self, .{ .InitOp = .{ .op = .From } }, Self);
+        //         }
+        //     }.trace;
+        //     return init(traceFn);
+        // }
 
         // Fill a tensor with a value
-        pub fn full(comptime value: dtype) Self {
+        pub fn full(comptime value: anytype) Self {
             _ = value;
             const traceFn = struct {
                 fn trace(self: *const Self) void {
@@ -141,10 +142,10 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             return Out.init(traceFn);
         }
 
-        pub fn AsType(comptime new_dtype: type) type {
+        pub fn AsType(comptime new_dtype: dtypes.DType) type {
             return TensorView(new_dtype, ndims, shape, strides);
         }
-        pub fn as_type(self: *const Self, comptime new_dtype: type) AsType(new_dtype) {
+        pub fn as_type(self: *const Self, comptime new_dtype: dtypes.DType) AsType(new_dtype) {
             const Out: type = AsType(new_dtype);
             const traceFn = struct {
                 fn trace(out: *const Out) void {
@@ -184,7 +185,7 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             return x.map(.Sqrt);
         }
 
-        pub fn Broadcast(comptime OtherTensorType: type, comptime new_dtype: type) type {
+        pub fn Broadcast(comptime OtherTensorType: type, comptime new_dtype: dtypes.DType) type {
             // Gets the broadcast shape between two tensors if one exists
             // If the two tensors do not broadcast, the code won't compile
             if (dtype != OtherTensorType.dtype) {
@@ -205,9 +206,9 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             }
             return Tensor(new_dtype, bc_shape);
         }
-        fn ZipNewDtype(comptime op: ops.ZipOp) type {
+        fn ZipNewDtype(comptime op: ops.ZipOp) dtypes.DType {
             return switch (op) {
-                .Equals, .LessThan => bool,
+                .Equals, .LessThan => .bool,
                 else => dtype,
             };
         }

@@ -26,7 +26,7 @@ pub const Codegen = union(CodegenTypes) {
     }
 };
 
-// All programming languages we would target support the same arithmetic expressions and formatting
+// All programming languages we would target support the same arithmetic expressions (+ and *) and formatting
 pub fn idxToPos(comptime Tensor: type, comptime loop_var_prefix: []const u8) []const u8 {
     return comptime str: {
         var expr: []const u8 = comptimePrint("{d}", .{Tensor.strides[Tensor.ndims]});

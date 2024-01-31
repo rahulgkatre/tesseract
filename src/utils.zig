@@ -7,7 +7,7 @@ pub fn tensorString(comptime TensorType: type) []const u8 {
         for (0..TensorType.ndims) |d| {
             tmp = tmp ++ comptimePrint("{d}x", .{TensorType.shape[d]});
         }
-        tmp = tmp ++ @typeName(TensorType.dtype) ++ ">";
+        tmp = tmp ++ @tagName(TensorType.dtype) ++ ">";
         break :blk tmp;
     };
 }

@@ -3,6 +3,7 @@ const ops = @import("ops.zig");
 const tensor = @import("tensor.zig");
 const utils = @import("utils.zig");
 const Graph = @This();
+const dtypes = @import("dtypes.zig");
 
 var arena: std.heap.ArenaAllocator = undefined;
 var allocator: std.mem.Allocator = undefined;
@@ -55,7 +56,7 @@ pub const Node = struct {
 
     // Tensor metadata which will be used for lowering and optimization
     ndims: u8,
-    dtype: []const u8,
+    dtype: dtypes.DType,
     shape: []const usize,
     strides: []const usize,
 
@@ -70,7 +71,7 @@ pub const Node = struct {
                 .link = link,
                 .str = utils.tensorString(TensorType),
                 .ndims = TensorType.ndims,
-                .dtype = @typeName(TensorType.dtype),
+                .dtype = TensorType.dtype,
                 .shape = TensorType.shape[0..],
                 .strides = TensorType.strides[0..],
             };

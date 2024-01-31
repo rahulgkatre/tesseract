@@ -4,6 +4,8 @@ const ops = @import("../ops.zig");
 const comptimePrint = std.fmt.comptimePrint;
 const codegen = @import("../codegen.zig");
 const ZigCodegen = @This();
+const Graph = @import("../Graph.zig");
+const dtypes = @import("../dtypes.zig");
 
 pub fn header(_: *const ZigCodegen, writer: anytype) void {
     const header_fmt =
@@ -16,87 +18,85 @@ pub fn header(_: *const ZigCodegen, writer: anytype) void {
 
 pub fn footer(_: *const ZigCodegen, writer: anytype) void {
     const footer_code =
-        \\    //std.debug.print("{any}\n", .{tensor_0});
+        \\    std.debug.print("{any}\n", .{tensor_0});
         \\}
         \\
     ;
     writer.write(footer_code) catch unreachable;
 }
 
-pub fn alloc(_: *const ZigCodegen, writer: anytype, id: usize, comptime dtype: type, size: usize) void {
+pub fn alloc(_: *const ZigCodegen, writer: anytype, id: usize, comptime dtype: dtypes.DType, size: usize) void {
     const alloc_fmt =
-        \\var tensor_{d}: [{d}]{s} = undefined;
+        \\var @"%{d}": [{d}]{s} = undefined;
         \\
     ;
     writer.print(alloc_fmt, .{ id, size, @typeName(dtype) }) catch unreachable;
 }
 
-pub fn memset(_: *const ZigCodegen, writer: anytype, id: usize, comptime dtype: type, value: dtype) void {
+pub fn memset(writer: anytype, node: *Graph.Node) void {
     const memset_fmt =
-        \\@memset(&tensor_{d}, {any});
+        \\@memset(&@"%{d}", {any});
         \\
         \\
     ;
-    writer.print(memset_fmt, .{ id, value }) catch unreachable;
+    writer.print(memset_fmt, .{
+        node.id,
+    }) catch unreachable;
 }
 
-const data_read = "tensor_{d}[{s}]";
+const data_read = "@\"%{d}\"[{s}]";
 const no_broadcast_loop =
-    \\for (0..{s}) |i| {{{{
-    \\    tensor_{s}[i] = {s};  
+    \\for (0..{{d}}) |i| {{{{
+    \\    @"%{{d}}"[i] = {s};  
     \\}}}}
     \\
 ;
 
-pub fn cast(
-    _: *const ZigCodegen,
+pub fn as_type(
     writer: anytype,
-    comptime new_dtype: type,
-    x: anytype,
-    out: *@TypeOf(x.*).as_type(new_dtype),
+    node_out: *Graph.Node,
 ) !void {
-    const Out: type = @TypeOf(out.*);
-    const out_dtype: type = @TypeOf(x.*).dtype;
-    const err_msg = comptimePrint("Cannot cast dtype {} to {}", .{ out_dtype, new_dtype });
-    const fmt = comptimePrint(no_broadcast_loop, .{
-        "{d}",
-        "{d}",
-        comptimePrint(switch (@typeInfo(new_dtype)) {
-            .Float => switch (@typeInfo(out_dtype)) {
-                .Int => "@floatFromInt({s})",
-                .Float => "@floatCast({s})",
+    const node_x = node_out.link.TypeOp.x;
+    const old_dtype = node_x.dtype;
+    const new_dtype = node_out.dtype;
+    if (old_dtype == new_dtype) {
+        return;
+    }
+
+    const err_msg = comptimePrint("Cannot cast dtype {} to {}", .{ old_dtype, new_dtype });
+    const fmt = std.fmt.allocPrint(no_broadcast_loop, .{
+        comptimePrint(switch (new_dtype) {
+            .f16, .f32, .f64 => switch (@typeInfo(old_dtype)) {
+                .i4, .i8, .i16, .i32, .i64 => "@floatFromInt({s})",
+                .f16, .f32, .f64 => "@floatCast({s})",
                 else => @compileError(err_msg),
             },
-            .Int => switch (@typeInfo(out_dtype)) {
-                .Float => "@intFromFloat({s})",
-                .Bool => "@intFromBool({s})",
-                .Int => "@intCast({s})",
+            .i4, .i8, .i16, .i32, .i64 => switch (@typeInfo(old_dtype)) {
+                .f16, .f32, .f64 => "@intFromFloat({s})",
+                .bool => "@intFromBool({s})",
+                .i4, .i8, .i16, .i32, .i64 => "@intCast({s})",
                 else => @compileError(err_msg),
             },
             else => @compileError(err_msg),
         }, .{data_read}),
     });
     try writer.print(fmt, .{
-        Out.size,
-        out.id,
-        x.id,
+        node_out.size,
+        node_out.id,
+        node_x.id,
         "i",
     });
 }
 
 pub fn map(
-    _: *const ZigCodegen,
     writer: anytype,
-    comptime op: ops.MapOp,
-    x: anytype,
-    out: *@TypeOf(x.*),
+    node_out: *Graph.Node,
 ) !void {
-    const Out: type = @TypeOf(out.*);
+    const link = node_out.link.MapOp;
+    const node_x = link.x;
     const fmt = comptimePrint(no_broadcast_loop, .{
-        "{d}",
-        "{d}",
-        comptimePrint(switch (op) {
-            .Neg => if (@typeInfo(Out.dtype) == .Bool) "!({s})" else "-({s})",
+        comptimePrint(switch (link.op) {
+            .Neg => if (node_x.dtype == .bool) "!({s})" else "-({s})",
             .Log2 => "@log2({s})",
             .Exp2 => "@exp2({s})",
             .Sqrt => "@sqrt({s})",
@@ -104,17 +104,16 @@ pub fn map(
             else => @compileError("Not implemented"),
         }, .{data_read}),
     });
-    // @compileLog(fmt);
     try writer.print(fmt, .{
-        Out.size,
-        out.id,
-        x.id,
+        node_out.size,
+        node_out.id,
+        node_x.id,
         "i",
     });
 }
 
-fn zipOpFmt(comptime op: ops.ZipOp) []const u8 {
-    return comptime switch (op) {
+fn zipOpFmt(op: ops.ZipOp) []const u8 {
+    return switch (op) {
         .Add => "({s}) + ({s})",
         .Mul => "({s}) * ({s})",
         .Maximum => "@max({s}, {s})",
@@ -125,21 +124,15 @@ fn zipOpFmt(comptime op: ops.ZipOp) []const u8 {
     };
 }
 pub fn zip(
-    _: *const ZigCodegen,
     writer: anytype,
-    comptime op: ops.ZipOp,
-    a: anytype,
-    b: anytype,
-    out: *@TypeOf(a.*).Broadcast(@TypeOf(b.*)),
+    out: *Graph.Node,
 ) !void {
-    const Out: type = @TypeOf(out.*);
-    const A: type = @TypeOf(a.*);
-    const B: type = @TypeOf(b.*);
-    const op_fmt = comptime zipOpFmt(op);
+    const link = out.link.ZipOp;
+    const a = link.a;
+    const b = link.b;
+    const op_fmt = comptime zipOpFmt(link.op);
     if (A == B) {
         const fmt = comptimePrint(no_broadcast_loop, .{
-            "{d}",
-            "{d}",
             comptimePrint(op_fmt, .{
                 data_read,
                 data_read,
@@ -178,27 +171,22 @@ pub fn zip(
 }
 
 pub fn reduce(
-    _: *const ZigCodegen,
     writer: anytype,
-    comptime op: ops.ReduceOp,
-    x: anytype,
-    comptime dim: ?u8,
-    out: *@TypeOf(x.*).Reduce(dim),
+    node_out: *Graph.Node,
 ) !void {
-    const Out: type = @TypeOf(out.*);
-    const X: type = @TypeOf(x.*);
-    const op_fmt = comptimePrint(switch (op) {
+    const node_x = node_out.link.ReduceOp.x;
+    const op_fmt = comptimePrint(switch (node_x.op) {
         .Sum => zipOpFmt(.add),
         .Max => zipOpFmt(.maximum),
     }, .{ "acc", data_read });
-    if (dim == null) {
+    if (node_out.dim == null) {
         const reduce_all_loop =
             \\{{{{
-            \\    var acc = tensor_{{d}}[0];
+            \\    var acc = @"%{{d}}"[0];
             \\    for (1..{{d}}) |i| {{{{
             \\        acc = {s};
             \\    }}}}
-            \\    tensor_{{d}}[0] = acc;
+            \\    @"%{{d}}"[0] = acc;
             \\}}}}
             \\
         ;
@@ -220,11 +208,11 @@ pub fn reduce(
         ;
         const acc_loop_fmt =
             \\const pos = {{{{s}}}};
-            \\var acc = tensor_{{{{d}}}}[pos];
+            \\var acc = @"%{{{{d}}}}"[pos];
             \\for (1..{d}) |i_{d}| {{{{{{{{
             \\    {s}
             \\}}}}}}}}
-            \\tensor_{{{{d}}}}[pos] = acc;
+            \\@"%{{{{d}}}}"[pos] = acc;
             \\
         ;
         const nested_loop_fmt = comptime gen: {

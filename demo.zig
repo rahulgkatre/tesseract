@@ -19,10 +19,10 @@ pub fn main() !void {
     defer Graph.deinit();
 
     // All tensor code should must be in comptime
-    const out = comptime blk: {
-        const x = tensor.Tensor(f32, .{ 2, 16 }).full(3);
-        break :blk softmax(x, 1);
-    };
+    const out = comptime softmax(
+        tensor.Tensor(.f32, .{ 2, 16 }).full(3),
+        1,
+    );
 
     // Call trace on the output to build its computation graph
     out.trace();
