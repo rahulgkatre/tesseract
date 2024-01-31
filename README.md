@@ -22,7 +22,6 @@ A tensor library written in Zig that features compile time verification of all t
 - The compute graph will be static and storage for batches of training data can be allocated once. 
 - Fuse operations to reduce memory bandwidth requirements during inference
 
-
 ### Codegen
 
 - Required in order to do compute graph rewriting when fusing operations 
@@ -47,51 +46,52 @@ The library consists of a few prevailing structures: ops, backends, storage, and
 - Enums for unary (map), binary (zip), reduce ops, and others
 - Defines the core set of operations that any backend must implement
 - To make it easy to write a backend, the number of ops is kept small
-- Each op maps to a function defined by each backend to actually perform the computation
+- Each op maps to a function that can be called with tensors
 
-### Backends 
-- Provide implementations of ops, and higher level functions that are composed of multiple ops
-- Use device specific APIs to provide an interface for managing memory (allocation, freeing)
-- The implementations of ops will directly manipulate data in the storage
-
-### Storage
-- A reserved section of memory that contains the data for a tensor in a 1D format
-- Highly coupled to a single backend, each backend must provide a Storage implementation
-- Storage does not exist at compile time, as no memory can be allocated during compile time evaluation
+### Graph 
+- Global variable tracking the computation graph
+- Will be used as the initial point for lowering until codegen is performed
 
 ### Tensor / TensorView
 - Generic type defined by the element type, shape, and strides
-- Contains a backend and the backend's associated storage 
-- Provides a multidimensional view into the 1 dimensional storage using shape and strides
-- Contains functions to perform operations using the backend
-- Makes up the computation graph defined by input tensor(s) and the op applied to them
+- Contains functions to perform mathematical operations
 
 ## Demo
 
-A demo of the library can be found in `demo.zig`. In general to use the library your code would look something like this:
+A demo of the library can be found in `demo.zig`.
 
 ```zig
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const Tensor = @import("src/tensor.zig").Tensor;
-const Backend = @import("src/backend.zig").Backend;
+const tensor = @import("src/tensor.zig");
 
+// Example of a softmax
+fn softmax(x: anytype, comptime dim: u8) @TypeOf(x) {
+    const max = x.max(null);
+    const x_minus_max = x.sub(max);
+    const exp = x_minus_max.exp();
+    const sumexp = exp.sum(dim);
+    const sm = x_minus_max.div(sumexp);
+    return sm;
+}
+
+const Graph = @import("src/Graph.zig");
 pub fn main() !void {
-    // All tensor code must be in comptime
-    const Backend = 
+    // Initialize the global graph
+    Graph.init();
+    defer Graph.deinit();
+
+    // All tensor code should must be in comptime
     const out = comptime blk: {
-        const x1 = fn1();
-        const x2 = fn2(x1);
-        break :blk x2;
+        const x = tensor.Tensor(f32, .{ 2, 16 }).full(3);
+        break :blk softmax(x, 1);
     };
 
-    // Initialize the backend which will allow for allocation of tensor storage
-    TestBackend.runtime(.{});
-    defer TestBackend.finished();
+    // Call trace on the output to build its computation graph
+    out.trace();
 
-    // Print the storage to show the data
-    const eval_out = out.eval();
-    std.debug.print("\n{any}\n", .{eval_out.storage});
+    // Show the graph
+    Graph.show();
 }
 ```
 
@@ -104,21 +104,22 @@ pub fn main() !void {
     - [x] Check if a broadcast between two arrays of different shapes are valid
     - [x] Reducing a tensor along a dim yields a new tensor type where the reduce dim is now 1
     - [x] Operations for reshaping, permuting, flattening, etc. a tensor
-- [x] Building the compute graph
-    - [x] When a function is called, the output tensor receives a closure to evaluate itself
-- [x] Using the compute graph to perform computations on tensors
-    - [x] Implementations of ops in Zig
-    - [ ] Generating code to evaluate the compute graph
+- [x] Compute graph
+    - [x] When a function is called, the output tensor receives a closure with references to input tensors
+    - [x] Building up the compute graph
+    - [x] Generating code to evaluate the compute graph
 - [ ] Optimization passes
-    - [ ] Automated fusion of operators to reduce memory bandwidth requirements
+    - [ ] Fusing of map, zip, reduce ops where possible and optimal
+    - [ ] Loop transformations to improve cache performance
 - [ ] Backpropagation and calculatation of gradients
-
+    - [ ] Automatic creation of backwards graph and optimized codegen
+    - [ ] Support for higher order derivatives
 
 ### Future Goals
  
 - Python interface
     - Use JIT compilation to take advantage of type guards in this library
-    - Use Python buffer protocol to load and unload data
+    - Load and unload data from NumPy arrays
     - Support existing deep learning codebases and pipelines 
 - Support existing neural network formats like ONNX, PyTorch
     - Make it easy to import models and weights 

@@ -1,56 +1,32 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const Tensor = @import("src/tensor.zig").Tensor;
-const Backend = @import("src/backend.zig").Backend;
+const tensor = @import("src/tensor.zig");
 
-fn fn1() Tensor(i32, .{ 2, 1, 4 }) {
-    const tensor1 = Tensor(i32, .{ 2, 1, 4 }).full(1);
-    const tensor2 = Tensor(i32, .{ 2, 3, 1 }).full(2);
-    const tensor3 = tensor1.add(tensor2).sum(1);
-    return tensor3;
+// Example of a softmax
+fn softmax(x: anytype, comptime dim: u8) @TypeOf(x) {
+    const max = x.max(null);
+    const x_minus_max = x.sub(max);
+    const exp = x_minus_max.exp();
+    const sumexp = exp.sum(dim);
+    const sm = x_minus_max.div(sumexp);
+    return sm;
 }
 
-fn fn2(input: anytype) Tensor(i32, .{ 2, 1, 4 }) {
-    return comptime blk: {
-        const tensor4 = Tensor(i32, .{ 2, 1, 4 }).full(3);
-        const tensor5 = Tensor(i32, .{ 2, 3, 1 }).full(4);
-        const tensor6 = tensor4.mul(tensor5).sum(1).add(input);
-        break :blk tensor6;
-    };
-}
-
+const Graph = @import("src/Graph.zig");
 pub fn main() !void {
-    // To take advantage of comptime features, all tensor code should be in comptime
+    // Initialize the global graph
+    Graph.init();
+    defer Graph.deinit();
+
+    // All tensor code should must be in comptime
     const out = comptime blk: {
-        const x1 = fn1();
-        const x2 = fn2(x1);
-        break :blk x2;
+        const x = tensor.Tensor(f32, .{ 2, 16 }).full(3);
+        break :blk softmax(x, 1);
     };
 
-    // Use comptime on the graph call to see the compute graph
-    // comptime out.graph();
+    // Call trace on the output to build its computation graph
+    out.trace();
 
-    // Print the tensors created during compile time, which now exist at runtime
-    // as they have memory addresses
-
-    // Initialize the backend which will allow for allocation of tensor storage
-    TestBackend.runtime(.{ .filename = "demo_codegen.zig" });
-    defer TestBackend.finished();
-
-    // Print the storage to show the data
-    const eval_out = out.eval();
-    std.debug.print("\n{any}\n", .{eval_out.storage});
-
-    // The data is the same as the following numpy code
-    // >>> import numpy as np
-    // >>> t1 = np.ones((2,1,4))
-    // >>> t2 = 2 * np.ones((2,3,1))
-    // >>> t3 = (t1 + t2).sum(1)
-    // >>> t4 = 3 * t1
-    // >>> t5 = 4 * np.ones((2,3,1))
-    // >>> t6 = (t4 * t5).sum(1)+t3
-    // >>> t6
-    // array([[45., 45., 45., 45.],
-    //     [45., 45., 45., 45.]])
-    // >>>
+    // Show the graph
+    Graph.show();
 }
