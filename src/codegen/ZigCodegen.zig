@@ -6,38 +6,38 @@ const comptimePrint = std.fmt.comptimePrint;
 const codegen = @import("../codegen.zig");
 const ZigCodegen = @This();
 
-const header_fmt =
-    \\const std = @import("std");
-    \\pub fn main({s}) !void {{
-    \\
-;
 pub fn header(_: *const ZigCodegen, writer: anytype) void {
+    const header_fmt =
+        \\const std = @import("std");
+        \\pub fn main({s}) !void {{
+        \\
+    ;
     _ = writer.print(header_fmt, .{""}) catch unreachable;
 }
 
-const footer_code =
-    \\    //std.debug.print("{any}\n", .{tensor_0});
-    \\}
-    \\
-;
 pub fn footer(_: *const ZigCodegen, writer: anytype) void {
-    _ = writer.write(footer_code) catch unreachable;
+    const footer_code =
+        \\    //std.debug.print("{any}\n", .{tensor_0});
+        \\}
+        \\
+    ;
+    writer.write(footer_code) catch unreachable;
 }
 
-const alloc_fmt =
-    \\var tensor_{d}: [{d}]{s} = undefined;
-    \\
-;
 pub fn alloc(_: *const ZigCodegen, writer: anytype, id: usize, comptime dtype: type, size: usize) void {
+    const alloc_fmt =
+        \\var tensor_{d}: [{d}]{s} = undefined;
+        \\
+    ;
     writer.print(alloc_fmt, .{ id, size, @typeName(dtype) }) catch unreachable;
 }
 
-const memset_fmt =
-    \\@memset(&tensor_{d}, {any});
-    \\
-    \\
-;
 pub fn memset(_: *const ZigCodegen, writer: anytype, id: usize, comptime dtype: type, value: dtype) void {
+    const memset_fmt =
+        \\@memset(&tensor_{d}, {any});
+        \\
+        \\
+    ;
     writer.print(memset_fmt, .{ id, value }) catch unreachable;
 }
 
@@ -79,8 +79,8 @@ pub fn cast(
     });
     try writer.print(fmt, .{
         Out.size,
-        out.id.?,
-        x.id.?,
+        out.id,
+        x.id,
         "i",
     });
 }
@@ -108,8 +108,8 @@ pub fn map(
     // @compileLog(fmt);
     try writer.print(fmt, .{
         Out.size,
-        out.id.?,
-        x.id.?,
+        out.id,
+        x.id,
         "i",
     });
 }
@@ -146,7 +146,7 @@ pub fn zip(
                 data_read,
             }),
         });
-        try writer.print(fmt, .{ Out.size, out.id.?, a.id.?, "i", b.id.?, "i" });
+        try writer.print(fmt, .{ Out.size, out.id, a.id, "i", b.id, "i" });
     } else {
         const loop_fmt =
             \\for (0..{d}) |i_{d}| {{{{{{{{
@@ -168,11 +168,11 @@ pub fn zip(
         });
         const final_fmt = comptimePrint(nested_loop_fmt, .{inner_expression_fmt});
         try writer.print(final_fmt ++ "\n", .{
-            out.id.?,
+            out.id,
             codegen.idxToPos(Out, "i_"),
-            a.id.?,
+            a.id,
             codegen.broadcastIdxToPos(A, Out, "i_"),
-            b.id.?,
+            b.id,
             codegen.broadcastIdxToPos(B, Out, "i_"),
         });
     }
@@ -207,11 +207,11 @@ pub fn reduce(
             op_fmt,
         });
         try writer.print(fmt, .{
-            x.id.?,
+            x.id,
             X.size,
-            x.id.?,
+            x.id,
             "i",
-            out.id.?,
+            out.id,
         });
     } else {
         const no_acc_loop_fmt =
@@ -246,10 +246,10 @@ pub fn reduce(
         const final_fmt = comptimePrint(nested_loop_fmt, .{inner_expression_fmt});
         try writer.print(final_fmt, .{
             codegen.idxToPos(Out, "i_"),
-            x.id.?,
-            x.id.?,
+            x.id,
+            x.id,
             comptimePrint("pos + i_{d} * {d}", .{ dim.?, X.strides[dim.?] }),
-            out.id.?,
+            out.id,
         });
     }
 }

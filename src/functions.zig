@@ -1,17 +1,18 @@
 const ops = @import("ops.zig");
 const tensor = @import("tensor.zig");
+const Graph = @import("Graph.zig");
 
 // Higher order functions
 pub inline fn map(x_ptr: anytype, op: ops.MapOp) @TypeOf(x_ptr.*) {
-    return x_ptr.backend.map(op, x_ptr);
+    return Graph.map(op, x_ptr);
 }
 
 pub inline fn zip(a_ptr: anytype, op: ops.ZipOp, b_ptr: anytype) @TypeOf(a_ptr.*).Broadcast(@TypeOf(b_ptr.*)) {
-    return a_ptr.backend.zip(op, a_ptr, b_ptr);
+    return Graph.zip(op, a_ptr, b_ptr);
 }
 
 pub inline fn reduce(x_ptr: anytype, op: ops.ReduceOp, comptime dim: ?u8) @TypeOf(x_ptr.*).Reduce(dim) {
-    return x_ptr.backend.reduce(op, x_ptr, dim);
+    return Graph.reduce(op, x_ptr, dim);
 }
 
 fn FuncType(comptime op: ops.Op) type {
@@ -31,6 +32,7 @@ fn FuncType(comptime op: ops.Op) type {
                 unreachable;
             }
         }.reduceFn,
+        else => @compileError("This op does not run in runtime"),
     });
 }
 
@@ -51,32 +53,7 @@ inline fn Func(comptime op: ops.Op) FuncType(op) {
                 return reduce(self, op.ReduceOp, dim);
             }
         },
-    }.f;
-}
-
-// KEEPING THIS HERE FOR NOW
-// Pre-defined User Functions
-inline fn mapZipFunc(comptime map_op: ops.MapOp, comptime zip_op: ops.ZipOp) FuncType(.{ .ZipOp = zip_op }) {
-    return struct {
-        inline fn f(a_ptr: anytype, b: anytype) @TypeOf(a_ptr.*).Broadcast(@TypeOf(b)) {
-            return zip(&map(a_ptr, map_op), zip_op, b);
-        }
-    }.f;
-}
-
-inline fn zipMapFunc(comptime map_op: ops.MapOp, comptime zip_op: ops.ZipOp) FuncType(.{ .MapOp = map_op }) {
-    return struct {
-        inline fn f(a_ptr: anytype, b: anytype) @TypeOf(a_ptr.*).Broadcast(@TypeOf(b)) {
-            return map(&zip(a_ptr, zip_op, b), map_op);
-        }
-    }.f;
-}
-
-inline fn composeFunc(comptime map_op_f: ops.MapOp, comptime map_op_g: ops.MapOp) FuncType(.{ .MapOp = map_op_f }) {
-    return struct {
-        inline fn f(a_ptr: anytype) @TypeOf(a_ptr.*) {
-            return map(&map(a_ptr, map_op_g), map_op_f);
-        }
+        else => @compileError("This op does not run in runtime"),
     }.f;
 }
 
@@ -89,13 +66,13 @@ pub const log2 = Func(.{ .MapOp = .Log2 });
 pub inline fn exp(self: anytype) @TypeOf(self.*) {
     // 1 / log(2) = 1.44269504089
     // e^x = 2^(x / log(2))
-    return self.mul(tensor.constant(self.backend, @TypeOf(self.*).dtype, 1.44269504089)).exp2();
+    return self.mul(tensor.constant(@TypeOf(self.*).dtype, 1.44269504089)).exp2();
 }
 
 pub inline fn ln(comptime self: anytype) @TypeOf(self.*) {
     // log(2) = 0.69314718056
     // log(x) = log2(x)log(2)
-    return self.log2().mul(tensor.constant(self.backend, self.dtype, 0.69314718056));
+    return self.log2().mul(tensor.constant(self.dtype, 0.69314718056));
 }
 
 pub const neg = Func(.{ .MapOp = .Neg });

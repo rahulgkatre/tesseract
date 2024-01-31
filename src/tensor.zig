@@ -3,66 +3,21 @@ const Allocator = std.mem.Allocator;
 const comptimePrint = std.fmt.comptimePrint;
 const utils = @import("utils.zig");
 const ops = @import("ops.zig");
-const Backend = @import("backend.zig").Backend;
+const Graph = @import("Graph.zig");
 
 pub var debug = false;
 
 // TensorArena provides an allocator for the tensor metadata
 // No actual elements of the tensor are stored by this allocator
-pub const TensorArena = struct {
-    var arena: ?std.heap.ArenaAllocator = null;
-    var cache: std.AutoHashMap(usize, usize) = undefined;
-    var id_table: std.AutoHashMap(usize, usize) = undefined;
-    fn init(_arena: std.heap.ArenaAllocator) void {
-        arena = _arena;
-        cache = std.AutoHashMap(usize, usize).init(arena.?.allocator());
-        id_table = std.AutoHashMap(usize, usize).init(arena.?.allocator());
-    }
-    fn deinit() void {
-        arena.?.deinit();
-        arena = null;
-    }
-    fn allocator() std.mem.Allocator {
-        return arena.?.allocator();
-    }
-    // This function implements the caching to prevent the allocation of duplicate runtime tensors that
-    // correspond to the same comptime tensor
-    // This is done by using the raw comptime address as the key and the raw runtime address as the value
-    fn comptime_to_runtime(comptime tensor_type: type, comptime_tensor_ptr: anytype) *tensor_type {
-        // TODO: Is there an idiomatic way to do this?
-        const runtime_tensor_ptr = cache.get(@intFromPtr(comptime_tensor_ptr));
-        if (runtime_tensor_ptr != null) {
-            return @ptrFromInt(runtime_tensor_ptr.?);
-        }
-        const runtime_tensor: *tensor_type = TensorArena.allocator().create(tensor_type) catch @panic("Out of memory");
-        const runtime_tensor_id = id_table.count();
-        id_table.put(@intFromPtr(comptime_tensor_ptr), runtime_tensor_id) catch @panic("Out of memory");
-        runtime_tensor.* = .{
-            .id = runtime_tensor_id,
-            .backend = comptime_tensor_ptr.backend,
-            .evalFn = comptime_tensor_ptr.evalFn,
-        };
-        cache.put(@intFromPtr(comptime_tensor_ptr), @intFromPtr(runtime_tensor)) catch @panic("Out of memory");
-        return runtime_tensor;
-    }
-};
 
-pub fn runtime() void {
-    TensorArena.init(std.heap.ArenaAllocator.init(std.heap.page_allocator));
+pub fn constant(comptime dtype: type, comptime value: dtype) Tensor(dtype, .{1}) {
+    return Tensor(dtype, .{1}).full(value);
 }
 
-pub fn finished() void {
-    TensorArena.deinit();
-}
-
-pub fn constant(backend: *const Backend, comptime dtype: type, comptime value: dtype) Tensor(dtype, .{1}) {
-    return Tensor(dtype, .{1}).full(backend, value);
-}
-
-pub fn range(backend: *const Backend, comptime dtype: type, comptime start: dtype, comptime stop: dtype) Tensor(dtype, .{stop - start}) {
+pub fn range(comptime dtype: type, comptime start: dtype, comptime stop: dtype) Tensor(dtype, .{stop - start}) {
     @setEvalBranchQuota(@as(u32, 2 * stop));
     const data: [stop - start]dtype = std.simd.iota(dtype, stop - start) + @as(@Vector(stop - start, dtype), @splat(start));
-    return Tensor(dtype, .{stop - start}).fromData(backend, data[0..]);
+    return Tensor(dtype, .{stop - start}).fromData(data[0..]);
 }
 
 pub fn Tensor(comptime dtype: type, comptime shape: anytype) type {
@@ -88,70 +43,44 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         pub const shape: [ndims]usize = _shape;
         pub const strides: [ndims + 1]usize = _strides;
         pub const size = utils.storageSizeForTensor(ndims, shape, strides);
-        pub const str = comptimePrint(
-            "Tensor{{{any},{any}}}",
-            .{ dtype, shape },
-        );
 
-        id: ?usize = null,
         ndims: u8 = ndims,
         shape: [ndims]usize = shape,
         size: usize = size,
         strides: [ndims + 1]usize = strides,
-        backend: *const Backend,
-        storage: ?*Backend.Storage(dtype) = null,
-
-        // Callbacks for recursive traversal of compute graph
-        evalFn: *const fn (self: *Self) *Self,
+        traceFn: *const fn (self: *const Self) void,
 
         pub fn init(
-            backend: *const Backend,
-            comptime evalFn: *const fn (self: *Self) *Self,
+            comptime traceFn: *const fn (self: *const Self) void,
         ) Self {
-            return .{ .backend = backend, .evalFn = evalFn };
+            return .{ .traceFn = traceFn };
         }
 
         // Load the tensor's data from an array pointer
         // Not a slice because this guarantees that the size requirement is met and verified in comptime
-        pub fn fromData(backend: *const Backend, data: *const [size]dtype) Self {
+        pub fn fromData(data: *const [size]dtype) Self {
+            _ = data;
             const impl = struct {
-                fn eval(self: *Self) *Self {
-                    if (self.storage == null) {
-                        self.storage = self.backend.storage(self.id.?, dtype, size);
-                        self.storage.?.load(data);
-                        if (debug) {
-                            std.debug.print("tensor_{d} = FromData {s}\n", .{ self.id.?, str });
-                        }
-                    }
-                    return self;
+                fn trace(self: *const Self) void {
+                    Graph.new_node(self, .{ .InitOp = .{ .op = .FromData } }, Self);
                 }
             };
-            return .{ .backend = backend, .evalFn = impl.eval };
+            return init(impl.trace);
         }
 
         // Fill a tensor with a value
-        pub fn full(backend: *const Backend, comptime value: dtype) Self {
+        pub fn full(comptime value: dtype) Self {
+            _ = value;
             const impl = struct {
-                fn eval(self: *Self) *Self {
-                    if (self.storage == null) {
-                        self.storage = self.backend.storage(self.id.?, dtype, size);
-                        self.storage.?.fill(value);
-                        if (debug) {
-                            std.debug.print("tensor_{d} = Full({any}) {s}\n", .{ self.id.?, value, str });
-                        }
-                    }
-                    return self;
+                fn trace(self: *const Self) void {
+                    Graph.new_node(self, .{ .InitOp = .{ .op = .Full } }, Self);
                 }
             };
-            return .{ .backend = backend, .evalFn = impl.eval };
+            return init(impl.trace);
         }
 
-        pub fn create(self: *const Self) *Self {
-            return TensorArena.comptime_to_runtime(Self, self);
-        }
-
-        pub fn eval(comptime self: *const Self) *Self {
-            return self.evalFn(self.create());
+        pub fn trace(comptime self: *const Self) void {
+            self.traceFn(self);
         }
 
         pub fn isContiguous(_: *const Self) bool {
@@ -199,36 +128,24 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         pub fn permute(self: *const Self, comptime perm: [ndims]u8) Permute(perm) {
             const Out = Permute(perm);
             const impl = struct {
-                fn eval(out: *Out) *Out {
-                    if (out.storage == null) {
-                        const self_done = self.eval();
-                        out.storage = self_done.storage;
-                        if (debug) {
-                            std.debug.print("tensor_{d} = Permute({any}) tensor_{d}\n", .{ out.id.?, perm, self_done.id.? });
-                        }
-                    }
-                    return out;
+                fn trace(out: *const Out) void {
+                    self.trace();
+                    Graph.new_node(out, .{ .TypeOp = .{ .op = .Permute, .x = Graph.get_node(self) } }, Out);
                 }
             };
-            return .{ .backend = self.backend, .evalFn = impl.eval };
+            return Out.init(impl.trace);
         }
         pub fn view(self: *const Self, comptime new_shape: anytype) Tensor(dtype, new_shape) {
             const Out = Tensor(dtype, new_shape);
             std.debug.assert(Out.size == size);
             if (self.isContiguous()) {
                 const impl = struct {
-                    fn eval(out: *Out) *Out {
-                        if (out.storage == null) {
-                            const self_done = self.eval();
-                            out.storage = self_done.storage;
-                            if (debug) {
-                                std.debug.print("tensor_{d} = View({any}) tensor_{d}\n", .{ out.id.?, new_shape, self_done.id.? });
-                            }
-                        }
-                        return out;
+                    fn trace(out: *const Out) void {
+                        self.trace();
+                        Graph.new_node(out, .{ .TypeOp = .{ .op = .View, .x = Graph.get_node(self) } }, Out);
                     }
                 };
-                return Out.init(self.backend, impl.eval);
+                return Out.init(impl.trace);
             } else {
                 @compileError("Must be contiguous to view");
             }
@@ -237,27 +154,22 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
         pub fn asStrided(self: *const Self, comptime new_shape: anytype, comptime new_strides: anytype) AsStrided(dtype, new_shape, new_strides) {
             const Out = AsStrided(dtype, new_shape, new_strides);
             const impl = struct {
-                fn eval(out: *Out) *Out {
-                    if (out.storage == null) {
-                        const self_done = self.eval();
-                        out.storage = self_done.storage;
-                        if (debug) {
-                            std.debug.print("tensor_{d} = View({any}) tensor_{d}\n", .{ out.id.?, new_shape, self_done.id.? });
-                        }
-                    }
-                    return out;
+                fn trace(out: *const Out) void {
+                    self.trace();
+                    Graph.new_node(out, .{ .TypeOp = .{ .op = .AsStrided, .x = Graph.get_node(self) } }, Out);
                 }
             };
-            return .{ .backend = self.backend, .evalFn = impl.eval };
+            return init(impl.trace);
         }
 
         pub fn Cast(comptime new_dtype: type) type {
             return TensorView(new_dtype, ndims, shape, strides);
         }
         pub fn cast(self: *const Self, comptime new_dtype: type) Cast(new_dtype) {
-            return self.backend.cast(new_dtype, self);
+            return self.graph.?.cast(new_dtype, self);
         }
 
+        // TODO: Zip op can sometimes change the type (e.g. EQ and LT) so the new dtype needs to be specified
         pub fn Broadcast(comptime Other: type) type {
             // Gets the broadcast shape between two tensors if one exists
             // If the two tensors do not broadcast, the code won't compile
@@ -277,7 +189,6 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
                 }
                 bc_shape[bc_ndims - i - 1] = if (dim1 == dim2 or dim2 == 1) dim1 else dim2;
             }
-            // Broadcasting can sometimes change the type so the new dtype needs to be specified
             return Tensor(dtype, bc_shape);
         }
 
@@ -287,8 +198,8 @@ fn TensorView(comptime _dtype: type, comptime _ndims: u8, comptime _shape: [_ndi
             }
             if (dim.? >= ndims) {
                 @compileError(comptimePrint(
-                    "Reduce dim {d} is out of bounds for tensor {s} with ndims={d} ",
-                    .{ dim.?, str, ndims },
+                    "Reduce dim {d} is out of bounds for tensor with ndims={d} ",
+                    .{ dim.?, ndims },
                 ));
             }
             var reduced_shape: [ndims]usize = undefined;
