@@ -7,30 +7,30 @@ const ZigCodegen = @This();
 const Graph = @import("../Graph.zig");
 const dtypes = @import("../dtypes.zig");
 
-pub fn header(_: *const ZigCodegen, writer: anytype) void {
+pub fn header(_: *const ZigCodegen, writer: anytype) !void {
     const header_fmt =
         \\const std = @import("std");
         \\pub fn main({s}) !void {{
         \\
     ;
-    _ = writer.print(header_fmt, .{""}) catch unreachable;
+    try writer.print(header_fmt, .{""});
 }
 
-pub fn footer(_: *const ZigCodegen, writer: anytype) void {
+pub fn footer(_: *const ZigCodegen, writer: anytype) !void {
     const footer_code =
         \\    std.debug.print("{any}\n", .{tensor_0});
         \\}
         \\
     ;
-    writer.write(footer_code) catch unreachable;
+    try writer.write(footer_code);
 }
 
-pub fn alloc(_: *const ZigCodegen, writer: anytype, id: usize, comptime dtype: dtypes.DType, size: usize) void {
-    const alloc_fmt =
+pub fn storage(_: *const ZigCodegen, writer: anytype, id: usize, comptime dtype: dtypes.DType, size: usize) void {
+    const storage_fmt =
         \\var @"%{d}": [{d}]{s} = undefined;
         \\
     ;
-    writer.print(alloc_fmt, .{ id, size, @typeName(dtype) }) catch unreachable;
+    writer.print(storage_fmt, .{ id, size, @typeName(dtype) }) catch unreachable;
 }
 
 pub fn memset(writer: anytype, node: *Graph.Node) void {
@@ -66,15 +66,15 @@ pub fn as_type(
     const err_msg = comptimePrint("Cannot cast dtype {} to {}", .{ old_dtype, new_dtype });
     const fmt = std.fmt.allocPrint(no_broadcast_loop, .{
         comptimePrint(switch (new_dtype) {
-            .f16, .f32, .f64 => switch (@typeInfo(old_dtype)) {
-                .i4, .i8, .i16, .i32, .i64 => "@floatFromInt({s})",
-                .f16, .f32, .f64 => "@floatCast({s})",
+            dtypes.isFloat(new_dtype) => switch (@typeInfo(old_dtype)) {
+                dtypes.isInt(old_dtype) => "@floatFromInt({s})",
+                dtypes.isFloat(old_dtype) => "@floatCast({s})",
                 else => @compileError(err_msg),
             },
-            .i4, .i8, .i16, .i32, .i64 => switch (@typeInfo(old_dtype)) {
-                .f16, .f32, .f64 => "@intFromFloat({s})",
+            dtypes.isInt(new_dtype) => switch (@typeInfo(old_dtype)) {
+                dtypes.isFloat(old_dtype) => "@intFromFloat({s})",
                 .bool => "@intFromBool({s})",
-                .i4, .i8, .i16, .i32, .i64 => "@intCast({s})",
+                dtypes.isInt(old_dtype) => "@intCast({s})",
                 else => @compileError(err_msg),
             },
             else => @compileError(err_msg),
@@ -240,3 +240,77 @@ pub fn reduce(
         });
     }
 }
+
+// TODO: Test the codegen
+// test "cast codegen" {
+//     const actual = comptime gen: {
+//         var t1 = tensor.range(TestBackend, f32, 4.0, 16.0);
+//         var t2 = t1.cast(i32);
+//         const cg = @import("codegen/ZigCodegen.zig"){};
+//         break :gen cg.cast(i32, &t1, 1, @constCast(&t2), 0);
+//     };
+//     _ = actual;
+//     const expected =
+//         \\for (0..12) |i| {
+//         \\    t0[i] = @intFromFloat(t1[i]);
+//         \\}
+//     ;
+//     _ = expected;
+//     // try expectEqual(expected[0..expected.len].*, actual[0..actual.len].*);
+// }
+
+// test "map codegen" {
+//     const actual = comptime gen: {
+//         var t1 = tensor.range(TestBackend, f32, 4.0, 16.0);
+//         var t2 = t1.neg();
+//         const cg = @import("codegen/ZigCodegen.zig"){};
+//         break :gen cg.map(.neg, &t1, 1, @constCast(&t2), 0);
+//     };
+//     _ = actual;
+//     const expected =
+//         \\for (0..12) |i| {
+//         \\    t0[i] = -(t1[i]);
+//         \\}
+//     ;
+//     _ = expected;
+//     // try expectEqual(expected[0..expected.len].*, actual[0..actual.len].*);
+// }
+
+// test "zip no broadcast codegen" {
+//     const actual = comptime gen: {
+//         var t1 = tensor.range(TestBackend, f32, 4.0, 16.0);
+//         var t2 = tensor.range(TestBackend, f32, 4.0, 16.0);
+//         var t3 = t1.add(t2);
+//         const cg = @import("codegen/ZigCodegen.zig"){};
+//         break :gen cg.zip(.add, &t1, &t2, @constCast(&t3));
+//     };
+//     _ = actual;
+//     const expected =
+//         \\for (0..12) |i| {
+//         \\    t0[i] = (t1[i]) + (t2[i]);
+//         \\}
+//     ;
+//     _ = expected;
+//     // try expectEqual(expected[0..expected.len].*, actual[0..actual.len].*);
+// }
+
+// test "reduce all codegen" {
+//     const actual = comptime gen: {
+//         var t1 = tensor.range(TestBackend, f32, 4.0, 16.0);
+//         var t2 = t1.sum(null);
+//         const cg = @import("codegen/ZigCodegen.zig"){};
+//         break :gen cg.reduce(.sum, &t1, 1, null, @constCast(&t2), 0);
+//     };
+//     _ = actual;
+//     const expected =
+//         \\{
+//         \\    var acc = t1[0];
+//         \\    for (1..12) |i| {
+//         \\        acc = (acc) + (t1[i]);
+//         \\    }
+//         \\    t0[0] = acc;
+//         \\}
+//     ;
+//     _ = expected;
+//     // try expectEqual(expected[0..expected.len].*, actual[0..actual.len].*);
+// }

@@ -20,5 +20,3 @@ pub const Op = union(enum) {
     TypeOp: TypeOp,
     InitOp: InitOp,
 };
-
-// TODO: Optional: add a comptime hash map to convert op enums to symbols for graph visualiztion
