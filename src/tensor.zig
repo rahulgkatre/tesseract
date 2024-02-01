@@ -104,7 +104,7 @@ fn TensorView(comptime _dtype: dtypes.DType, comptime _ndims: u8, comptime _shap
                 utils.permuteArray(ndims + 1, strides, strides_perm),
             );
         }
-        pub fn permute(self: *const Self, comptime perm: [ndims]u8) permute(perm) {
+        pub fn permute(self: *const Self, comptime perm: [ndims]u8) Permute(perm) {
             const Out = Permute(perm);
             const traceFn = struct {
                 fn trace(out: *const Out) void {
@@ -131,7 +131,7 @@ fn TensorView(comptime _dtype: dtypes.DType, comptime _ndims: u8, comptime _shap
             }
         }
 
-        pub fn as_strided(self: *const Self, comptime new_shape: anytype, comptime new_strides: anytype) AsStrided(dtype, new_shape, new_strides) {
+        pub fn asStrided(self: *const Self, comptime new_shape: anytype, comptime new_strides: anytype) AsStrided(dtype, new_shape, new_strides) {
             const Out = AsStrided(dtype, new_shape, new_strides);
             const traceFn = struct {
                 fn trace(out: *const Out) void {
@@ -145,7 +145,7 @@ fn TensorView(comptime _dtype: dtypes.DType, comptime _ndims: u8, comptime _shap
         pub fn AsType(comptime new_dtype: dtypes.DType) type {
             return TensorView(new_dtype, ndims, shape, strides);
         }
-        pub fn as_type(self: *const Self, comptime new_dtype: dtypes.DType) AsType(new_dtype) {
+        pub fn asType(self: *const Self, comptime new_dtype: dtypes.DType) AsType(new_dtype) {
             const Out: type = AsType(new_dtype);
             const traceFn = struct {
                 fn trace(out: *const Out) void {
@@ -213,15 +213,17 @@ fn TensorView(comptime _dtype: dtypes.DType, comptime _ndims: u8, comptime _shap
             };
         }
         pub fn zip(a: *const Self, comptime op: ops.ZipOp, b: anytype) Broadcast(@TypeOf(b), ZipNewDtype(op)) {
-            const Out: type = Broadcast(@TypeOf(b), ZipNewDtype(op));
-            const traceFn = struct {
-                fn trace(out: *const Out) void {
-                    a.trace();
-                    b.trace();
-                    Graph.Node.new(out, .{ .ZipOp = .{ .op = op, .a = Graph.Node.get(a), .b = Graph.Node.get(&b) } }, Out);
-                }
-            }.trace;
-            return Out.init(traceFn);
+            return comptime blk: {
+                const Out: type = Broadcast(@TypeOf(b), ZipNewDtype(op));
+                const traceFn = struct {
+                    fn trace(out: *const Out) void {
+                        a.trace();
+                        b.trace();
+                        Graph.Node.new(out, .{ .ZipOp = .{ .op = op, .a = Graph.Node.get(a), .b = Graph.Node.get(&b) } }, Out);
+                    }
+                }.trace;
+                break :blk Out.init(traceFn);
+            };
         }
         // ZipOps
         pub fn add(a: *const Self, b: anytype) Broadcast(@TypeOf(b), dtype) {
@@ -298,4 +300,129 @@ fn TensorView(comptime _dtype: dtypes.DType, comptime _ndims: u8, comptime _shap
             return a.add(b.neg());
         }
     };
+}
+
+test "same tensors assignable" {
+    // This test catches regressions caused by comptime slices with the same values not being
+    // equal to teach other, which would cause this test to not compile
+    // Note that the fill value is different: this should have no effect
+    comptime {
+        const tensor1 = Tensor(.i32, .{ 2, 3, 4 }).full(0);
+        var tensor2 = Tensor(.i32, .{ 2, 3, 4 }).full(1);
+        tensor2 = tensor1;
+    }
+}
+
+test "permute" {
+    comptime {
+        const tensor1 = Tensor(.i32, .{ 2, 3, 4 }).full(0);
+        const tensor2 = tensor1.permute(.{ 0, 2, 1 });
+        try std.testing.expectEqual([_]usize{ 2, 4, 3 }, tensor2.shape);
+        try std.testing.expectEqual([_]usize{ 12, 1, 4, 0 }, tensor2.strides);
+    }
+}
+
+test "view" {
+    comptime {
+        const tensor1 = Tensor(.i32, .{ 2, 3, 4 }).full(0);
+        const tensor2 = tensor1.view(.{ 12, 2 });
+        const tensor3 = tensor2.view(.{24});
+        try std.testing.expectEqual([_]usize{ 12, 2 }, tensor2.shape);
+        try std.testing.expectEqual([_]usize{ 2, 1, 0 }, tensor2.strides);
+        try std.testing.expectEqual([_]usize{24}, tensor3.shape);
+        try std.testing.expectEqual([_]usize{ 1, 0 }, tensor3.strides);
+    }
+}
+
+test "as strided" {
+    // Based on example from https://pytorch.org/docs/stable/generated/torch.as_strided.html
+    // Need to add back idxToPos to improve coverage of tests, but make it a util function instead
+    comptime {
+        const tensor1 = Tensor(.i32, .{ 3, 3 }).full(0);
+        const tensor2 = tensor1.asStrided(.{ 2, 2 }, .{ 1, 2, 0 });
+
+        try std.testing.expectEqual([_]usize{ 2, 2 }, tensor2.shape);
+        try std.testing.expectEqual(false, tensor2.isContiguous());
+
+        const test_indices = [_][2]usize{ .{ 0, 0 }, .{ 0, 1 }, .{ 1, 0 }, .{ 1, 1 } };
+        _ = test_indices;
+        const expected_flat_indices1 = [_]usize{ 0, 2, 1, 3 };
+        _ = expected_flat_indices1;
+        // for (expected_flat_indices1, test_indices) |expected_flat_i, test_i| {
+        //     try std.testing.expectEqual(expected_flat_i, tensor2.idxToPos(test_i));
+        // }
+
+        const tensor3 = tensor1.asStrided(.{ 2, 2 }, .{ 1, 2, 1 });
+        _ = tensor3;
+        try std.testing.expectEqual([_]usize{ 2, 2 }, tensor2.shape);
+        try std.testing.expectEqual(false, tensor2.isContiguous());
+
+        const expected_flat_indices2 = [_]usize{ 1, 3, 2, 4 };
+        _ = expected_flat_indices2;
+        // for (expected_flat_indices2, test_indices) |expected_flat_i, test_i| {
+        //     try std.testing.expectEqual(expected_flat_i, tensor3.idxToPos(test_i));
+        // }
+    }
+}
+
+test "map" {
+    const tensor1 = comptime Tensor(.i32, .{ 2, 3, 4 }).full(3);
+    const tensor2 = comptime tensor1.neg();
+    try std.testing.expectEqual([_]usize{ 2, 3, 4 }, tensor2.shape);
+    Graph.init();
+    defer Graph.deinit();
+    tensor2.trace();
+    try std.testing.expect(Graph.Node.get(&tensor2).link.MapOp.op == .Neg);
+    try std.testing.expect(Graph.Node.get(&tensor2).link.MapOp.x == Graph.Node.get(&tensor1));
+}
+
+test "zip" {
+    const tensor1 = comptime Tensor(.i32, .{ 2, 1, 4 }).full(2);
+    const tensor2 = comptime Tensor(.i32, .{ 3, 1 }).full(3);
+    const tensor3 = comptime tensor1.add(tensor2);
+    try std.testing.expectEqual([_]usize{ 2, 3, 4 }, tensor3.shape);
+    Graph.init();
+    defer Graph.deinit();
+    tensor3.trace();
+    try std.testing.expect(Graph.Node.get(&tensor3).link.ZipOp.op == .Add);
+    try std.testing.expect(Graph.Node.get(&tensor3).link.ZipOp.a == Graph.Node.get(&tensor1));
+    try std.testing.expect(Graph.Node.get(&tensor3).link.ZipOp.b == Graph.Node.get(&tensor2));
+}
+
+test "reduce" {
+    const tensor1 = comptime Tensor(.i32, .{ 2, 3, 4 }).full(5);
+    const tensor2 = comptime tensor1.sum(1);
+    try std.testing.expectEqual([_]usize{ 2, 1, 4 }, tensor2.shape);
+    Graph.init();
+    defer Graph.deinit();
+    tensor2.trace();
+    try std.testing.expect(Graph.Node.get(&tensor2).link.ReduceOp.op == .Sum);
+    try std.testing.expect(Graph.Node.get(&tensor2).link.ReduceOp.x == Graph.Node.get(&tensor1));
+    try std.testing.expect(Graph.Node.get(&tensor2).link.ReduceOp.dim == 1);
+}
+
+test "zip reduce" {
+    const tensor1 = comptime Tensor(.i32, .{ 2, 1, 4 }).full(2);
+    const tensor2 = comptime Tensor(.i32, .{ 2, 3, 1 }).full(3);
+    const tensor3 = comptime tensor1.add(tensor2).sum(1);
+    try std.testing.expectEqual([_]usize{ 2, 1, 4 }, tensor3.shape);
+    Graph.init();
+    defer Graph.deinit();
+    tensor3.trace();
+    try std.testing.expect(Graph.Node.get(&tensor3).link.ReduceOp.op == .Sum);
+    // Anonymous intermediate tensor that stores tensor1 + tensor2
+    const anon_node = Graph.Node.get(&tensor3).link.ReduceOp.x;
+    try std.testing.expect(anon_node.link.ZipOp.a == Graph.Node.get(&tensor1));
+    try std.testing.expect(anon_node.link.ZipOp.b == Graph.Node.get(&tensor2));
+}
+
+test "as_type" {
+    comptime {
+        const tensor1 = Tensor(.bool, .{3}).full(true);
+        const tensor2 = tensor1.asType(.i32);
+        const tensor3 = tensor2.asType(.i8);
+        const tensor4 = tensor3.asType(.f16);
+        const tensor5 = tensor4.asType(.f32);
+        _ = tensor5;
+    }
 }
