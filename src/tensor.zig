@@ -17,7 +17,7 @@ pub fn range(comptime dtype: dtypes.DType, comptime start: dtype, comptime stop:
 }
 
 pub fn Tensor(comptime dtype: dtypes.DType, comptime shape: anytype) type {
-    return AsStrided(dtype, shape, utils.stridesFromShape(shape));
+    return comptime AsStrided(dtype, shape, utils.stridesFromShape(shape));
 }
 
 fn AsStrided(comptime dtype: dtypes.DType, comptime shape: anytype, comptime strides: anytype) type {
@@ -31,7 +31,14 @@ fn AsStrided(comptime dtype: dtypes.DType, comptime shape: anytype, comptime str
 // its generic parameters directly affect how data is accessed (viewed)
 // While TensorView provides the API, the constructor is not the friendliest
 // hence there is a simpler Tensor constructor
-fn TensorView(comptime _dtype: dtypes.DType, comptime _ndims: u8, comptime _shape: [_ndims]usize, comptime _strides: [_ndims + 1]usize) type {
+fn TensorView(
+    // These generic parameters are private so they will be redeclared
+    // as public constants in the result type
+    comptime _dtype: dtypes.DType,
+    comptime _ndims: u8,
+    comptime _shape: [_ndims]usize,
+    comptime _strides: [_ndims + 1]usize,
+) type {
     return struct {
         const Self = @This();
         pub const dtype: dtypes.DType = _dtype;
@@ -69,7 +76,7 @@ fn TensorView(comptime _dtype: dtypes.DType, comptime _ndims: u8, comptime _shap
             _ = value;
             const traceFn = struct {
                 fn trace(self: *const Self) void {
-                    Graph.Node.new(self, .{ .InitOp = .{ .op = .Full } }, Self);
+                    Graph.Vertex.new(self, .{ .InitOp = .{ .op = .Full } }, Self);
                 }
             }.trace;
             return init(traceFn);
@@ -80,7 +87,7 @@ fn TensorView(comptime _dtype: dtypes.DType, comptime _ndims: u8, comptime _shap
             _ = value;
             const traceFn = struct {
                 fn trace(self: *const Self) void {
-                    Graph.Node.new(self, .{ .InitOp = .{ .op = .Rand } }, Self);
+                    Graph.Vertex.new(self, .{ .InitOp = .{ .op = .Rand } }, Self);
                 }
             }.trace;
             return init(traceFn);
@@ -104,67 +111,92 @@ fn TensorView(comptime _dtype: dtypes.DType, comptime _ndims: u8, comptime _shap
                 utils.permuteArray(ndims + 1, strides, strides_perm),
             );
         }
-        pub fn permute(self: *const Self, comptime perm: [ndims]u8) Permute(perm) {
-            const Out = Permute(perm);
-            const traceFn = struct {
-                fn trace(out: *const Out) void {
-                    self.trace();
-                    Graph.Node.new(out, .{ .TypeOp = .{ .op = .Permute, .x = Graph.Node.get(self) } }, Out);
-                }
-            }.trace;
-            return Out.init(traceFn);
-        }
-
-        pub fn view(self: *const Self, comptime new_shape: anytype) Tensor(dtype, new_shape) {
-            const Out = Tensor(dtype, new_shape);
-            std.debug.assert(Out.size == size);
-            if (self.isContiguous()) {
+        pub fn permute(x: *const Self, comptime perm: [ndims]u8) Permute(perm) {
+            comptime {
+                const Out = Permute(perm);
                 const traceFn = struct {
                     fn trace(out: *const Out) void {
-                        self.trace();
-                        Graph.Node.new(out, .{ .TypeOp = .{ .op = .View, .x = Graph.Node.get(self) } }, Out);
+                        x.trace();
+                        Graph.Vertex.new(out, .{ .TypeOp = .{
+                            .op = .Permute,
+                            .x = Graph.Vertex.get(x),
+                        } }, Out);
                     }
                 }.trace;
                 return Out.init(traceFn);
-            } else {
-                @compileError("Must be contiguous to view");
             }
         }
 
-        pub fn asStrided(self: *const Self, comptime new_shape: anytype, comptime new_strides: anytype) AsStrided(dtype, new_shape, new_strides) {
-            const Out = AsStrided(dtype, new_shape, new_strides);
-            const traceFn = struct {
-                fn trace(out: *const Out) void {
-                    self.trace();
-                    Graph.Node.new(out, .{ .TypeOp = .{ .op = .AsStrided, .x = Graph.Node.get(self) } }, Out);
+        pub fn view(x: *const Self, comptime new_shape: anytype) Tensor(dtype, new_shape) {
+            comptime {
+                const Out = Tensor(dtype, new_shape);
+                std.debug.assert(Out.size == size);
+                if (x.isContiguous()) {
+                    const traceFn = struct {
+                        fn trace(out: *const Out) void {
+                            x.trace();
+                            Graph.Vertex.new(out, .{ .TypeOp = .{
+                                .op = .View,
+                                .x = Graph.Vertex.get(x),
+                            } }, Out);
+                        }
+                    }.trace;
+                    return Out.init(traceFn);
+                } else {
+                    @compileError("Must be contiguous to view");
                 }
-            }.trace;
-            return Out.init(traceFn);
+            }
+        }
+
+        pub fn asStrided(x: *const Self, comptime new_shape: anytype, comptime new_strides: anytype) AsStrided(dtype, new_shape, new_strides) {
+            comptime {
+                const Out = AsStrided(dtype, new_shape, new_strides);
+                const traceFn = struct {
+                    fn trace(out: *const Out) void {
+                        x.trace();
+                        Graph.Vertex.new(out, .{ .TypeOp = .{
+                            .op = .AsStrided,
+                            .x = Graph.Vertex.get(x),
+                        } }, Out);
+                    }
+                }.trace;
+                return Out.init(traceFn);
+            }
         }
 
         pub fn AsType(comptime new_dtype: dtypes.DType) type {
             return TensorView(new_dtype, ndims, shape, strides);
         }
-        pub fn asType(self: *const Self, comptime new_dtype: dtypes.DType) AsType(new_dtype) {
-            const Out: type = AsType(new_dtype);
-            const traceFn = struct {
-                fn trace(out: *const Out) void {
-                    self.trace();
-                    Graph.Node.new(out, .{ .TypeOp = .{ .op = .AsType, .x = Graph.Node.get(self) } }, Out);
-                }
-            }.trace;
-            return Out.init(traceFn);
+        pub fn asType(x: *const Self, comptime new_dtype: dtypes.DType) AsType(new_dtype) {
+            comptime {
+                const Out: type = AsType(new_dtype);
+                const traceFn = struct {
+                    fn trace(out: *const Out) void {
+                        x.trace();
+                        Graph.Vertex.new(out, .{ .TypeOp = .{
+                            .op = .AsType,
+                            .x = Graph.Vertex.get(x),
+                        } }, Out);
+                    }
+                }.trace;
+                return Out.init(traceFn);
+            }
         }
 
         pub fn map(x: *const Self, comptime op: ops.MapOp) Self {
-            const Out: type = @TypeOf(x.*);
-            const traceFn = struct {
-                fn trace(out: *const Out) void {
-                    x.trace();
-                    Graph.Node.new(out, .{ .MapOp = .{ .op = op, .x = Graph.Node.get(x) } }, Out);
-                }
-            }.trace;
-            return Out.init(traceFn);
+            comptime {
+                const Out: type = @TypeOf(x.*);
+                const traceFn = struct {
+                    fn trace(out: *const Out) void {
+                        x.trace();
+                        Graph.Vertex.new(out, .{ .MapOp = .{
+                            .op = op,
+                            .x = Graph.Vertex.get(x),
+                        } }, Out);
+                    }
+                }.trace;
+                return Out.init(traceFn);
+            }
         }
         pub fn exp2(x: *const Self) Self {
             return x.map(.Exp2);
@@ -186,8 +218,6 @@ fn TensorView(comptime _dtype: dtypes.DType, comptime _ndims: u8, comptime _shap
         }
 
         pub fn Broadcast(comptime OtherTensorType: type, comptime new_dtype: dtypes.DType) type {
-            // Gets the broadcast shape between two tensors if one exists
-            // If the two tensors do not broadcast, the code won't compile
             if (dtype != OtherTensorType.dtype) {
                 @compileError("Cannot broadcast tensors as they do not have the same dtype, please cast first");
             }
@@ -206,24 +236,30 @@ fn TensorView(comptime _dtype: dtypes.DType, comptime _ndims: u8, comptime _shap
             }
             return Tensor(new_dtype, bc_shape);
         }
-        fn ZipNewDtype(comptime op: ops.ZipOp) dtypes.DType {
+        fn ZipNewDType(comptime op: ops.ZipOp) dtypes.DType {
             return switch (op) {
                 .Equals, .LessThan => .bool,
                 else => dtype,
             };
         }
-        pub fn zip(a: *const Self, comptime op: ops.ZipOp, b: anytype) Broadcast(@TypeOf(b), ZipNewDtype(op)) {
-            return comptime blk: {
-                const Out: type = Broadcast(@TypeOf(b), ZipNewDtype(op));
+        pub fn zip(a: *const Self, comptime op: ops.ZipOp, b: anytype) Broadcast(@TypeOf(b), ZipNewDType(op)) {
+            comptime {
+                const Out: type = Broadcast(@TypeOf(b), ZipNewDType(op));
                 const traceFn = struct {
                     fn trace(out: *const Out) void {
                         a.trace();
                         b.trace();
-                        Graph.Node.new(out, .{ .ZipOp = .{ .op = op, .a = Graph.Node.get(a), .b = Graph.Node.get(&b) } }, Out);
+                        Graph.Vertex.new(out, .{
+                            .ZipOp = .{
+                                .op = op,
+                                .a = Graph.Vertex.get(a),
+                                .b = Graph.Vertex.get(&b),
+                            },
+                        }, Out);
                     }
                 }.trace;
-                break :blk Out.init(traceFn);
-            };
+                return Out.init(traceFn);
+            }
         }
         // ZipOps
         pub fn add(a: *const Self, b: anytype) Broadcast(@TypeOf(b), dtype) {
@@ -248,38 +284,72 @@ fn TensorView(comptime _dtype: dtypes.DType, comptime _ndims: u8, comptime _shap
             return a.zip(.Xor, b);
         }
 
-        pub fn Reduce(comptime dim: ?u8) type {
-            if (dim == null) {
-                return Tensor(dtype, [_]usize{1} ** ndims);
+        pub fn Reduce(comptime reduction: anytype) type {
+            const ReductionType = @TypeOf(reduction);
+            switch (@typeInfo(ReductionType)) {
+                .ComptimeInt, .Int => {
+                    const dim = reduction;
+                    if (dim < 0 or dim >= ndims) {
+                        @compileError("Dimension index for single dimension reduce is out of bounds");
+                    }
+                    var reduced_shape: [ndims]usize = undefined;
+                    @memcpy(&reduced_shape, &shape);
+                    reduced_shape[dim] = 1;
+                    return Tensor(dtype, reduced_shape);
+                },
+                .Null, .Void => {
+                    return Tensor(dtype, [_]usize{1} ** ndims);
+                },
+                else => {
+                    const dims = reduction;
+                    if (dims.len > ndims) {
+                        @compileError("Length of dimension index array for multi dimension reduce is out of bounds");
+                    }
+                    var reduced: [ndims]bool = [_]bool{false} ** ndims;
+                    var reduced_shape: [ndims]usize = undefined;
+                    @memcpy(&reduced_shape, &shape);
+                    for (0..dims.len) |d| {
+                        if (d < 0 or d >= ndims) {
+                            @compileError("Dimension index for multi dimension reduce is out of bounds");
+                        }
+                        if (reduced[d]) {
+                            @compileError("Cannot reuse dimension index for multi dimensional reduce");
+                        }
+                        reduced[d] = true;
+                        reduced_shape[d] = 1;
+                    }
+                    return Tensor(dtype, reduced_shape);
+                },
             }
-            if (dim.? >= ndims) {
-                @compileError(comptimePrint(
-                    "Reduce dim {d} is out of bounds for tensor with ndims={d} ",
-                    .{ dim.?, ndims },
-                ));
-            }
-            var reduced_shape: [ndims]usize = undefined;
-            @memcpy(&reduced_shape, &shape);
-            reduced_shape[dim.?] = 1;
-            return Tensor(dtype, reduced_shape);
         }
-        pub fn reduce(x: *const Self, comptime op: ops.ReduceOp, comptime dim: ?u8) Reduce(dim) {
-            const Out: type = Reduce(dim);
-            const traceFn = struct {
-                fn trace(out: *const Out) void {
-                    x.trace();
-                    Graph.Node.new(out, .{ .ReduceOp = .{ .op = op, .x = Graph.Node.get(x), .dim = dim } }, Out);
-                }
-            }.trace;
-            return Out.init(traceFn);
+        pub fn reduce(x: *const Self, comptime op: ops.ReduceOp, comptime reduction: anytype) Reduce(reduction) {
+            comptime {
+                const Out: type = Reduce(reduction);
+                const dims = switch (@typeInfo(@TypeOf(reduction))) {
+                    .ComptimeInt, .Int => [_]u8{reduction},
+                    .Null, .Void => @as([ndims]u8, std.simd.iota(u8, ndims)),
+                    else => @as([reduction.len]u8, reduction),
+                };
+                const traceFn = struct {
+                    fn trace(out: *const Out) void {
+                        x.trace();
+                        Graph.Vertex.new(out, .{ .ReduceOp = .{
+                            .op = op,
+                            .x = Graph.Vertex.get(x),
+                            .dims = dims[0..],
+                        } }, Out);
+                    }
+                }.trace;
+                return Out.init(traceFn);
+            }
         }
 
         // ReduceOps
-        pub fn sum(x: *const Self, comptime dim: ?u8) Reduce(dim) {
-            return x.reduce(.Sum, dim);
+        pub fn sum(x: *const Self, comptime reduction: anytype) Reduce(reduction) {
+            return x.reduce(.Sum, reduction);
         }
-        pub fn max(x: *const Self, comptime dim: ?u8) Reduce(dim) {
-            return x.reduce(.Max, dim);
+        pub fn max(x: *const Self, comptime reduction: anytype) Reduce(reduction) {
+            return x.reduce(.Max, reduction);
         }
 
         // Compound functions that use the ops
@@ -372,8 +442,8 @@ test "map" {
     Graph.init();
     defer Graph.deinit();
     tensor2.trace();
-    try std.testing.expect(Graph.Node.get(&tensor2).link.MapOp.op == .Neg);
-    try std.testing.expect(Graph.Node.get(&tensor2).link.MapOp.x == Graph.Node.get(&tensor1));
+    try std.testing.expect(Graph.Vertex.get(&tensor2).edge.MapOp.op == .Neg);
+    try std.testing.expect(Graph.Vertex.get(&tensor2).edge.MapOp.x == Graph.Vertex.get(&tensor1));
 }
 
 test "zip" {
@@ -384,9 +454,9 @@ test "zip" {
     Graph.init();
     defer Graph.deinit();
     tensor3.trace();
-    try std.testing.expect(Graph.Node.get(&tensor3).link.ZipOp.op == .Add);
-    try std.testing.expect(Graph.Node.get(&tensor3).link.ZipOp.a == Graph.Node.get(&tensor1));
-    try std.testing.expect(Graph.Node.get(&tensor3).link.ZipOp.b == Graph.Node.get(&tensor2));
+    try std.testing.expect(Graph.Vertex.get(&tensor3).edge.ZipOp.op == .Add);
+    try std.testing.expect(Graph.Vertex.get(&tensor3).edge.ZipOp.a == Graph.Vertex.get(&tensor1));
+    try std.testing.expect(Graph.Vertex.get(&tensor3).edge.ZipOp.b == Graph.Vertex.get(&tensor2));
 }
 
 test "reduce" {
@@ -396,9 +466,22 @@ test "reduce" {
     Graph.init();
     defer Graph.deinit();
     tensor2.trace();
-    try std.testing.expect(Graph.Node.get(&tensor2).link.ReduceOp.op == .Sum);
-    try std.testing.expect(Graph.Node.get(&tensor2).link.ReduceOp.x == Graph.Node.get(&tensor1));
-    try std.testing.expect(Graph.Node.get(&tensor2).link.ReduceOp.dim == 1);
+    try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.op == .Sum);
+    try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.x == Graph.Vertex.get(&tensor1));
+    try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.dims[0] == 1);
+}
+
+test "multiple dim reduce" {
+    const tensor1 = comptime Tensor(.i32, .{ 2, 3, 4 }).full(5);
+    const tensor2 = comptime tensor1.sum(.{ 0, 1 });
+    try std.testing.expectEqual([_]usize{ 1, 1, 4 }, tensor2.shape);
+    Graph.init();
+    defer Graph.deinit();
+    tensor2.trace();
+    try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.op == .Sum);
+    try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.x == Graph.Vertex.get(&tensor1));
+    try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.dims[0] == 0);
+    try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.dims[1] == 1);
 }
 
 test "zip reduce" {
@@ -409,11 +492,11 @@ test "zip reduce" {
     Graph.init();
     defer Graph.deinit();
     tensor3.trace();
-    try std.testing.expect(Graph.Node.get(&tensor3).link.ReduceOp.op == .Sum);
+    try std.testing.expect(Graph.Vertex.get(&tensor3).edge.ReduceOp.op == .Sum);
     // Anonymous intermediate tensor that stores tensor1 + tensor2
-    const anon_node = Graph.Node.get(&tensor3).link.ReduceOp.x;
-    try std.testing.expect(anon_node.link.ZipOp.a == Graph.Node.get(&tensor1));
-    try std.testing.expect(anon_node.link.ZipOp.b == Graph.Node.get(&tensor2));
+    const anon = Graph.Vertex.get(&tensor3).edge.ReduceOp.x;
+    try std.testing.expect(anon.edge.ZipOp.a == Graph.Vertex.get(&tensor1));
+    try std.testing.expect(anon.edge.ZipOp.b == Graph.Vertex.get(&tensor2));
 }
 
 test "as_type" {
