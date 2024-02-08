@@ -48,6 +48,7 @@ fn TensorView(
         pub const size = utils.storageSizeForTensor(ndims, shape, strides);
 
         ndims: u8 = ndims,
+        dtype: dtypes.DType = dtype,
         shape: [ndims]usize = shape,
         size: usize = size,
         strides: [ndims + 1]usize = strides,
@@ -500,12 +501,18 @@ test "zip reduce" {
 }
 
 test "as_type" {
-    comptime {
-        const tensor1 = Tensor(.bool, .{3}).full(true);
-        const tensor2 = tensor1.asType(.i32);
-        const tensor3 = tensor2.asType(.i8);
-        const tensor4 = tensor3.asType(.f16);
-        const tensor5 = tensor4.asType(.f32);
-        _ = tensor5;
-    }
+    const tensor1 = comptime Tensor(.bool, .{3}).full(true);
+    try std.testing.expect(tensor1.dtype == .bool);
+    const tensor2 = comptime tensor1.asType(.i32);
+    try std.testing.expect(tensor2.dtype == .i32);
+    const tensor3 = comptime tensor2.asType(.i8);
+    try std.testing.expect(tensor3.dtype == .i8);
+    const tensor4 = comptime tensor3.asType(.f16);
+    try std.testing.expect(tensor4.dtype == .f16);
+    const tensor5 = comptime tensor4.asType(.f32);
+    try std.testing.expect(tensor5.dtype == .f32);
+    Graph.init();
+    defer Graph.deinit();
+    tensor5.trace();
+    Graph.viz();
 }
