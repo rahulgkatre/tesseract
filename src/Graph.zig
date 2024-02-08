@@ -93,30 +93,36 @@ pub const Vertex = struct {
         v.visited = true;
         switch (v.edge) {
             .InitOp => |e| {
-                std.debug.print("t{d} : ({s}, {any}) = {s}({s}, {any})\n", .{ v.id, @tagName(v.dtype), v.shape, @tagName(e.op), @tagName(v.dtype), v.shape });
+                std.debug.print("\tt{d} [label=\" t{d} : ({s}, {any}) = {s}\"];\n", .{ v.id, v.id, @tagName(v.dtype), v.shape, @tagName(e.op) });
             },
             .MapOp => |e| {
                 e.x.viz();
-                std.debug.print("t{d} : ({s}, {any}) = {s}(t{d})\n", .{ v.id, @tagName(v.dtype), v.shape, @tagName(e.op), e.x.id });
+                std.debug.print("\tt{d} [label=\" t{d} : ({s}, {any}) = {s}(t{d})\"];\n", .{ v.id, v.id, @tagName(v.dtype), v.shape, @tagName(e.op), e.x.id });
+                std.debug.print("\tt{d} -> t{d};\n", .{ e.x.id, v.id });
             },
             .ZipOp => |e| {
                 e.a.viz();
                 e.b.viz();
-                std.debug.print("t{d} : ({s}, {any}) = {s}(t{d}, t{d})\n", .{ v.id, @tagName(v.dtype), v.shape, @tagName(e.op), e.a.id, e.b.id });
+                std.debug.print("\tt{d} [label=\" t{d} : ({s}, {any}) = {s}(t{d}, t{d})\"];\n", .{ v.id, v.id, @tagName(v.dtype), v.shape, @tagName(e.op), e.a.id, e.b.id });
+                std.debug.print("\tt{d} -> t{d};\n", .{ e.a.id, v.id });
+                std.debug.print("\tt{d} -> t{d};\n", .{ e.b.id, v.id });
             },
             .ReduceOp => |e| {
                 e.x.viz();
-                std.debug.print("t{d} : ({s}, {any}) = {s}(t{d}, {any})\n", .{ v.id, @tagName(v.dtype), v.shape, @tagName(e.op), e.x.id, e.dims });
+                std.debug.print("\tt{d} [label=\" t{d} : ({s}, {any}) = {s}<{any}>(t{d})\"];\n", .{ v.id, v.id, @tagName(v.dtype), v.shape, @tagName(e.op), e.dims, e.x.id });
+                std.debug.print("\tt{d} -> t{d};\n", .{ e.x.id, v.id });
             },
             .TypeOp => |e| {
                 e.x.viz();
-                std.debug.print("t{d} : ({s}, {any}) = {s}({s}, {any}, {any})\n", .{ v.id, @tagName(v.dtype), v.shape, @tagName(e.op), @tagName(v.dtype), v.shape, v.strides });
+                std.debug.print("\tt{d} [label=\" t{d} : ({s}, {any}) = {s}<{s}, {any}, {any}>(t{d})\"];\n", .{ v.id, v.id, @tagName(v.dtype), v.shape, @tagName(e.op), @tagName(v.dtype), v.shape, v.strides, e.x.id });
+                std.debug.print("\tt{d} -> t{d};\n", .{ e.x.id, v.id });
             },
         }
     }
 };
 
 pub fn viz() void {
-    std.debug.print("\n", .{});
+    std.debug.print("digraph G {{\n", .{});
     entrypoint.?.viz();
+    std.debug.print("}}\n", .{});
 }

@@ -4,6 +4,7 @@ const Loop = struct {
     var_id: usize,
     upper_bound: usize,
     body: Body,
+    next: *Loop,
 };
 
 const Body = union(enum) {

@@ -28,5 +28,5 @@ pub fn main() !void {
     out.trace();
 
     // Show the graph
-    Graph.show();
+    Graph.viz();
 }
