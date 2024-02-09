@@ -25,7 +25,7 @@ pub fn main() !void {
     );
 
     // Call trace on the output to build its computation graph
-    out.trace();
+    Graph.trace(out);
 
     // Show the graph
     Graph.viz();

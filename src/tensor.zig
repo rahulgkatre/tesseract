@@ -94,10 +94,6 @@ fn TensorView(
             return init(traceFn);
         }
 
-        pub fn trace(comptime self: *const Self) void {
-            self.traceFn(self);
-        }
-
         pub fn isContiguous(_: *const Self) bool {
             return comptime utils.isContiguous(ndims, strides);
         }
@@ -117,7 +113,7 @@ fn TensorView(
                 const Out = Permute(perm);
                 const traceFn = struct {
                     fn trace(out: *const Out) void {
-                        x.trace();
+                        Graph.trace(x);
                         Graph.Vertex.new(out, .{ .TypeOp = .{
                             .op = .Permute,
                             .x = Graph.Vertex.get(x),
@@ -135,7 +131,7 @@ fn TensorView(
                 if (x.isContiguous()) {
                     const traceFn = struct {
                         fn trace(out: *const Out) void {
-                            x.trace();
+                            Graph.trace(x);
                             Graph.Vertex.new(out, .{ .TypeOp = .{
                                 .op = .View,
                                 .x = Graph.Vertex.get(x),
@@ -154,7 +150,7 @@ fn TensorView(
                 const Out = AsStrided(dtype, new_shape, new_strides);
                 const traceFn = struct {
                     fn trace(out: *const Out) void {
-                        x.trace();
+                        Graph.trace(x);
                         Graph.Vertex.new(out, .{ .TypeOp = .{
                             .op = .AsStrided,
                             .x = Graph.Vertex.get(x),
@@ -173,7 +169,7 @@ fn TensorView(
                 const Out: type = AsType(new_dtype);
                 const traceFn = struct {
                     fn trace(out: *const Out) void {
-                        x.trace();
+                        Graph.trace(x);
                         Graph.Vertex.new(out, .{ .TypeOp = .{
                             .op = .AsType,
                             .x = Graph.Vertex.get(x),
@@ -189,7 +185,7 @@ fn TensorView(
                 const Out: type = @TypeOf(x.*);
                 const traceFn = struct {
                     fn trace(out: *const Out) void {
-                        x.trace();
+                        Graph.trace(x);
                         Graph.Vertex.new(out, .{ .MapOp = .{
                             .op = op,
                             .x = Graph.Vertex.get(x),
@@ -248,8 +244,8 @@ fn TensorView(
                 const Out: type = Broadcast(@TypeOf(b), ZipNewDType(op));
                 const traceFn = struct {
                     fn trace(out: *const Out) void {
-                        a.trace();
-                        b.trace();
+                        Graph.trace(a);
+                        Graph.trace(b);
                         Graph.Vertex.new(out, .{
                             .ZipOp = .{
                                 .op = op,
@@ -333,7 +329,7 @@ fn TensorView(
                 };
                 const traceFn = struct {
                     fn trace(out: *const Out) void {
-                        x.trace();
+                        Graph.trace(x);
                         Graph.Vertex.new(out, .{ .ReduceOp = .{
                             .op = op,
                             .x = Graph.Vertex.get(x),
@@ -442,7 +438,7 @@ test "map" {
     try std.testing.expectEqual([_]usize{ 2, 3, 4 }, tensor2.shape);
     Graph.init();
     defer Graph.deinit();
-    tensor2.trace();
+    Graph.trace(tensor2);
     try std.testing.expect(Graph.Vertex.get(&tensor2).edge.MapOp.op == .Neg);
     try std.testing.expect(Graph.Vertex.get(&tensor2).edge.MapOp.x == Graph.Vertex.get(&tensor1));
 }
@@ -454,7 +450,7 @@ test "zip" {
     try std.testing.expectEqual([_]usize{ 2, 3, 4 }, tensor3.shape);
     Graph.init();
     defer Graph.deinit();
-    tensor3.trace();
+    Graph.trace(tensor3);
     try std.testing.expect(Graph.Vertex.get(&tensor3).edge.ZipOp.op == .Add);
     try std.testing.expect(Graph.Vertex.get(&tensor3).edge.ZipOp.a == Graph.Vertex.get(&tensor1));
     try std.testing.expect(Graph.Vertex.get(&tensor3).edge.ZipOp.b == Graph.Vertex.get(&tensor2));
@@ -466,7 +462,7 @@ test "reduce" {
     try std.testing.expectEqual([_]usize{ 2, 1, 4 }, tensor2.shape);
     Graph.init();
     defer Graph.deinit();
-    tensor2.trace();
+    Graph.trace(tensor2);
     try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.op == .Sum);
     try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.x == Graph.Vertex.get(&tensor1));
     try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.dims[0] == 1);
@@ -478,7 +474,7 @@ test "multiple dim reduce" {
     try std.testing.expectEqual([_]usize{ 1, 1, 4 }, tensor2.shape);
     Graph.init();
     defer Graph.deinit();
-    tensor2.trace();
+    Graph.trace(tensor2);
     try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.op == .Sum);
     try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.x == Graph.Vertex.get(&tensor1));
     try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.dims[0] == 0);
@@ -492,7 +488,7 @@ test "zip reduce" {
     try std.testing.expectEqual([_]usize{ 2, 1, 4 }, tensor3.shape);
     Graph.init();
     defer Graph.deinit();
-    tensor3.trace();
+    Graph.trace(tensor3);
     try std.testing.expect(Graph.Vertex.get(&tensor3).edge.ReduceOp.op == .Sum);
     // Anonymous intermediate tensor that stores tensor1 + tensor2
     const anon = Graph.Vertex.get(&tensor3).edge.ReduceOp.x;

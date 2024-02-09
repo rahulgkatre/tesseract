@@ -93,6 +93,11 @@ pub const Vertex = struct {
     }
 
     fn print(v: *Vertex) void {
+        // To avoid printing the same thing multiple times use the hash table to check/mark as already printed
+        if (viz_hash_table.get(v.id).?) {
+            return;
+        }
+        viz_hash_table.put(v.id, true) catch @panic("Out of memory");
         switch (v.edge) {
             inline else => |e| {
                 std.debug.print("t{d}[label=\"t{d}:{s}{any}\"shape=box];\n", .{ v.id, v.id, @tagName(v.dtype), v.shape });
@@ -101,20 +106,17 @@ pub const Vertex = struct {
         }
     }
 
-    pub fn viz(v: *Vertex, fused_out: bool) void {
+    pub fn viz(v: *Vertex) void {
         if (viz_hash_table.contains(v.id)) {
             return;
         }
-        viz_hash_table.put(v.id, true) catch @panic("Out of memory");
+        viz_hash_table.put(v.id, false) catch @panic("Out of memory");
         switch (v.edge) {
             .InitOp => |e| {
                 std.debug.print("{s}_{d}[label=\"{s}\"];\n", .{ @tagName(e.op), v.id, @tagName(e.op) });
-                if (!fused_out) {
-                    v.print();
-                }
             },
             .MapOp => |e| {
-                e.x.viz(e.fused_x);
+                e.x.viz();
                 std.debug.print("{s}_{d}[label=\"{s}\"];\n", .{ @tagName(e.op), v.id, @tagName(e.op) });
                 if (e.fused_x) {
                     switch (e.x.edge) {
@@ -124,36 +126,30 @@ pub const Vertex = struct {
                     e.x.print();
                     std.debug.print("t{d}->{s}_{d};\n", .{ e.x.id, @tagName(e.op), v.id });
                 }
-                if (!fused_out) {
-                    v.print();
-                }
             },
             .ZipOp => |e| {
-                e.a.viz(e.fused_a);
-                e.b.viz(e.fused_b);
+                e.a.viz();
+                e.b.viz();
                 std.debug.print("{s}_{d}[label=\"{s}\"];\n", .{ @tagName(e.op), v.id, @tagName(e.op) });
                 if (e.fused_a) {
                     switch (e.a.edge) {
                         inline else => |a_edge| std.debug.print("{s}_{d}->{s}_{d}[label=\"A\"];\n", .{ @tagName(a_edge.op), e.a.id, @tagName(e.op), v.id }),
                     }
                 } else {
-                    std.debug.print("t{d}->{s}_{d}[label=\"A\"];\n", .{ e.a.id, @tagName(e.op), v.id });
                     e.a.print();
+                    std.debug.print("t{d}->{s}_{d}[label=\"A\"];\n", .{ e.a.id, @tagName(e.op), v.id });
                 }
                 if (e.fused_b) {
                     switch (e.b.edge) {
                         inline else => |b_edge| std.debug.print("{s}_{d}->{s}_{d}[label=\"B\"];\n", .{ @tagName(b_edge.op), e.b.id, @tagName(e.op), v.id }),
                     }
                 } else {
-                    std.debug.print("t{d}->{s}_{d}[label=\"B\"];\n", .{ e.b.id, @tagName(e.op), v.id });
                     e.b.print();
-                }
-                if (!fused_out) {
-                    v.print();
+                    std.debug.print("t{d}->{s}_{d}[label=\"B\"];\n", .{ e.b.id, @tagName(e.op), v.id });
                 }
             },
             .ReduceOp => |e| {
-                e.x.viz(e.fused_x);
+                e.x.viz();
                 std.debug.print("{s}_{d}[label=\"{s}({any})\"];\n", .{ @tagName(e.op), v.id, @tagName(e.op), e.dims });
                 if (e.fused_x) {
                     switch (e.x.edge) {
@@ -163,13 +159,10 @@ pub const Vertex = struct {
                     std.debug.print("t{d}->{s}_{d};\n", .{ e.x.id, @tagName(e.op), v.id });
                     e.x.print();
                 }
-                if (!fused_out) {
-                    v.print();
-                }
             },
             .TypeOp => |e| {
-                // TypeOps are always treated as fused with both preceding and succeeding ops because they do not correspond to any codegen in the final output
-                e.x.viz(true);
+                // TODO: TypeOps can be fuseable in the case of Reshape of a non-contiguous tensor (as it invokes a copy)
+                e.x.viz();
                 std.debug.print("{s}_{d}[label=\"{s}({s}, {any}, {any})\"];\n", .{ @tagName(e.op), v.id, @tagName(e.op), @tagName(e.x.dtype), e.x.shape, e.x.strides });
                 switch (e.x.edge) {
                     inline else => |x_edge| std.debug.print("{s}_{d}->{s}_{d};\n", .{ @tagName(x_edge.op), e.x.id, @tagName(e.op), v.id }),
@@ -180,13 +173,17 @@ pub const Vertex = struct {
 };
 
 pub fn viz() void {
+    std.testing.expect(entrypoint != null) catch @panic("Graph has not been created, remember to call .trace() on the output tensor");
     viz_hash_table = std.AutoHashMap(usize, bool).init(allocator);
     defer {
         viz_hash_table.deinit();
         viz_hash_table = undefined;
     }
-    std.debug.print("strict digraph G {{\n", .{});
-    entrypoint.?.viz(false);
+    std.debug.print("digraph G {{\n", .{});
+    entrypoint.?.viz();
+    // Need to print the entrypoint separately because there is no other vertex
+    // calling the entrypoint's print function
+    entrypoint.?.print();
     std.debug.print("}}\n", .{});
 }
 
@@ -230,7 +227,7 @@ test "manual fuse" {
 
     Graph.init();
     defer Graph.deinit();
-    sm.trace();
+    Graph.trace(sm);
 
     const t9 = Graph.entrypoint.?;
     const t8 = t9.edge.ZipOp.b;
@@ -242,13 +239,19 @@ test "manual fuse" {
     const t5 = t6.edge.MapOp.x;
     try fuse(t5, t6);
 
-    const t3 = t9.edge.ZipOp.a;
-    try fuse(t3, t9);
-    try fuse(t3, t5);
-    const t2 = t3.edge.ZipOp.b;
-    try fuse(t2, t3);
-    const t1 = t2.edge.MapOp.x;
-    try fuse(t1, t2);
-
+    // const t3 = t9.edge.ZipOp.a;
+    // try fuse(t3, t9);
+    // try fuse(t3, t5);
+    // const t2 = t3.edge.ZipOp.b;
+    // try fuse(t2, t3);
+    // const t1 = t2.edge.MapOp.x;
+    // try fuse(t1, t2);
     Graph.viz();
+}
+
+pub fn trace(comptime _tensor: anytype) void {
+    switch (@typeInfo(@TypeOf(_tensor))) {
+        .Pointer => _tensor.traceFn(_tensor),
+        else => _tensor.traceFn(&_tensor),
+    }
 }
