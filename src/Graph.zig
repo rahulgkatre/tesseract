@@ -105,13 +105,15 @@ pub const Vertex = struct {
             .MapOp => |e| {
                 e.x.viz(e.fused_x);
                 std.debug.print("{s}_{d}[label=\"{s}\"];\n", .{ @tagName(e.op), v.id, @tagName(e.op) });
-                if (fused_out) {
+                if (e.fused_x) {
                     switch (e.x.edge) {
                         inline else => |x_edge| std.debug.print("{s}_{d}->{s}_{d};\n", .{ @tagName(x_edge.op), e.x.id, @tagName(e.op), v.id }),
                     }
                 } else {
-                    std.debug.print("t{d}[label=\"t{d}:{s}{any}\"shape=box];\n", .{ v.id, v.id, @tagName(v.dtype), v.shape });
                     std.debug.print("t{d}->{s}_{d};\n", .{ e.x.id, @tagName(e.op), v.id });
+                }
+                if (!fused_out) {
+                    std.debug.print("t{d}[label=\"t{d}:{s}{any}\"shape=box];\n", .{ v.id, v.id, @tagName(v.dtype), v.shape });
                     std.debug.print("{s}_{d}->t{d};\n", .{ @tagName(e.op), v.id, v.id });
                 }
             },
@@ -119,37 +121,44 @@ pub const Vertex = struct {
                 e.a.viz(e.fused_a);
                 e.b.viz(e.fused_b);
                 std.debug.print("{s}_{d}[label=\"{s}\"];\n", .{ @tagName(e.op), v.id, @tagName(e.op) });
-                if (fused_out) {
+                if (e.fused_a) {
                     switch (e.a.edge) {
                         inline else => |a_edge| std.debug.print("{s}_{d}->{s}_{d};\n", .{ @tagName(a_edge.op), e.a.id, @tagName(e.op), v.id }),
                     }
+                } else {
+                    std.debug.print("t{d}->{s}_{d};\n", .{ e.a.id, @tagName(e.op), v.id });
+                }
+                if (e.fused_b) {
                     switch (e.b.edge) {
                         inline else => |b_edge| std.debug.print("{s}_{d}->{s}_{d};\n", .{ @tagName(b_edge.op), e.b.id, @tagName(e.op), v.id }),
                     }
                 } else {
-                    std.debug.print("t{d}[label=\"t{d}:{s}{any}\"shape=box];\n", .{ v.id, v.id, @tagName(v.dtype), v.shape });
-                    std.debug.print("t{d}->{s}_{d};\n", .{ e.a.id, @tagName(e.op), v.id });
                     std.debug.print("t{d}->{s}_{d};\n", .{ e.b.id, @tagName(e.op), v.id });
+                }
+                if (!fused_out) {
+                    std.debug.print("t{d}[label=\"t{d}:{s}{any}\"shape=box];\n", .{ v.id, v.id, @tagName(v.dtype), v.shape });
                     std.debug.print("{s}_{d}->t{d};\n", .{ @tagName(e.op), v.id, v.id });
                 }
             },
             .ReduceOp => |e| {
                 e.x.viz(e.fused_x);
                 std.debug.print("{s}_{d}[label=\"{s}({any})\"];\n", .{ @tagName(e.op), v.id, @tagName(e.op), e.dims });
-                if (fused_out) {
+                if (e.fused_x) {
                     switch (e.x.edge) {
                         inline else => |x_edge| std.debug.print("{s}_{d}->{s}_{d};\n", .{ @tagName(x_edge.op), e.x.id, @tagName(e.op), v.id }),
                     }
                 } else {
-                    std.debug.print("t{d}[label=\"t{d}:{s}{any}\"shape=box];\n", .{ v.id, v.id, @tagName(v.dtype), v.shape });
                     std.debug.print("t{d}->{s}_{d};\n", .{ e.x.id, @tagName(e.op), v.id });
+                }
+                if (!fused_out) {
+                    std.debug.print("t{d}[label=\"t{d}:{s}{any}\"shape=box];\n", .{ v.id, v.id, @tagName(v.dtype), v.shape });
                     std.debug.print("{s}_{d}->t{d};\n", .{ @tagName(e.op), v.id, v.id });
                 }
             },
             .TypeOp => |e| {
                 // TypeOps are always treated as fused with both preceding and succeeding ops because they do not correspond to any codegen in the final output
                 e.x.viz(true);
-                std.debug.print("{s}_{d}[label=\"{s}({any})\"];\n", .{ @tagName(e.op), v.id, @tagName(e.op), e.dims });
+                std.debug.print("{s}_{d}[label=\"{s}({s}, {any}, {any})\"];\n", .{ @tagName(e.op), v.id, @tagName(e.op), @tagName(e.x.dtype), e.x.shape, e.x.strides });
                 switch (e.x.edge) {
                     inline else => |x_edge| std.debug.print("{s}_{d}->{s}_{d};\n", .{ @tagName(x_edge.op), e.x.id, @tagName(e.op), v.id }),
                 }
@@ -169,27 +178,63 @@ pub fn viz() void {
     std.debug.print("}}\n", .{});
 }
 
-pub fn fuse(v1: *Vertex, v2: *Vertex) void {
-    switch (v2.edge) {
-        .MapOp => |e| {
-            std.testing.expectEqual(e.x.id, v1.id);
+fn fuse(fusion_target: *Vertex, fusing_vertex: *Vertex) !void {
+    switch (fusing_vertex.edge) {
+        .MapOp => |*e| {
+            try std.testing.expectEqual(e.x.id, fusion_target.id);
             e.fused_x = true;
         },
-        .ZipOp => |e| {
-            std.testing.expect(e.a.id == v1.id or e.b.id == v1.id);
-            if (e.a.id == v1.id) {
+        .ZipOp => |*e| {
+            try std.testing.expect(e.a.id == fusion_target.id or e.b.id == fusion_target.id);
+            if (e.a.id == fusion_target.id) {
                 e.fused_a = true;
             }
-            if (e.b.id == v1.id) {
+            if (e.b.id == fusion_target.id) {
                 e.fused_b = true;
             }
         },
-        .ReduceOp => |e| {
-            std.testing.expectEqual(e.x.id, v1.id);
+        .ReduceOp => |*e| {
+            try std.testing.expectEqual(e.x.id, fusion_target.id);
             e.fused_x = true;
         },
         else => {
             @panic("Unable to fuse");
         },
     }
+}
+
+fn softmax(x: anytype, comptime dim: u8) @TypeOf(x) {
+    const max = x.max(null);
+    const x_minus_max = x.sub(max);
+    const exp = x_minus_max.exp();
+    const sumexp = exp.sum(dim);
+    const sm = x_minus_max.div(sumexp);
+    return sm;
+}
+
+test "manual fuse" {
+    const x = comptime tensor.Tensor(.f32, .{ 2, 16 }).full(0);
+    const sm = comptime softmax(x, 1);
+
+    Graph.init();
+    defer Graph.deinit();
+    sm.trace();
+
+    const t9 = Graph.entrypoint.?;
+    const t8 = t9.edge.ZipOp.b;
+    try fuse(t8, t9);
+    const t7 = t8.edge.MapOp.x;
+    try fuse(t7, t8);
+    const t6 = t7.edge.ReduceOp.x;
+    try fuse(t6, t7);
+    const t5 = t6.edge.MapOp.x;
+    try fuse(t5, t6);
+
+    const t3 = t9.edge.ZipOp.a;
+    const t2 = t3.edge.ZipOp.b;
+    try fuse(t2, t3);
+    const t1 = t2.edge.MapOp.x;
+    try fuse(t1, t2);
+
+    Graph.viz();
 }

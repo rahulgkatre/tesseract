@@ -511,8 +511,4 @@ test "as_type" {
     try std.testing.expect(tensor4.dtype == .f16);
     const tensor5 = comptime tensor4.asType(.f32);
     try std.testing.expect(tensor5.dtype == .f32);
-    Graph.init();
-    defer Graph.deinit();
-    tensor5.trace();
-    Graph.viz();
 }
