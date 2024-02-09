@@ -28,30 +28,35 @@ pub const Edge = union(ops.OpTypes) {
     MapOp: struct {
         op: ops.MapOp,
         x: *Vertex,
+        fused_x: bool = false,
     },
     ZipOp: struct {
         op: ops.ZipOp,
         a: *Vertex,
         b: *Vertex,
+        fused_a: bool = false,
+        fused_b: bool = false,
     },
     ReduceOp: struct {
         op: ops.ReduceOp,
         x: *Vertex,
         dims: []const u8,
+        fused_x: bool = false,
     },
     TypeOp: struct {
         op: ops.TypeOp,
         x: *Vertex,
+        fused_x: bool = false,
     },
     InitOp: struct {
         op: ops.InitOp,
     },
 };
 
+var viz_hash_table: std.AutoHashMap(usize, bool) = undefined;
 pub const Vertex = struct {
     id: usize,
     edge: Edge,
-    visited: bool = false,
 
     // Tensor metadata which will be used for lowering and optimization
     ndims: u8,
@@ -86,43 +91,105 @@ pub const Vertex = struct {
         return nodes.get(ids.get(@intFromPtr(ptr)).?).?;
     }
 
-    pub fn viz(v: *Vertex) void {
-        if (v.visited) {
+    pub fn viz(v: *Vertex, fused_out: bool) void {
+        if (viz_hash_table.contains(v.id)) {
             return;
         }
-        v.visited = true;
+        viz_hash_table.put(v.id, true) catch @panic("Out of memory");
         switch (v.edge) {
             .InitOp => |e| {
-                std.debug.print("\tt{d} [label=\" t{d} : ({s}, {any}) = {s}\"];\n", .{ v.id, v.id, @tagName(v.dtype), v.shape, @tagName(e.op) });
+                std.debug.print("{s}_{d}[label=\"{s}\"];\n", .{ @tagName(e.op), v.id, @tagName(e.op) });
+                std.debug.print("t{d}[label=\"t{d}:{s}{any}\"shape=box];\n", .{ v.id, v.id, @tagName(v.dtype), v.shape });
+                std.debug.print("{s}_{d}->t{d};\n", .{ @tagName(e.op), v.id, v.id });
             },
             .MapOp => |e| {
-                e.x.viz();
-                std.debug.print("\tt{d} [label=\" t{d} : ({s}, {any}) = {s}(t{d})\"];\n", .{ v.id, v.id, @tagName(v.dtype), v.shape, @tagName(e.op), e.x.id });
-                std.debug.print("\tt{d} -> t{d};\n", .{ e.x.id, v.id });
+                e.x.viz(e.fused_x);
+                std.debug.print("{s}_{d}[label=\"{s}\"];\n", .{ @tagName(e.op), v.id, @tagName(e.op) });
+                if (fused_out) {
+                    switch (e.x.edge) {
+                        inline else => |x_edge| std.debug.print("{s}_{d}->{s}_{d};\n", .{ @tagName(x_edge.op), e.x.id, @tagName(e.op), v.id }),
+                    }
+                } else {
+                    std.debug.print("t{d}[label=\"t{d}:{s}{any}\"shape=box];\n", .{ v.id, v.id, @tagName(v.dtype), v.shape });
+                    std.debug.print("t{d}->{s}_{d};\n", .{ e.x.id, @tagName(e.op), v.id });
+                    std.debug.print("{s}_{d}->t{d};\n", .{ @tagName(e.op), v.id, v.id });
+                }
             },
             .ZipOp => |e| {
-                e.a.viz();
-                e.b.viz();
-                std.debug.print("\tt{d} [label=\" t{d} : ({s}, {any}) = {s}(t{d}, t{d})\"];\n", .{ v.id, v.id, @tagName(v.dtype), v.shape, @tagName(e.op), e.a.id, e.b.id });
-                std.debug.print("\tt{d} -> t{d};\n", .{ e.a.id, v.id });
-                std.debug.print("\tt{d} -> t{d};\n", .{ e.b.id, v.id });
+                e.a.viz(e.fused_a);
+                e.b.viz(e.fused_b);
+                std.debug.print("{s}_{d}[label=\"{s}\"];\n", .{ @tagName(e.op), v.id, @tagName(e.op) });
+                if (fused_out) {
+                    switch (e.a.edge) {
+                        inline else => |a_edge| std.debug.print("{s}_{d}->{s}_{d};\n", .{ @tagName(a_edge.op), e.a.id, @tagName(e.op), v.id }),
+                    }
+                    switch (e.b.edge) {
+                        inline else => |b_edge| std.debug.print("{s}_{d}->{s}_{d};\n", .{ @tagName(b_edge.op), e.b.id, @tagName(e.op), v.id }),
+                    }
+                } else {
+                    std.debug.print("t{d}[label=\"t{d}:{s}{any}\"shape=box];\n", .{ v.id, v.id, @tagName(v.dtype), v.shape });
+                    std.debug.print("t{d}->{s}_{d};\n", .{ e.a.id, @tagName(e.op), v.id });
+                    std.debug.print("t{d}->{s}_{d};\n", .{ e.b.id, @tagName(e.op), v.id });
+                    std.debug.print("{s}_{d}->t{d};\n", .{ @tagName(e.op), v.id, v.id });
+                }
             },
             .ReduceOp => |e| {
-                e.x.viz();
-                std.debug.print("\tt{d} [label=\" t{d} : ({s}, {any}) = {s}<{any}>(t{d})\"];\n", .{ v.id, v.id, @tagName(v.dtype), v.shape, @tagName(e.op), e.dims, e.x.id });
-                std.debug.print("\tt{d} -> t{d};\n", .{ e.x.id, v.id });
+                e.x.viz(e.fused_x);
+                std.debug.print("{s}_{d}[label=\"{s}({any})\"];\n", .{ @tagName(e.op), v.id, @tagName(e.op), e.dims });
+                if (fused_out) {
+                    switch (e.x.edge) {
+                        inline else => |x_edge| std.debug.print("{s}_{d}->{s}_{d};\n", .{ @tagName(x_edge.op), e.x.id, @tagName(e.op), v.id }),
+                    }
+                } else {
+                    std.debug.print("t{d}[label=\"t{d}:{s}{any}\"shape=box];\n", .{ v.id, v.id, @tagName(v.dtype), v.shape });
+                    std.debug.print("t{d}->{s}_{d};\n", .{ e.x.id, @tagName(e.op), v.id });
+                    std.debug.print("{s}_{d}->t{d};\n", .{ @tagName(e.op), v.id, v.id });
+                }
             },
             .TypeOp => |e| {
-                e.x.viz();
-                std.debug.print("\tt{d} [label=\" t{d} : ({s}, {any}) = {s}<{s}, {any}, {any}>(t{d})\"];\n", .{ v.id, v.id, @tagName(v.dtype), v.shape, @tagName(e.op), @tagName(v.dtype), v.shape, v.strides, e.x.id });
-                std.debug.print("\tt{d} -> t{d};\n", .{ e.x.id, v.id });
+                // TypeOps are always treated as fused with both preceding and succeeding ops because they do not correspond to any codegen in the final output
+                e.x.viz(true);
+                std.debug.print("{s}_{d}[label=\"{s}({any})\"];\n", .{ @tagName(e.op), v.id, @tagName(e.op), e.dims });
+                switch (e.x.edge) {
+                    inline else => |x_edge| std.debug.print("{s}_{d}->{s}_{d};\n", .{ @tagName(x_edge.op), e.x.id, @tagName(e.op), v.id }),
+                }
             },
         }
     }
 };
 
 pub fn viz() void {
+    viz_hash_table = std.AutoHashMap(usize, bool).init(allocator);
+    defer {
+        viz_hash_table.deinit();
+        viz_hash_table = undefined;
+    }
     std.debug.print("digraph G {{\n", .{});
-    entrypoint.?.viz();
+    entrypoint.?.viz(false);
     std.debug.print("}}\n", .{});
+}
+
+pub fn fuse(v1: *Vertex, v2: *Vertex) void {
+    switch (v2.edge) {
+        .MapOp => |e| {
+            std.testing.expectEqual(e.x.id, v1.id);
+            e.fused_x = true;
+        },
+        .ZipOp => |e| {
+            std.testing.expect(e.a.id == v1.id or e.b.id == v1.id);
+            if (e.a.id == v1.id) {
+                e.fused_a = true;
+            }
+            if (e.b.id == v1.id) {
+                e.fused_b = true;
+            }
+        },
+        .ReduceOp => |e| {
+            std.testing.expectEqual(e.x.id, v1.id);
+            e.fused_x = true;
+        },
+        else => {
+            @panic("Unable to fuse");
+        },
+    }
 }
