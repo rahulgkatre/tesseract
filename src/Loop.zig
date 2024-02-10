@@ -3,13 +3,13 @@ const ops = @import("ops.zig");
 const Loop = struct {
     var_id: usize,
     upper_bound: usize,
-    body: Body,
+    body: *Body,
     next: *Loop,
 };
 
 const Body = union(enum) {
-    Loop: Loop,
-    Expr: Expr,
+    Loop: *Loop,
+    Exprs: []Expr,
 };
 
 const Expr = union(ops.OpTypes) {
