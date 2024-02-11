@@ -6,17 +6,10 @@ pub const ReduceOp = enum { Sum, Max };
 pub const TypeOp = enum { AsType, AsStrided, View, Permute };
 pub const InitOp = enum { Input, From, Full, Rand };
 
-pub const OpTypes = enum {
+pub const GraphOps = enum {
     MapOp,
     ZipOp,
     ReduceOp,
     TypeOp,
     InitOp,
-};
-pub const Op = union(enum) {
-    MapOp: MapOp,
-    ZipOp: ZipOp,
-    ReduceOp: ReduceOp,
-    TypeOp: TypeOp,
-    InitOp: InitOp,
 };

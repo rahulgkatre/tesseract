@@ -508,3 +508,32 @@ test "as_type" {
     const tensor5 = comptime tensor4.asType(.f32);
     try std.testing.expect(tensor5.dtype == .f32);
 }
+
+fn fn1() Tensor(.i32, .{ 2, 1, 4 }) {
+    const tensor1 = Tensor(.i32, .{ 2, 1, 4 }).full(1);
+    const tensor2 = Tensor(.i32, .{ 2, 3, 1 }).full(2);
+    const tensor3 = tensor1.add(tensor2).sum(1);
+    return tensor3;
+}
+
+fn fn2(input: anytype) Tensor(.i32, .{ 2, 3, 4 }) {
+    return comptime blk: {
+        const tensor4 = Tensor(.i32, .{ 2, 1, 4 }).full(4);
+        const tensor5 = Tensor(.i32, .{ 2, 3, 1 }).full(5);
+        const tensor6 = tensor4.mul(input).sum(1).add(tensor5);
+        break :blk tensor6;
+    };
+}
+
+test "tensors from functions" {
+    const out = comptime blk: {
+        const tensor3 = fn1();
+        const tensor6 = fn2(tensor3);
+        break :blk tensor6;
+    };
+
+    Graph.init();
+    defer Graph.deinit();
+    Graph.trace(out);
+    // Graph.viz();
+}
