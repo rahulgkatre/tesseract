@@ -161,11 +161,11 @@ pub fn zip(
         const final_fmt = comptimePrint(nested_loop_fmt, .{inner_expression_fmt});
         try writer.print(final_fmt ++ "\n", .{
             out.id,
-            codegen.idxToPos(Out, "i_"),
+            codegen.unravelMultiIndex(Out, "i_"),
             a.id,
-            codegen.broadcastIdxToPos(A, Out, "i_"),
+            codegen.broadcastedUnravelMultiIndex(A, Out, "i_"),
             b.id,
-            codegen.broadcastIdxToPos(B, Out, "i_"),
+            codegen.broadcastedUnravelMultiIndex(B, Out, "i_"),
         });
     }
 }
@@ -232,7 +232,7 @@ pub fn reduce(
         const inner_expression_fmt = comptimePrint("acc = {s};", .{op_fmt});
         const final_fmt = comptimePrint(nested_loop_fmt, .{inner_expression_fmt});
         try writer.print(final_fmt, .{
-            codegen.idxToPos(Out, "i_"),
+            codegen.unravelMultiIndex(Out, "i_"),
             x.id,
             x.id,
             comptimePrint("pos + i_{d} * {d}", .{ dim.?, X.strides[dim.?] }),

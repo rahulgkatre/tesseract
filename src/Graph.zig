@@ -266,22 +266,55 @@ const FusionError = error{
     NotParentChild,
 };
 
+fn fusionErrorMsg(node1: *Vertex, node2: *Vertex, err: FusionError) FusionError {
+    switch (err) {
+        FusionError.ParentReduce => std.log.err(
+            \\
+            \\Cannot fuse these two nodes as child depends on a parent which is the result of a reduction
+            \\
+            \\parent: {any}
+            \\
+            \\child: {any}
+            \\
+        , .{ node1, node2 }),
+        FusionError.ParentInit => std.log.err(
+            \\
+            \\Cannot fuse these two nodes as child depends on initialization of parent
+            \\
+            \\parent: {any}
+            \\
+            \\child: {any}
+            \\
+        , .{ node1, node2 }),
+        FusionError.NotParentChild => std.log.err(
+            \\
+            \\Cannot fuse these two nodes as node2 is not a child of parent node1
+            \\
+            \\node1: {any}
+            \\
+            \\node2: {any}
+            \\
+        , .{ node1, node2 }),
+    }
+    return err;
+}
+
 pub fn applyVerticalFusion(parent: *Vertex, child: *Vertex) FusionError!void {
     switch (child.edge) {
         .InitOp => return FusionError.ParentInit,
         .ZipOp => |*edge| {
             if (edge.a.id != parent.id and edge.b.id != parent.id) {
-                return FusionError.NotParentChild;
+                return fusionErrorMsg(parent, child, FusionError.NotParentChild);
             }
             if (edge.a.id == parent.id) {
                 if (edge.a.edge == .ReduceOp) {
-                    return FusionError.ParentReduce;
+                    return fusionErrorMsg(parent, child, FusionError.ParentReduce);
                 }
                 edge.fused_a = true;
             }
             if (edge.b.id == parent.id) {
                 if (edge.b.edge == .ReduceOp) {
-                    return FusionError.ParentReduce;
+                    return fusionErrorMsg(parent, child, FusionError.ParentReduce);
                 }
                 edge.fused_b = true;
             }
@@ -290,40 +323,40 @@ pub fn applyVerticalFusion(parent: *Vertex, child: *Vertex) FusionError!void {
             if (edge.x.id == parent.id) {
                 edge.fused_x = true;
             } else {
-                return FusionError.NotParentChild;
+                return fusionErrorMsg(parent, child, FusionError.NotParentChild);
             }
         },
         inline else => |*edge| {
             if (edge.x.id == parent.id) {
                 if (edge.x.edge == .ReduceOp) {
-                    return FusionError.ParentReduce;
+                    return fusionErrorMsg(parent, child, FusionError.ParentReduce);
                 }
                 edge.fused_x = true;
             } else {
-                return FusionError.NotParentChild;
+                return fusionErrorMsg(parent, child, FusionError.NotParentChild);
             }
         },
     }
 }
 
-pub fn unfuseCacheInKernel(node: *Vertex) void {
+pub fn unfuseIfCached(node: *Vertex) void {
     switch (node.edge) {
         .InitOp => {},
         .ZipOp => |*edge| {
             if (edge.a.cache_in_kernel) {
                 edge.fused_a = false;
             }
-            unfuseCacheInKernel(edge.a);
+            unfuseIfCached(edge.a);
             if (edge.b.cache_in_kernel) {
                 edge.fused_b = false;
             }
-            unfuseCacheInKernel(edge.b);
+            unfuseIfCached(edge.b);
         },
         inline else => |*edge| {
             if (edge.x.cache_in_kernel) {
                 edge.fused_x = false;
             }
-            unfuseCacheInKernel(edge.x);
+            unfuseIfCached(edge.x);
         },
     }
 }
@@ -368,23 +401,16 @@ fn greedyClusteringFusion(cluster_id: usize, node: *Vertex) usize {
             }
             return node.kernel_id.?;
         },
-        .InitOp => {
-            return cluster_id;
-        },
+        .InitOp => return cluster_id,
     }
 }
 
+/// Traverse the graph and group nodes into clusters (kernels)
+/// Each cluster can have at most one reduce op, but any amount of other ops
+/// The reduce op will be the last op unless it is followed by a type op
 pub fn applyGreedyFusion() void {
-    // TODO: Traverse the graph and group nodes into clusters
-    // Each cluster can have at most one reduce op, but any amount of other ops
-    std.testing.expect(entrypoint != null) catch @panic("Graph has not been created, remember to call Graph.trace() on the output tensor");
-    viz_hash_table = std.AutoHashMap(usize, bool).init(allocator);
-    defer {
-        viz_hash_table.deinit();
-        viz_hash_table = undefined;
-    }
     _ = greedyClusteringFusion(0, entrypoint.?);
-    unfuseCacheInKernel(entrypoint.?);
+    unfuseIfCached(entrypoint.?);
 }
 
 fn softmax(x: anytype, comptime dim: u8) @TypeOf(x) {
@@ -408,9 +434,9 @@ test "manual vertical fusion" {
     const t8 = t9.edge.ZipOp.b;
     try applyVerticalFusion(t8, t9);
     const t7 = t8.edge.MapOp.x;
-    try applyVerticalFusion(t7, t8);
+    // try applyVerticalFusion(t7, t8);
     const t6 = t7.edge.ReduceOp.x;
-    // try vertical_fusion(t6, t7);
+    try applyVerticalFusion(t6, t7);
     const t5 = t6.edge.MapOp.x;
     try applyVerticalFusion(t5, t6);
 
@@ -421,8 +447,8 @@ test "manual vertical fusion" {
     // try fuse(t2, t3);
     // const t1 = t2.edge.MapOp.x;
     // try fuse(t1, t2);
-    std.debug.print("\n", .{});
-    Graph.viz();
+    // std.debug.print("\n", .{});
+    // Graph.viz();
 }
 
 test "greedy fusion" {
@@ -433,5 +459,6 @@ test "greedy fusion" {
     defer Graph.deinit();
     Graph.trace(a_matmul_b);
     Graph.applyGreedyFusion();
+    std.debug.print("\n", .{});
     Graph.viz();
 }

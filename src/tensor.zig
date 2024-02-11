@@ -17,7 +17,7 @@ pub fn range(comptime dtype: dtypes.DType, comptime start: dtype, comptime stop:
 }
 
 pub fn Tensor(comptime dtype: dtypes.DType, comptime shape: anytype) type {
-    return comptime AsStrided(dtype, shape, utils.stridesFromShape(shape));
+    return AsStrided(dtype, shape, utils.stridesFromShape(shape));
 }
 
 fn AsStrided(comptime dtype: dtypes.DType, comptime shape: anytype, comptime strides: anytype) type {
@@ -409,7 +409,6 @@ test "view" {
 
 test "as strided" {
     // Based on example from https://pytorch.org/docs/stable/generated/torch.as_strided.html
-    // Need to add back idxToPos to improve coverage of tests, but make it a util function instead
     comptime {
         const tensor1 = Tensor(.i32, .{ 3, 3 }).full(0);
         const tensor2 = tensor1.asStrided(.{ 2, 2 }, .{ 1, 2, 0 });
@@ -418,23 +417,19 @@ test "as strided" {
         try std.testing.expectEqual(false, tensor2.isContiguous());
 
         const test_indices = [_][2]usize{ .{ 0, 0 }, .{ 0, 1 }, .{ 1, 0 }, .{ 1, 1 } };
-        _ = test_indices;
         const expected_flat_indices1 = [_]usize{ 0, 2, 1, 3 };
-        _ = expected_flat_indices1;
-        // for (expected_flat_indices1, test_indices) |expected_flat_i, test_i| {
-        //     try std.testing.expectEqual(expected_flat_i, tensor2.idxToPos(test_i));
-        // }
+        for (expected_flat_indices1, test_indices) |expected_flat_i, test_i| {
+            try std.testing.expectEqual(expected_flat_i, utils.ravelMultiIndex(tensor2.ndims, tensor2.strides, test_i));
+        }
 
         const tensor3 = tensor1.asStrided(.{ 2, 2 }, .{ 1, 2, 1 });
-        _ = tensor3;
         try std.testing.expectEqual([_]usize{ 2, 2 }, tensor2.shape);
         try std.testing.expectEqual(false, tensor2.isContiguous());
 
         const expected_flat_indices2 = [_]usize{ 1, 3, 2, 4 };
-        _ = expected_flat_indices2;
-        // for (expected_flat_indices2, test_indices) |expected_flat_i, test_i| {
-        //     try std.testing.expectEqual(expected_flat_i, tensor3.idxToPos(test_i));
-        // }
+        for (expected_flat_indices2, test_indices) |expected_flat_i, test_i| {
+            try std.testing.expectEqual(expected_flat_i, utils.ravelMultiIndex(tensor3.ndims, tensor3.strides, test_i));
+        }
     }
 }
 

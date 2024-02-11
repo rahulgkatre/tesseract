@@ -80,3 +80,10 @@ pub fn isContiguous(comptime ndims: u8, strides: [ndims + 1]usize) bool {
     }
     return true;
 }
+pub fn ravelMultiIndex(comptime ndims: u8, strides: [ndims + 1]usize, multi_idx: [ndims]usize) usize {
+    var flat_idx = strides[ndims];
+    for (0..ndims) |d| {
+        flat_idx += multi_idx[d] * strides[d];
+    }
+    return flat_idx;
+}
