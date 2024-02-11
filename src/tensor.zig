@@ -114,10 +114,13 @@ fn TensorView(
                 const traceFn = struct {
                     fn trace(out: *const Out) void {
                         Graph.trace(x);
-                        Graph.Vertex.new(out, .{ .TypeOp = .{
-                            .op = .Permute,
-                            .x = Graph.Vertex.get(x),
-                        } }, Out);
+                        Graph.Vertex.new(out, .{
+                            .TypeOp = .{
+                                .op = .Permute,
+                                .x = Graph.Vertex.get(x),
+                                .new_info = .{ .Permute = perm[0..] },
+                            },
+                        }, Out);
                     }
                 }.trace;
                 return Out.init(traceFn);
@@ -135,6 +138,7 @@ fn TensorView(
                             Graph.Vertex.new(out, .{ .TypeOp = .{
                                 .op = .View,
                                 .x = Graph.Vertex.get(x),
+                                .new_info = .{ .View = @as([new_shape.len]usize, new_shape)[0..] },
                             } }, Out);
                         }
                     }.trace;
@@ -154,6 +158,7 @@ fn TensorView(
                         Graph.Vertex.new(out, .{ .TypeOp = .{
                             .op = .AsStrided,
                             .x = Graph.Vertex.get(x),
+                            .new_info = .{ .AsStrided = @as([new_strides.len]usize, new_strides)[0..] },
                         } }, Out);
                     }
                 }.trace;
@@ -173,6 +178,7 @@ fn TensorView(
                         Graph.Vertex.new(out, .{ .TypeOp = .{
                             .op = .AsType,
                             .x = Graph.Vertex.get(x),
+                            .new_info = .{ .AsType = new_dtype },
                         } }, Out);
                     }
                 }.trace;

@@ -63,6 +63,12 @@ pub const Edge = union(ops.GraphOps) {
         op: ops.TypeOp,
         x: *Vertex,
         fused_x: bool = true,
+        new_info: union(ops.TypeOp) {
+            AsStrided: []const usize,
+            AsType: dtypes.DType,
+            Permute: []const u8,
+            View: []const usize,
+        },
     },
     InitOp: struct {
         op: ops.InitOp,
@@ -120,9 +126,9 @@ pub const Vertex = struct {
             inline else => |e| {
                 std.debug.print("T{d}[label=\"T{d}\"shape=box];\n", .{ v.id, v.id });
                 if (v.kernel_id != null and v.cache_in_kernel) {
-                    std.debug.print("subgraph cluster_{?} {{T{d}_{?}[label=\"T{d}_{?}\"shape=box];}}\n", .{ v.kernel_id, v.id, v.kernel_id, v.id, v.kernel_id });
-                    std.debug.print("T{d}_{?}->T{d}[label=\" {s}{any}\"];\n", .{ v.id, v.kernel_id, v.id, @tagName(v.dtype), v.shape });
-                    std.debug.print("{s}{d}->T{d}_{?}[label=\" {s}{any}\"];\n", .{ @tagName(e.op), v.id, v.id, v.kernel_id, @tagName(v.dtype), v.shape });
+                    std.debug.print("subgraph cluster{d}{{T{d}_{d}[label=\"T{d}_{d}\"shape=box];}}\n", .{ v.kernel_id.?, v.id, v.kernel_id.?, v.id, v.kernel_id.? });
+                    std.debug.print("T{d}_{d}->T{d}[label=\" {s}{any}\"];\n", .{ v.id, v.kernel_id.?, v.id, @tagName(v.dtype), v.shape });
+                    std.debug.print("{s}{d}->T{d}_{d}[label=\" {s}{any}\"];\n", .{ @tagName(e.op), v.id, v.id, v.kernel_id.?, @tagName(v.dtype), v.shape });
                 } else {
                     std.debug.print("{s}{d}->T{d}[label=\" {s}{any}\"];\n", .{ @tagName(e.op), v.id, v.id, @tagName(v.dtype), v.shape });
                 }
@@ -138,7 +144,7 @@ pub const Vertex = struct {
         switch (node.edge) {
             .InitOp => |edge| {
                 if (node.kernel_id != null) {
-                    std.debug.print("subgraph cluster_{?}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.kernel_id, @tagName(edge.op), node.id, @tagName(edge.op) });
+                    std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op) });
                 } else {
                     std.debug.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
                 }
@@ -146,7 +152,7 @@ pub const Vertex = struct {
             .MapOp => |edge| {
                 edge.x.viz();
                 if (node.kernel_id != null) {
-                    std.debug.print("subgraph cluster_{?} {{{s}{d}[label=\"{s}\"];}}\n", .{ node.kernel_id, @tagName(edge.op), node.id, @tagName(edge.op) });
+                    std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op) });
                 } else {
                     std.debug.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
                 }
@@ -168,7 +174,7 @@ pub const Vertex = struct {
                 edge.a.viz();
                 edge.b.viz();
                 if (node.kernel_id != null) {
-                    std.debug.print("subgraph cluster_{?}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.kernel_id, @tagName(edge.op), node.id, @tagName(edge.op) });
+                    std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op) });
                 } else {
                     std.debug.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
                 }
@@ -202,7 +208,7 @@ pub const Vertex = struct {
             .ReduceOp => |edge| {
                 edge.x.viz();
                 if (node.kernel_id != null) {
-                    std.debug.print("subgraph cluster_{?}{{{s}{d}[label=\"{s}{any}\"];}}\n", .{ node.kernel_id, @tagName(edge.op), node.id, @tagName(edge.op), edge.dims });
+                    std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{any}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), edge.dims });
                 } else {
                     std.debug.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
                 }
@@ -224,7 +230,10 @@ pub const Vertex = struct {
                 // TypeOps are fused by default
                 edge.x.viz();
                 if (node.kernel_id != null) {
-                    std.debug.print("subgraph cluster_{?}{{{s}{d}[label=\"{s}({s}, {any}, {any})\"];}}\n", .{ node.kernel_id, @tagName(edge.op), node.id, @tagName(edge.op), @tagName(edge.x.dtype), edge.x.shape, edge.x.strides });
+                    switch (edge.new_info) {
+                        .AsType => |new_dtype| std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{{s}}}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), @tagName(new_dtype) }),
+                        inline else => |new_info| std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{any}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), new_info }),
+                    }
                 } else {
                     std.debug.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
                 }
@@ -275,6 +284,13 @@ pub fn applyVerticalFusion(parent: *Vertex, child: *Vertex) FusionError!void {
                     return FusionError.ParentReduce;
                 }
                 edge.fused_b = true;
+            }
+        },
+        .TypeOp => |*edge| {
+            if (edge.x.id == parent.id) {
+                edge.fused_x = true;
+            } else {
+                return FusionError.NotParentChild;
             }
         },
         inline else => |*edge| {
@@ -345,7 +361,8 @@ fn greedyClusteringFusion(cluster_id: usize, node: *Vertex) usize {
             return node.kernel_id.? + 1;
         },
         .TypeOp => |*edge| {
-            node.kernel_id = greedyClusteringFusion(cluster_id, edge.x);
+            _ = greedyClusteringFusion(cluster_id, edge.x);
+            node.kernel_id = edge.x.kernel_id;
             if (edge.x.kernel_id == node.kernel_id and !node.cache_in_kernel) {
                 applyVerticalFusion(edge.x, node) catch unreachable;
             }
@@ -409,12 +426,12 @@ test "manual vertical fusion" {
 }
 
 test "greedy fusion" {
-    const x = comptime tensor.Tensor(.f32, .{ 2, 16 }).full(0);
-    const sm = comptime softmax(x, 1);
-
+    const a = comptime tensor.Tensor(.f32, .{ 10, 10, 1 }).full(0);
+    const b = comptime tensor.Tensor(.f32, .{ 10, 1, 10 }).full(0);
+    const a_matmul_b = comptime a.mul(b).sum(a.ndims - 1).view(.{ 10, 10 });
     Graph.init();
     defer Graph.deinit();
-    Graph.trace(sm);
+    Graph.trace(a_matmul_b);
     Graph.applyGreedyFusion();
     Graph.viz();
 }

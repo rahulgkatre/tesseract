@@ -3,7 +3,7 @@
 pub const MapOp = enum { Neg, Log2, Exp2, Sqrt, Recip, Sin };
 pub const ZipOp = enum { Add, Mul, Maximum, Mod, LessThan, Equals, Xor };
 pub const ReduceOp = enum { Sum, Max };
-pub const TypeOp = enum { AsType, AsStrided, View, Permute };
+pub const TypeOp = enum { AsStrided, AsType, Permute, View };
 pub const InitOp = enum { Input, From, Full, Rand };
 
 pub const GraphOps = enum {
