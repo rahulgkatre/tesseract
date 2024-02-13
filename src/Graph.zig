@@ -56,7 +56,7 @@ pub const Edge = union(ops.GraphOps) {
     ReduceOp: struct {
         op: ops.ReduceOp,
         x: *Vertex,
-        dims: []const u8,
+        dims: []const bool,
         fused_x: bool = false,
     },
     TypeOp: struct {
@@ -138,10 +138,10 @@ pub const Vertex = struct {
 
     /// Lower the node (and any nodes fused with it)
     /// to a loop nest representation
-    pub fn lower(v: *Vertex, fused_loop: ?*Program.Loop) *Program.Loop {
+    pub fn lower(v: *Vertex) *Program.AffineLoop {
         const expr: Program.Expr = switch (v.edge) {
-            .InitOp => |edge| .{ .op = edge.op },
-            .ZipOp => |edge| .{
+            .InitOp => |edge| .{ .InitOp = .{ .op = edge.op } },
+            .ZipOp => |edge| .{ .ZipOp = .{
                 .op = edge.op,
                 .a_id = edge.a.id,
                 .a_strides = edge.a.strides,
@@ -149,31 +149,117 @@ pub const Vertex = struct {
                 .b_strides = edge.b.strides,
                 .out_id = v.id,
                 .out_strides = v.strides,
-            },
-            inline else => |edge| .{
+            } },
+            .MapOp => |edge| .{ .MapOp = .{
                 .op = edge.op,
                 .x_id = edge.x.id,
                 .x_strides = edge.x.strides,
                 .out_id = v.id,
                 .out_strides = v.strides,
-            },
+            } },
+            .ReduceOp => |edge| .{ .ReduceOp = .{
+                .op = edge.op,
+                .x_id = edge.x.id,
+                .x_strides = edge.x.strides,
+                .out_id = v.id,
+                .out_strides = v.strides,
+            } },
+            .TypeOp => |edge| .{ .TypeOp = .{
+                .op = edge.op,
+                .x_id = edge.x.id,
+                .x_strides = edge.x.strides,
+                .out_id = v.id,
+                .out_strides = v.strides,
+            } },
         };
-        const loop: *Program.Loop = fused_loop orelse make_nested_loop: {
-            const root_loop: *Program.Loop = allocator.create(Program.Loop) catch unreachable;
+        const loop: *Program.AffineLoop = build_loop: {
+            const root_loop: *Program.AffineLoop = allocator.create(Program.AffineLoop) catch unreachable;
             var curr_loop = root_loop;
             for (0..v.ndims) |d| {
-                curr_loop.header = .{
+                curr_loop.* = .{
                     .upper_bound = v.shape[d],
-                    .loop_var = try std.fmt.allocPrint(allocator, "idx{d}_dim{d}", .{ v.id, d }),
+                    .loop_var = std.fmt.allocPrint(allocator, "idx{d}_dim{d}", .{ v.id, d }) catch unreachable,
+                    .acc = switch (v.edge) {
+                        .ReduceOp => |edge| edge.dims[d],
+                        else => false,
+                    },
+                    .body = .{
+                        .inner_loops = std.ArrayList(*Program.AffineLoop).init(allocator),
+                        .exprs = std.ArrayList(Program.Expr).init(allocator),
+                    },
+                    .prev = null,
                 };
-                curr_loop.body = .{
-                    .InnerLoop = allocator.create(Program.Loop) catch unreachable,
-                };
-                curr_loop = curr_loop.body.InnerLoop;
+                if (d != v.ndims - 1) {
+                    const next_loop: *Program.AffineLoop = allocator.create(Program.AffineLoop) catch unreachable;
+                    curr_loop.body.inner_loops.append(next_loop) catch unreachable;
+                    curr_loop = next_loop;
+                } else {
+                    curr_loop.body.exprs.append(expr) catch unreachable;
+                }
+
+                // if (curr_loop.body.inner_loops == null) {
+                //     // If there are no inner loops create a new one
+                //     curr_loop.body.inner_loops = std.ArrayList(Program.AffineLoop).init(allocator);
+                //     const next_loop: Program.AffineLoop = .{
+                //         .upper_bound = v.shape[d],
+                //         .loop_var = std.fmt.allocPrint(allocator, "idx{d}_dim{d}", .{ v.id, d }) catch unreachable,
+                //         .acc = switch (v.edge) {
+                //             .ReduceOp => |edge| edge.dims[d],
+                //             else => false,
+                //         },
+                //         .body = .{
+                //             .inner_loops = null,
+                //             .exprs = null,
+                //         },
+                //     };
+                //     curr_loop.body.inner_loops.?.append(next_loop) catch unreachable;
+                //     curr_loop = next_loop;
+                // } else {
+                //     // Otherwise try to find a loop with the same bounds
+                //     std.debug.print("Finding a inner loop to use\n", .{});
+
+                //     var found_next_loop = false;
+                //     for (curr_loop.body.inner_loops.?.items) |loop| {
+                //         if (loop.upper_bound == v.shape[d]) {
+                //             curr_loop = loop;
+                //             found_next_loop = true;
+                //         }
+                //     }
+                //     if (!found_next_loop) {
+                //         const next_loop: Program.AffineLoop = .{
+                //             .upper_bound = v.shape[d],
+                //             .loop_var = std.fmt.allocPrint(allocator, "idx{d}_dim{d}", .{ v.id, d }) catch unreachable,
+                //             .acc = switch (v.edge) {
+                //                 .ReduceOp => |edge| edge.dims[d],
+                //                 else => false,
+                //             },
+                //             .body = .{
+                //                 .inner_loops = null,
+                //                 .exprs = null,
+                //             },
+                //         };
+                //         curr_loop.body.inner_loops.?.append(next_loop) catch unreachable;
+                //         curr_loop = next_loop;
+                //     }
+                // }
             }
-            curr_loop.body.Expr = expr;
-            break :make_nested_loop root_loop;
+
+            break :build_loop root_loop;
         };
+        switch (v.edge) {
+            .InitOp => {},
+            .ZipOp => |edge| {
+                const b_loop = edge.b.lower();
+                const a_loop = edge.a.lower();
+                loop.prev = a_loop;
+                a_loop.prev = b_loop;
+            },
+            inline else => |edge| {
+                const x_loop = edge.x.lower();
+                loop.prev = x_loop;
+            },
+        }
+
         return loop;
     }
 
@@ -285,6 +371,10 @@ pub const Vertex = struct {
         }
     }
 };
+
+pub fn lower() void {
+    Graph.entrypoint.?.lower().log();
+}
 
 pub fn viz() void {
     std.testing.expect(entrypoint != null) catch @panic("Graph has not been created, remember to call Graph.trace() on the output tensor");
@@ -500,5 +590,6 @@ test "greedy fusion" {
     Graph.trace(a_matmul_b);
     Graph.applyGreedyFusion();
     std.debug.print("\n", .{});
-    Graph.viz();
+    // Graph.viz();
+    Graph.lower();
 }

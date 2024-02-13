@@ -328,10 +328,20 @@ fn TensorView(
         pub fn reduce(x: *const Self, comptime op: ops.ReduceOp, comptime reduction: anytype) Reduce(reduction) {
             comptime {
                 const Out: type = Reduce(reduction);
-                const dims = switch (@typeInfo(@TypeOf(reduction))) {
-                    .ComptimeInt, .Int => [_]u8{reduction},
-                    .Null, .Void => @as([ndims]u8, std.simd.iota(u8, ndims)),
-                    else => @as([reduction.len]u8, reduction),
+                const reduction_dim_mask: [ndims]bool = switch (@typeInfo(@TypeOf(reduction))) {
+                    .ComptimeInt, .Int => blk: {
+                        var tmp_mask: [ndims]bool = [_]bool{false} ** ndims;
+                        tmp_mask[reduction] = true;
+                        break :blk tmp_mask;
+                    },
+                    .Null, .Void => [_]bool{true} ** ndims,
+                    else => blk: {
+                        var tmp_mask: [ndims]bool = [_]bool{false} ** ndims;
+                        for (reduction) |dim| {
+                            tmp_mask[dim] = true;
+                        }
+                        break :blk tmp_mask;
+                    },
                 };
                 const traceFn = struct {
                     fn trace(out: *const Out) void {
@@ -339,7 +349,7 @@ fn TensorView(
                         Graph.Vertex.new(out, .{ .ReduceOp = .{
                             .op = op,
                             .x = Graph.Vertex.get(x),
-                            .dims = dims[0..],
+                            .dims = reduction_dim_mask[0..],
                         } }, Out);
                     }
                 }.trace;
@@ -466,7 +476,7 @@ test "reduce" {
     Graph.trace(tensor2);
     try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.op == .Sum);
     try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.x == Graph.Vertex.get(&tensor1));
-    try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.dims[0] == 1);
+    try std.testing.expectEqual(Graph.Vertex.get(&tensor2).edge.ReduceOp.dims[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
 }
 
 test "multiple dim reduce" {
@@ -478,8 +488,7 @@ test "multiple dim reduce" {
     Graph.trace(tensor2);
     try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.op == .Sum);
     try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.x == Graph.Vertex.get(&tensor1));
-    try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.dims[0] == 0);
-    try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.dims[1] == 1);
+    try std.testing.expectEqual(Graph.Vertex.get(&tensor2).edge.ReduceOp.dims[0..tensor2.ndims].*, [_]bool{ true, true, false });
 }
 
 test "zip reduce" {
