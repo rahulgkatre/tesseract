@@ -3,6 +3,7 @@ const ops = @import("ops.zig");
 const tensor = @import("tensor.zig");
 const utils = @import("utils.zig");
 const Graph = @This();
+const Program = @import("Program.zig");
 const dtypes = @import("dtypes.zig");
 
 var arena: std.heap.ArenaAllocator = undefined;
@@ -25,7 +26,6 @@ pub fn deinit() void {
 }
 
 /// Build the computation graph for a tensor.
-///
 /// Any new nodes are added to the global computation graph
 /// by recursively calling each tensor's `traceFn` callback.
 pub fn trace(comptime _tensor: anytype) void {
@@ -134,6 +134,47 @@ pub const Vertex = struct {
                 }
             },
         }
+    }
+
+    /// Lower the node (and any nodes fused with it)
+    /// to a loop nest representation
+    pub fn lower(v: *Vertex, fused_loop: ?*Program.Loop) *Program.Loop {
+        const expr: Program.Expr = switch (v.edge) {
+            .InitOp => |edge| .{ .op = edge.op },
+            .ZipOp => |edge| .{
+                .op = edge.op,
+                .a_id = edge.a.id,
+                .a_strides = edge.a.strides,
+                .b_id = edge.b.id,
+                .b_strides = edge.b.strides,
+                .out_id = v.id,
+                .out_strides = v.strides,
+            },
+            inline else => |edge| .{
+                .op = edge.op,
+                .x_id = edge.x.id,
+                .x_strides = edge.x.strides,
+                .out_id = v.id,
+                .out_strides = v.strides,
+            },
+        };
+        const loop: *Program.Loop = fused_loop orelse make_nested_loop: {
+            const root_loop: *Program.Loop = allocator.create(Program.Loop) catch unreachable;
+            var curr_loop = root_loop;
+            for (0..v.ndims) |d| {
+                curr_loop.header = .{
+                    .upper_bound = v.shape[d],
+                    .loop_var = try std.fmt.allocPrint(allocator, "idx{d}_dim{d}", .{ v.id, d }),
+                };
+                curr_loop.body = .{
+                    .InnerLoop = allocator.create(Program.Loop) catch unreachable,
+                };
+                curr_loop = curr_loop.body.InnerLoop;
+            }
+            curr_loop.body.Expr = expr;
+            break :make_nested_loop root_loop;
+        };
+        return loop;
     }
 
     pub fn viz(node: *Vertex) void {
@@ -266,7 +307,7 @@ const FusionError = error{
     NotParentChild,
 };
 
-fn fusionErrorMsg(node1: *Vertex, node2: *Vertex, err: FusionError) FusionError {
+fn fusionError(node1: *Vertex, node2: *Vertex, err: FusionError) FusionError {
     switch (err) {
         FusionError.ParentReduce => std.log.err(
             \\
@@ -304,17 +345,17 @@ pub fn applyVerticalFusion(parent: *Vertex, child: *Vertex) FusionError!void {
         .InitOp => return FusionError.ParentInit,
         .ZipOp => |*edge| {
             if (edge.a.id != parent.id and edge.b.id != parent.id) {
-                return fusionErrorMsg(parent, child, FusionError.NotParentChild);
+                return fusionError(parent, child, FusionError.NotParentChild);
             }
             if (edge.a.id == parent.id) {
                 if (edge.a.edge == .ReduceOp) {
-                    return fusionErrorMsg(parent, child, FusionError.ParentReduce);
+                    return fusionError(parent, child, FusionError.ParentReduce);
                 }
                 edge.fused_a = true;
             }
             if (edge.b.id == parent.id) {
                 if (edge.b.edge == .ReduceOp) {
-                    return fusionErrorMsg(parent, child, FusionError.ParentReduce);
+                    return fusionError(parent, child, FusionError.ParentReduce);
                 }
                 edge.fused_b = true;
             }
@@ -323,17 +364,17 @@ pub fn applyVerticalFusion(parent: *Vertex, child: *Vertex) FusionError!void {
             if (edge.x.id == parent.id) {
                 edge.fused_x = true;
             } else {
-                return fusionErrorMsg(parent, child, FusionError.NotParentChild);
+                return fusionError(parent, child, FusionError.NotParentChild);
             }
         },
         inline else => |*edge| {
             if (edge.x.id == parent.id) {
                 if (edge.x.edge == .ReduceOp) {
-                    return fusionErrorMsg(parent, child, FusionError.ParentReduce);
+                    return fusionError(parent, child, FusionError.ParentReduce);
                 }
                 edge.fused_x = true;
             } else {
-                return fusionErrorMsg(parent, child, FusionError.NotParentChild);
+                return fusionError(parent, child, FusionError.NotParentChild);
             }
         },
     }
@@ -434,7 +475,6 @@ test "manual vertical fusion" {
     const t8 = t9.edge.ZipOp.b;
     try applyVerticalFusion(t8, t9);
     const t7 = t8.edge.MapOp.x;
-    // try applyVerticalFusion(t7, t8);
     const t6 = t7.edge.ReduceOp.x;
     try applyVerticalFusion(t6, t7);
     const t5 = t6.edge.MapOp.x;

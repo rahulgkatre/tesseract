@@ -1,6 +1,8 @@
 const ops = @import("ops.zig");
 
-const Expr = union(ops.OpTypes) {
+/// Expression in the body of the loop of the form y = f(x)
+/// y can either be a location in an array or a temporary variable
+pub const Expr = union(ops.OpTypes) {
     InitOp: struct {
         op: ops.InitOp,
     },
@@ -36,34 +38,25 @@ const Expr = union(ops.OpTypes) {
     },
 };
 
-// Abstractions for lowering Graph.Node into a Loop which can be codegened for a specific language
-// Loop structs will be stored in a list where order is exact order of code
-// Loops are defined as a grammar, ever loop has a header and a body
+/// Abstractions for lowering Graph.Node into a Loop which can be codegened
+/// Loop structs will be stored in a list (program) where order is exact order of code
+/// Loops are defined as a grammar, every loop has a header and a body
 pub const Loop = struct {
     header: Header,
+    acc: bool = false,
     body: Body,
 };
 
-// Loop header defines the bounds of the loop and the loop variable
-// Loop variable will almost always be i_X where X is a number so just store the id
+/// Loop header defines the upper bound of the loop and the loop variable
+/// Lower bound will always be 0
 const Header = struct {
-    lower_bound: usize,
     upper_bound: usize,
-    loop_var_id: usize,
+    loop_var: []const u8,
 };
 
-// Loop body can either be another loop (normal or accumulating) or an expression
-// Expression can just reuse Graph.Link as it has access to all needed information
+/// Loop body can either be another loop (normal or accumulating) or an expression
+/// Expression can just reuse Graph.Link as it has access to all needed information
 const Body = union(enum) {
     InnerLoop: Loop,
-    InnerAccLoop: AccLoop,
     Expr: []Expr,
-};
-
-// Accumulating loop is special because it needs an accumulator (var acc_X)
-// To accumulate over multiple dimensions it can also be nested with inner loops
-const AccLoop = struct {
-    header: Header,
-    body: Body,
-    acc_var_id: usize,
 };
