@@ -64,9 +64,11 @@ pub const Edge = union(ops.GraphOps) {
         x: *Vertex,
         fused_x: bool = true,
         new_info: union(ops.TypeOp) {
-            AsStrided: []const usize,
+            AsStrided: struct {
+                shape: []const usize,
+                strides: []const usize,
+            },
             AsType: dtypes.DType,
-            Permute: []const u8,
             View: []const usize,
         },
     },
@@ -89,7 +91,7 @@ pub const Vertex = struct {
     shape: []const usize,
     strides: []const usize,
 
-    fn register(ptr: anytype, edge: Edge, comptime TensorType: type) !void {
+    fn register(ptr: anytype, edge: Edge, comptime Tensor: type) !void {
         const key = @intFromPtr(ptr);
         if (!ids.contains(key)) {
             const id = ids.count();
@@ -98,18 +100,18 @@ pub const Vertex = struct {
             vertex.* = .{
                 .id = id,
                 .edge = edge,
-                .ndims = TensorType.ndims,
-                .dtype = TensorType.dtype,
-                .shape = TensorType.shape[0..],
-                .strides = TensorType.strides[0..],
+                .ndims = Tensor.ndims,
+                .dtype = Tensor.dtype,
+                .shape = Tensor.shape[0..],
+                .strides = Tensor.strides[0..],
             };
             entrypoint = vertex;
             try nodes.put(id, vertex);
         }
     }
 
-    pub fn new(ptr: anytype, edge: Edge, comptime TensorType: type) void {
-        register(ptr, edge, TensorType) catch @panic("Out of memory");
+    pub fn new(ptr: anytype, edge: Edge, comptime Tensor: type) void {
+        register(ptr, edge, Tensor) catch @panic("Out of memory");
     }
 
     pub fn get(ptr: anytype) *Vertex {
@@ -359,13 +361,18 @@ pub const Vertex = struct {
                 if (node.kernel_id != null) {
                     switch (edge.new_info) {
                         .AsType => |new_dtype| std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{{s}}}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), @tagName(new_dtype) }),
+                        .AsStrided => |new_info| std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{shape:{any}, strides:{any}}}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), new_info.shape, new_info.strides }),
                         inline else => |new_info| std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{any}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), new_info }),
                     }
                 } else {
-                    std.debug.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
+                    switch (edge.new_info) {
+                        .AsType => |new_dtype| std.debug.print("{s}{d}[label=\"{s}{{{s}}}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op), @tagName(new_dtype) }),
+                        .AsStrided => |new_info| std.debug.print("{s}{d}[label=\"{s}{{shape:{any}, strides:{any}}}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op), new_info.shape, new_info.strides }),
+                        inline else => |new_info| std.debug.print("{s}{d}[label=\"{s}{any}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op), new_info }),
+                    }
                 }
                 switch (edge.x.edge) {
-                    inline else => |x_edge| std.debug.print("{s}{d}->{s}{d}[label=\" {s}{any}\"];\n", .{ @tagName(x_edge.op), edge.x.id, @tagName(edge.op), node.id, @tagName(node.dtype), node.shape }),
+                    inline else => |x_edge| std.debug.print("{s}{d}->{s}{d}[label=\" {s}{any}\"];\n", .{ @tagName(x_edge.op), edge.x.id, @tagName(edge.op), node.id, @tagName(edge.x.dtype), edge.x.shape }),
                 }
             },
         }
@@ -514,7 +521,6 @@ fn greedyClusteringFusion(cluster_id: usize, node: *Vertex) usize {
             if (edge.b.kernel_id == node.kernel_id and !node.cache_in_kernel) {
                 applyVerticalFusion(edge.b, node) catch unreachable;
             }
-
             return node.kernel_id.?;
         },
         .ReduceOp => |*edge| {
@@ -522,11 +528,17 @@ fn greedyClusteringFusion(cluster_id: usize, node: *Vertex) usize {
             if (edge.x.kernel_id == node.kernel_id and !node.cache_in_kernel) {
                 applyVerticalFusion(edge.x, node) catch unreachable;
             }
+            // Increment kernel id to prevent multiple reduces from being in the same kernel
             return node.kernel_id.? + 1;
         },
         .TypeOp => |*edge| {
-            _ = greedyClusteringFusion(cluster_id, edge.x);
-            node.kernel_id = edge.x.kernel_id;
+            // TypeOps can always be fused into the preceding kernel even if the typeop follows a reduce
+            // This is because it is either just index manipulation (and does not correspond to a loop)
+            // or it is a cast which can be inlined during the accumulation of a reduction
+            const kernel_id = greedyClusteringFusion(cluster_id, edge.x);
+            // Sometimes the preceding operation might be an init which can happen in global scope (not in a kernel)
+            // and it might not have a kernel id, in which case just use the returned kernel id
+            node.kernel_id = edge.x.kernel_id orelse kernel_id;
             if (edge.x.kernel_id == node.kernel_id and !node.cache_in_kernel) {
                 applyVerticalFusion(edge.x, node) catch unreachable;
             }
@@ -554,7 +566,7 @@ fn softmax(x: anytype, comptime dim: u8) @TypeOf(x) {
 }
 
 test "manual vertical fusion" {
-    const x = comptime tensor.Tensor(.f32, .{ 2, 16 }).full(0);
+    const x = comptime tensor.InferredStrides(.f32, .{ 2, 16 }).full(0);
     const sm = comptime softmax(x, 1);
 
     Graph.init();
@@ -582,8 +594,8 @@ test "manual vertical fusion" {
 }
 
 test "greedy fusion" {
-    const a = comptime tensor.Tensor(.f32, .{ 10, 10, 1 }).full(0);
-    const b = comptime tensor.Tensor(.f32, .{ 10, 1, 10 }).full(0);
+    const a = comptime tensor.InferredStrides(.f32, .{ 10, 10, 1 }).full(0);
+    const b = comptime tensor.InferredStrides(.f32, .{ 10, 1, 10 }).full(0);
     const a_matmul_b = comptime a.mul(b).sum(a.ndims - 1).view(.{ 10, 10 });
     Graph.init();
     defer Graph.deinit();

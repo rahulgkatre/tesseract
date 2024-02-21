@@ -29,3 +29,12 @@ pub fn isBool(t: DType) bool {
         else => false,
     };
 }
+
+pub fn bits(t: DType) u16 {
+    return switch (t) {
+        .i8, .bool => 8,
+        .i16, .f16 => 16,
+        .i32, .f32 => 32,
+        .i64, .f64 => 64,
+    };
+}

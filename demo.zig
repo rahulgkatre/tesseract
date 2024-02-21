@@ -1,6 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const tensor = @import("src/tensor.zig");
+const tesseract = @import("src/tesseract.zig");
+const Tensor = tesseract.Tensor;
 
 // Example of a softmax
 fn softmax(x: anytype, comptime dim: u8) @TypeOf(x) {
@@ -19,14 +20,19 @@ pub fn main() !void {
     defer Graph.deinit();
 
     // All tensor code should must be in comptime
-    const out = comptime softmax(
-        tensor.Tensor(.f32, .{ 2, 16 }).full(3),
-        1,
-    );
+    // const out = comptime softmax(
+    //     tesseract.Tensor(.f32, .{ 2, 16 }).full(3),
+    //     1,
+    // );
+    const out = comptime blk: {
+        const a = Tensor(.f32, .{ 2, 3 }).full(2);
+        const b = Tensor(.f32, .{ 3, 4 }).full(3);
+        break :blk a.matmul(b);
+    };
 
     // Call trace on the output to build its computation graph
     Graph.trace(out);
-
+    Graph.applyGreedyFusion();
     // Show the graph
     Graph.viz();
 }

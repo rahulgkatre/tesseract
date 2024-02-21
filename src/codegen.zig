@@ -49,16 +49,16 @@ pub fn unravelMultiIndex(comptime Tensor: type, comptime loop_var_prefix: []cons
     };
 }
 
-// Similar to above but with added logic for broadcasting the position
-pub fn broadcastedUnravelMultiIndex(comptime TensorType: type, comptime BroadcastTensorType: type, comptime loop_var_prefix: []const u8) []const u8 {
+// Similar to above but with added logic for broadcasting the position between two tensors
+pub fn broadcastedUnravelMultiIndex(comptime A: type, comptime B: type, comptime loop_var_prefix: []const u8) []const u8 {
     return comptime str: {
-        var expr: []const u8 = comptimePrint("{d}", .{TensorType.strides[TensorType.ndims]});
-        for (0..TensorType.ndims) |d| {
-            if (TensorType.shape[TensorType.ndims - 1 - d] == BroadcastTensorType.shape[BroadcastTensorType.ndims - 1 - d]) {
-                if (TensorType.strides[TensorType.ndims - 1 - d] == 1) {
-                    expr = expr ++ comptimePrint("+{s}{d}", .{ loop_var_prefix, BroadcastTensorType.ndims - 1 - d });
-                } else if (TensorType.strides[TensorType.ndims - 1 - d] != 0) {
-                    expr = expr ++ comptimePrint("+{s}{d}*{d}", .{ loop_var_prefix, BroadcastTensorType.ndims - 1 - d, TensorType.strides[BroadcastTensorType.ndims - 1 - d] });
+        var expr: []const u8 = comptimePrint("{d}", .{A.strides[A.ndims]});
+        for (0..A.ndims) |d| {
+            if (A.shape[A.ndims - 1 - d] == B.shape[B.ndims - 1 - d]) {
+                if (A.strides[A.ndims - 1 - d] == 1) {
+                    expr = expr ++ comptimePrint("+{s}{d}", .{ loop_var_prefix, B.ndims - 1 - d });
+                } else if (A.strides[A.ndims - 1 - d] != 0) {
+                    expr = expr ++ comptimePrint("+{s}{d}*{d}", .{ loop_var_prefix, B.ndims - 1 - d, A.strides[B.ndims - 1 - d] });
                 }
             }
         }

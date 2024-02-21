@@ -6,57 +6,86 @@ const ops = @import("ops.zig");
 const Graph = @import("Graph.zig");
 const dtypes = @import("dtypes.zig");
 
-pub fn constant(comptime dtype: dtypes.DType, comptime value: anytype) Tensor(dtype, .{1}) {
-    return Tensor(dtype, .{1}).full(value);
+pub fn constant(comptime dtype: dtypes.DType, comptime value: anytype) InferredStrides(dtype, .{1}) {
+    return InferredStrides(dtype, .{1}).full(value);
 }
 
-pub fn range(comptime dtype: dtypes.DType, comptime start: dtype, comptime stop: dtype) Tensor(dtype, .{stop - start}) {
+pub fn range(comptime dtype: dtypes.DType, comptime start: dtype, comptime stop: dtype) InferredStrides(dtype, .{stop - start}) {
     @setEvalBranchQuota(@as(u32, 2 * stop));
     const data: [stop - start]dtype = std.simd.iota(dtype, stop - start) + @as(@Vector(stop - start, dtype), @splat(start));
-    return Tensor(dtype, .{stop - start}).from(data[0..]);
+    return InferredStrides(dtype, .{stop - start}).from(data[0..]);
 }
 
-pub fn Tensor(comptime dtype: dtypes.DType, comptime shape: anytype) type {
-    return AsStrided(dtype, shape, utils.stridesFromShape(shape));
-}
-
-fn AsStrided(comptime dtype: dtypes.DType, comptime shape: anytype, comptime strides: anytype) type {
-    if (shape.len + 1 != strides.len) {
-        @compileError("Provided shape ndims not compatible with provided strides ndims, you may be missing the storage offset (strides[ndims])");
+pub fn InferredStrides(comptime dtype: dtypes.DType, comptime shape: anytype) type {
+    const ndims = shape.len;
+    var offset: usize = 1;
+    var strides: [ndims + 1]usize = undefined;
+    for (0..ndims - 1) |d| {
+        const stride = shape[ndims - d - 1] * offset;
+        strides[ndims - d - 2] = stride;
+        offset = stride;
     }
-    return TensorView(dtype, shape.len, shape, strides);
+    strides[ndims - 1] = 1;
+    strides[ndims] = 0;
+    for (0..ndims) |d| {
+        if (shape[d] == 0 or shape[d] == 1) {
+            strides[d] = 0;
+        }
+    }
+    return Tensor(dtype, shape.len, shape, strides);
 }
 
-// A Tensor is actually a TensorView, this is probably the best name for it because
-// its generic parameters directly affect how data is accessed (viewed)
-// While TensorView provides the API, the constructor is not the friendliest
-// hence there is a simpler Tensor constructor
-fn TensorView(
-    // These generic parameters are private so they will be redeclared
-    // as public constants in the result type
-    comptime _dtype: dtypes.DType,
-    comptime _ndims: u8,
-    comptime _shape: [_ndims]usize,
-    comptime _strides: [_ndims + 1]usize,
+fn Tensor(
+    // These generic parameters are private so they will be redeclare as pub conts in the result type
+    comptime tensor_dtype: dtypes.DType,
+    comptime tensor_ndims: u8,
+    comptime tensor_shape: [tensor_ndims]usize,
+    comptime tensor_strides: [tensor_ndims + 1]usize,
 ) type {
     return struct {
+        // All the functions for operations are implemented separately
+        pub usingnamespace @import("functions.zig");
         const Self = @This();
-        pub const dtype: dtypes.DType = _dtype;
-        pub const ndims: u8 = _ndims;
-        pub const shape: [ndims]usize = _shape;
-        pub const strides: [ndims + 1]usize = _strides;
-        pub const size = utils.storageSizeForTensor(ndims, shape, strides);
+
+        // Type level constants for comptime logic (e.g. @TypeOf(x).ndims)
+        pub const dtype: dtypes.DType = tensor_dtype;
+        pub const ndims: u8 = tensor_ndims;
+        pub const shape: [ndims]usize = tensor_shape;
+        pub const strides: [ndims + 1]usize = tensor_strides;
+        pub const size = get_size: {
+            // The storage size is 1 + last index calculated by the strides and shape
+            // shape[d] - 1 is the last index in dimension d
+            // Also incorporate the storage offset
+            var _size: usize = strides[ndims] + 1;
+            for (0..ndims) |d| {
+                _size += (shape[d] - 1) * strides[d];
+            }
+            // The result is the size of the storage needed to visit all indices of the tensor
+            break :get_size _size;
+        };
+        pub const is_contiguous: bool = is_contiguous: {
+            var prev: usize = (1 << @typeInfo(usize).Int.bits) - 1;
+            for (strides[0..ndims]) |s| {
+                if (s > prev and s > 0) {
+                    break :is_contiguous false;
+                }
+                if (s > 0) {
+                    prev = s;
+                }
+            }
+            break :is_contiguous true;
+        };
 
         ndims: u8 = ndims,
         dtype: dtypes.DType = dtype,
         shape: [ndims]usize = shape,
         size: usize = size,
         strides: [ndims + 1]usize = strides,
+        is_contiguous: bool = is_contiguous,
+
         traceFn: *const fn (self: *const Self) void,
 
-        pub fn init(
-            comptime traceFn: *const fn (self: *const Self) void,
-        ) Self {
+        pub fn init(comptime traceFn: *const fn (self: *const Self) void) Self {
             return .{ .traceFn = traceFn };
         }
 
@@ -94,18 +123,13 @@ fn TensorView(
             return init(traceFn);
         }
 
-        pub fn isContiguous(_: *const Self) bool {
-            return comptime utils.isContiguous(ndims, strides);
-        }
-
         pub fn Permute(comptime perm: [ndims]u8) type {
             var strides_perm: [ndims + 1]u8 = undefined;
             @memcpy(strides_perm[0..ndims], &perm);
             strides_perm[ndims] = ndims;
             return AsStrided(
-                dtype,
-                utils.permuteArray(ndims, shape, perm),
-                utils.permuteArray(ndims + 1, strides, strides_perm),
+                utils.arrayPermute(ndims, shape, perm),
+                utils.arrayPermute(ndims + 1, strides, strides_perm),
             );
         }
         pub fn permute(x: *const Self, comptime perm: [ndims]u8) Permute(perm) {
@@ -118,7 +142,7 @@ fn TensorView(
                             .TypeOp = .{
                                 .op = .Permute,
                                 .x = Graph.Vertex.get(x),
-                                .new_info = .{ .Permute = perm[0..] },
+                                .new_info = .{ .View = Out.shape },
                             },
                         }, Out);
                     }
@@ -127,10 +151,9 @@ fn TensorView(
             }
         }
 
-        pub fn view(x: *const Self, comptime new_shape: anytype) Tensor(dtype, new_shape) {
+        pub fn view(x: *const Self, comptime new_shape: anytype) InferredStrides(dtype, new_shape) {
             comptime {
-                const Out = Tensor(dtype, new_shape);
-                std.debug.assert(Out.size == size);
+                const Out = InferredStrides(dtype, new_shape);
                 if (x.isContiguous()) {
                     const traceFn = struct {
                         fn trace(out: *const Out) void {
@@ -148,45 +171,93 @@ fn TensorView(
                 }
             }
         }
-
-        pub fn asStrided(x: *const Self, comptime new_shape: anytype, comptime new_strides: anytype) AsStrided(dtype, new_shape, new_strides) {
+        pub fn reshape(x: *const Self, comptime new_shape: anytype) InferredStrides(dtype, new_shape) {
             comptime {
-                const Out = AsStrided(dtype, new_shape, new_strides);
-                const traceFn = struct {
-                    fn trace(out: *const Out) void {
-                        Graph.trace(x);
-                        Graph.Vertex.new(out, .{ .TypeOp = .{
-                            .op = .AsStrided,
-                            .x = Graph.Vertex.get(x),
-                            .new_info = .{ .AsStrided = @as([new_strides.len]usize, new_strides)[0..] },
-                        } }, Out);
-                    }
-                }.trace;
-                return Out.init(traceFn);
+                if (x.isContiguous()) {
+                    return x.view(new_shape);
+                } else {
+                    // return x.copy().view(new_shape);
+                }
             }
         }
 
-        pub fn AsType(comptime new_dtype: dtypes.DType) type {
-            return TensorView(new_dtype, ndims, shape, strides);
-        }
-        pub fn asType(x: *const Self, comptime new_dtype: dtypes.DType) AsType(new_dtype) {
-            comptime {
-                const Out: type = AsType(new_dtype);
-                const traceFn = struct {
-                    fn trace(out: *const Out) void {
-                        Graph.trace(x);
-                        Graph.Vertex.new(out, .{ .TypeOp = .{
-                            .op = .AsType,
-                            .x = Graph.Vertex.get(x),
-                            .new_info = .{ .AsType = new_dtype },
-                        } }, Out);
-                    }
-                }.trace;
-                return Out.init(traceFn);
+        fn Unsqueeze(comptime dim: u8) type {
+            if (dim > ndims) {
+                @compileError("dim to unsqueeze at is out of range");
             }
+            return AsStrided(
+                utils.arrayInsert(ndims, shape, dim, 1),
+                utils.arrayInsert(ndims + 1, strides, dim, 0),
+            );
+        }
+        pub fn unsqueeze(x: *const Self, comptime dim: u8) Unsqueeze(dim) {
+            const Out = Unsqueeze(dim);
+            return x.asStrided(Out.shape, Out.strides);
         }
 
-        pub fn map(x: *const Self, comptime op: ops.MapOp) Self {
+        fn Squeeze(comptime dim: u8) type {
+            if (dim >= ndims) {
+                @compileError("dim to squeeze at is out of range");
+            }
+            if (shape[dim] != 1 or strides[dim] != 0) {
+                @compileError(
+                    \\[TESSERACT COMPILE ERROR]
+                    \\Cannot squeeze as dimension size is not 1 or stride for dimension is not 0
+                );
+            }
+            return AsStrided(
+                utils.arrayDelete(ndims, shape, dim),
+                utils.arrayDelete(ndims + 1, strides, dim),
+            );
+        }
+        pub fn squeeze(x: *const Self, comptime dim: u8) Squeeze(dim) {
+            const Out = Squeeze(dim);
+            return x.asStrided(Out.shape, Out.strides);
+        }
+
+        fn AsStrided(comptime new_shape: anytype, comptime new_strides: anytype) type {
+            if (new_shape.len + 1 != new_strides.len) {
+                @compileError(
+                    \\[TESSERACT COMPILE ERROR]
+                    \\Provided shape ndims not compatible with provided strides ndims
+                    \\You may be missing the storage offset (strides[ndims])
+                );
+            }
+            return Tensor(dtype, new_shape.len, new_shape, new_strides);
+        }
+        pub fn asStrided(comptime x: *const Self, comptime new_shape: anytype, comptime new_strides: anytype) AsStrided(new_shape, new_strides) {
+            const Out = AsStrided(new_shape, new_strides);
+            const traceFn = struct {
+                fn trace(out: *const Out) void {
+                    Graph.trace(x);
+                    Graph.Vertex.new(out, .{ .TypeOp = .{
+                        .op = .AsStrided,
+                        .x = Graph.Vertex.get(x),
+                        .new_info = .{ .AsStrided = .{
+                            .shape = @as([new_shape.len]usize, new_shape)[0..],
+                            .strides = @as([new_strides.len]usize, new_strides)[0..],
+                        } },
+                    } }, Out);
+                }
+            }.trace;
+            return Out.init(traceFn);
+        }
+
+        pub fn asType(comptime x: *const Self, comptime new_dtype: dtypes.DType) Tensor(new_dtype, ndims, shape, strides) {
+            const Out: type = Tensor(new_dtype, ndims, shape, strides);
+            const traceFn = struct {
+                fn trace(out: *const Out) void {
+                    Graph.trace(x);
+                    Graph.Vertex.new(out, .{ .TypeOp = .{
+                        .op = .AsType,
+                        .x = Graph.Vertex.get(x),
+                        .new_info = .{ .AsType = new_dtype },
+                    } }, Out);
+                }
+            }.trace;
+            return Out.init(traceFn);
+        }
+        pub fn map(comptime x: *const Self, comptime op: ops.MapOp) Self {
             comptime {
                 const Out: type = @TypeOf(x.*);
                 const traceFn = struct {
@@ -201,110 +272,62 @@ fn TensorView(
                 return Out.init(traceFn);
             }
         }
-        pub fn exp2(x: *const Self) Self {
-            return x.map(.Exp2);
-        }
-        pub fn log2(x: *const Self) Self {
-            return x.map(.Log2);
-        }
-        pub fn neg(x: *const Self) Self {
-            return x.map(.Neg);
-        }
-        pub fn recip(x: *const Self) Self {
-            return x.map(.Recip);
-        }
-        pub fn sin(x: *const Self) Self {
-            return x.map(.Sin);
-        }
-        pub fn sqrt(x: *const Self) Self {
-            return x.map(.Sqrt);
-        }
 
-        pub fn Broadcast(comptime OtherTensorType: type, comptime new_dtype: dtypes.DType) type {
-            if (dtype != OtherTensorType.dtype) {
-                @compileError("Cannot broadcast tensors as they do not have the same dtype, please cast first");
-            }
-            const bc_ndims = @max(ndims, OtherTensorType.ndims);
+        pub fn Broadcast(comptime Other: type, comptime op: ops.ZipOp) type {
+            const new_dtype = switch (op) {
+                .Equals, .LessThan => .bool,
+                else => dtype,
+            };
+            const bc_ndims = @max(ndims, Other.ndims);
             var bc_shape: [bc_ndims]usize = undefined;
             for (0..bc_ndims) |i| {
                 const dim1 = if (i >= ndims) 1 else shape[ndims - i - 1];
-                const dim2 = if (i >= OtherTensorType.ndims) 1 else OtherTensorType.shape[OtherTensorType.ndims - i - 1];
+                const dim2 = if (i >= Other.ndims) 1 else Other.shape[Other.ndims - i - 1];
                 if (dim1 != 1 and dim2 != 1 and dim1 != dim2) {
                     @compileError(comptimePrint(
                         "Cannot broadcast tensors of shapes {any} and {any}",
-                        .{ shape, OtherTensorType.shape },
+                        .{ shape, Other.shape },
                     ));
                 }
                 bc_shape[bc_ndims - i - 1] = if (dim1 == dim2 or dim2 == 1) dim1 else dim2;
             }
-            return Tensor(new_dtype, bc_shape);
+            return InferredStrides(new_dtype, bc_shape);
         }
-        fn ZipNewDType(comptime op: ops.ZipOp) dtypes.DType {
-            return switch (op) {
-                .Equals, .LessThan => .bool,
-                else => dtype,
-            };
-        }
-        pub fn zip(a: *const Self, comptime op: ops.ZipOp, b: anytype) Broadcast(@TypeOf(b), ZipNewDType(op)) {
-            comptime {
-                const Out: type = Broadcast(@TypeOf(b), ZipNewDType(op));
-                const traceFn = struct {
-                    fn trace(out: *const Out) void {
-                        Graph.trace(a);
-                        Graph.trace(b);
-                        Graph.Vertex.new(out, .{
-                            .ZipOp = .{
-                                .op = op,
-                                .a = Graph.Vertex.get(a),
-                                .b = Graph.Vertex.get(&b),
-                            },
-                        }, Out);
-                    }
-                }.trace;
-                return Out.init(traceFn);
-            }
-        }
-        // ZipOps
-        pub fn add(a: *const Self, b: anytype) Broadcast(@TypeOf(b), dtype) {
-            return a.zip(.Add, b);
-        }
-        pub fn mul(a: *const Self, b: anytype) Broadcast(@TypeOf(b), dtype) {
-            return a.zip(.Mul, b);
-        }
-        pub fn maximum(a: *const Self, b: anytype) Broadcast(@TypeOf(b), dtype) {
-            return a.zip(.Maximum, b);
-        }
-        pub fn mod(a: *const Self, b: anytype) Broadcast(@TypeOf(b)) {
-            return a.zip(.Mod, b);
-        }
-        pub fn less_than(a: *const Self, b: anytype) Broadcast(@TypeOf(b), bool) {
-            return a.zip(.LessThan, b);
-        }
-        pub fn equals(a: *const Self, b: anytype) Broadcast(@TypeOf(b), bool) {
-            return a.zip(.Equals, b);
-        }
-        pub fn xor(a: *const Self, b: anytype) Broadcast(@TypeOf(b), dtype) {
-            return a.zip(.Xor, b);
+        pub fn zip(comptime a: *const Self, comptime op: ops.ZipOp, comptime b: anytype) Broadcast(@TypeOf(b), op) {
+            const Out: type = Broadcast(@TypeOf(b), op);
+            const traceFn = struct {
+                fn trace(out: *const Out) void {
+                    Graph.trace(a);
+                    Graph.trace(b);
+                    Graph.Vertex.new(out, .{
+                        .ZipOp = .{
+                            .op = op,
+                            .a = Graph.Vertex.get(a),
+                            .b = Graph.Vertex.get(&b),
+                        },
+                    }, Out);
+                }
+            }.trace;
+            return Out.init(traceFn);
         }
 
-        pub fn Reduce(comptime reduction: anytype) type {
-            const ReductionType = @TypeOf(reduction);
-            switch (@typeInfo(ReductionType)) {
+        pub fn Reduce(comptime reduce_dims: anytype) type {
+            switch (@typeInfo(@TypeOf(reduce_dims))) {
                 .ComptimeInt, .Int => {
-                    const dim = reduction;
+                    const dim = reduce_dims;
                     if (dim < 0 or dim >= ndims) {
                         @compileError("Dimension index for single dimension reduce is out of bounds");
                     }
                     var reduced_shape: [ndims]usize = undefined;
                     @memcpy(&reduced_shape, &shape);
                     reduced_shape[dim] = 1;
-                    return Tensor(dtype, reduced_shape);
+                    return InferredStrides(dtype, reduced_shape);
                 },
                 .Null, .Void => {
-                    return Tensor(dtype, [_]usize{1} ** ndims);
+                    return InferredStrides(dtype, [_]usize{1} ** ndims);
                 },
                 else => {
-                    const dims = reduction;
+                    const dims = reduce_dims;
                     if (dims.len > ndims) {
                         @compileError("Length of dimension index array for multi dimension reduce is out of bounds");
                     }
@@ -321,67 +344,92 @@ fn TensorView(
                         reduced[d] = true;
                         reduced_shape[d] = 1;
                     }
-                    return Tensor(dtype, reduced_shape);
+                    return InferredStrides(dtype, reduced_shape);
                 },
             }
         }
-        pub fn reduce(x: *const Self, comptime op: ops.ReduceOp, comptime reduction: anytype) Reduce(reduction) {
-            comptime {
-                const Out: type = Reduce(reduction);
-                const reduction_dim_mask: [ndims]bool = switch (@typeInfo(@TypeOf(reduction))) {
-                    .ComptimeInt, .Int => blk: {
-                        var tmp_mask: [ndims]bool = [_]bool{false} ** ndims;
-                        tmp_mask[reduction] = true;
-                        break :blk tmp_mask;
-                    },
-                    .Null, .Void => [_]bool{true} ** ndims,
-                    else => blk: {
-                        var tmp_mask: [ndims]bool = [_]bool{false} ** ndims;
-                        for (reduction) |dim| {
-                            tmp_mask[dim] = true;
-                        }
-                        break :blk tmp_mask;
-                    },
-                };
-                const traceFn = struct {
-                    fn trace(out: *const Out) void {
-                        Graph.trace(x);
-                        Graph.Vertex.new(out, .{ .ReduceOp = .{
-                            .op = op,
-                            .x = Graph.Vertex.get(x),
-                            .dims = reduction_dim_mask[0..],
-                        } }, Out);
+        pub fn reduce(comptime x: *const Self, comptime op: ops.ReduceOp, comptime reduce_dims: anytype) Reduce(reduce_dims) {
+            const Out: type = Reduce(reduce_dims);
+            const reduction_dim_mask: [ndims]bool = switch (@typeInfo(@TypeOf(reduce_dims))) {
+                .ComptimeInt, .Int => blk: {
+                    var tmp_mask: [ndims]bool = [_]bool{false} ** ndims;
+                    tmp_mask[reduce_dims] = true;
+                    break :blk tmp_mask;
+                },
+                .Null, .Void => [_]bool{true} ** ndims,
+                else => blk: {
+                    var tmp_mask: [ndims]bool = [_]bool{false} ** ndims;
+                    for (reduce_dims) |dim| {
+                        tmp_mask[dim] = true;
                     }
-                }.trace;
-                return Out.init(traceFn);
+                    break :blk tmp_mask;
+                },
+            };
+            const traceFn = struct {
+                fn trace(out: *const Out) void {
+                    Graph.trace(x);
+                    Graph.Vertex.new(out, .{ .ReduceOp = .{
+                        .op = op,
+                        .x = Graph.Vertex.get(x),
+                        .dims = reduction_dim_mask[0..],
+                    } }, Out);
+                }
+            }.trace;
+            return Out.init(traceFn);
+        }
+
+        pub fn MatMul(comptime Other: type) type {
+            // Matrix multiplication invariant
+            // (n x m1) matmul (m2 x p) -> (n x p) if m1 = m2
+            // If m1 != m2 then matmul is invalid
+            const n = if (ndims == 1) 1 else shape[ndims - 2];
+            const m = shape[ndims - 1];
+            const other_m = if (Other.ndims == 1) 1 else Other.shape[Other.ndims - 2];
+            const p = Other.shape[Other.ndims - 1];
+
+            if (m == other_m) {
+                const mm_ndims = @max(ndims, Other.ndims);
+                var mm_shape: [mm_ndims]usize = undefined;
+                // Broadcasting check, look only at batch dimensions (everything before last 2 dimensions)
+                for (0..mm_ndims - 2) |i| {
+                    const dim1 = if (i >= ndims - 2) 1 else shape[ndims - i - 3];
+                    const dim2 = if (i >= Other.ndims - 2) 1 else Other.shape[Other.ndims - i - 3];
+                    if (dim1 == dim2 or dim1 == 1 or dim2 == 1) {
+                        mm_shape[mm_ndims - i - 3] = if (dim1 == dim2 or dim2 == 1) dim1 else dim2;
+                        @compileError(comptimePrint(
+                            \\[TESSERACT COMPILE ERROR]
+                            \\Cannot perform matrix multiplication on these two tensors
+                            \\tensor1: {any}"
+                            \\tensor2: {any}
+                        , .{ shape, Other.shape }));
+                    }
+                }
+                mm_shape[mm_ndims - 2] = n;
+                mm_shape[mm_ndims - 1] = p;
+                return InferredStrides(dtype, mm_shape);
             }
+            @compileError(comptimePrint(
+                \\[TESSERACT COMPILE ERROR]
+                \\Cannot perform matrix multiplication on these two tensors
+                \\tensor1: {any}"
+                \\tensor2: {any}
+            , .{ shape, Other.shape }));
         }
 
-        // ReduceOps
-        pub fn sum(x: *const Self, comptime reduction: anytype) Reduce(reduction) {
-            return x.reduce(.Sum, reduction);
-        }
-        pub fn max(x: *const Self, comptime reduction: anytype) Reduce(reduction) {
-            return x.reduce(.Max, reduction);
-        }
-
-        // Compound functions that use the ops
-        pub fn exp(x: *const Self) Self {
-            // 1 / log(2) = 1.44269504089
-            // e^x = 2^(x / log(2))
-            return x.mul(constant(dtype, 1.44269504089)).exp2();
-        }
-        pub fn ln(x: *const Self) Self {
-            // log(2) = 0.69314718056
-            // log(x) = log2(x)log(2)
-            return x.log2().mul(constant(dtype, 0.69314718056));
-        }
-        pub fn div(a: *const Self, b: anytype) Broadcast(@TypeOf(b), dtype) {
-            return a.mul(b.recip());
-        }
-        pub fn sub(a: *const Self, b: anytype) Broadcast(@TypeOf(b), dtype) {
-            return a.add(b.neg());
-        }
+        // pub fn Conv2d(comptime Filter: type, _stride: anytype) type {
+        //     const stride: [2]usize = switch (@typeInfo(@TypeOf(_stride))) {
+        //         .ComptimeInt, .Int => [2]usize{ _stride, _stride },
+        //         .Array => blk: {
+        //             if (_stride.len != 2) {
+        //                 @compileError("2D convolution stride must be a 2 element tuple");
+        //             }
+        //             break :blk _stride;
+        //         },
+        //         else => {
+        //             @compileError("2D convolution stride must be 1 number of a 2 element tuple");
+        //         },
+        //     };
+        // }
     };
 }
 
@@ -390,15 +438,15 @@ test "same tensors assignable" {
     // equal to teach other, which would cause this test to not compile
     // Note that the fill value is different: this should have no effect
     comptime {
-        const tensor1 = Tensor(.i32, .{ 2, 3, 4 }).full(0);
-        var tensor2 = Tensor(.i32, .{ 2, 3, 4 }).full(1);
+        const tensor1 = InferredStrides(.i32, .{ 2, 3, 4 }).full(0);
+        var tensor2 = InferredStrides(.i32, .{ 2, 3, 4 }).full(1);
         tensor2 = tensor1;
     }
 }
 
 test "permute" {
     comptime {
-        const tensor1 = Tensor(.i32, .{ 2, 3, 4 }).full(0);
+        const tensor1 = InferredStrides(.i32, .{ 2, 3, 4 }).full(0);
         const tensor2 = tensor1.permute(.{ 0, 2, 1 });
         try std.testing.expectEqual([_]usize{ 2, 4, 3 }, tensor2.shape);
         try std.testing.expectEqual([_]usize{ 12, 1, 4, 0 }, tensor2.strides);
@@ -407,7 +455,7 @@ test "permute" {
 
 test "view" {
     comptime {
-        const tensor1 = Tensor(.i32, .{ 2, 3, 4 }).full(0);
+        const tensor1 = InferredStrides(.i32, .{ 2, 3, 4 }).full(0);
         const tensor2 = tensor1.view(.{ 12, 2 });
         const tensor3 = tensor2.view(.{24});
         try std.testing.expectEqual([_]usize{ 12, 2 }, tensor2.shape);
@@ -420,7 +468,7 @@ test "view" {
 test "as strided" {
     // Based on example from https://pytorch.org/docs/stable/generated/torch.as_strided.html
     comptime {
-        const tensor1 = Tensor(.i32, .{ 3, 3 }).full(0);
+        const tensor1 = InferredStrides(.i32, .{ 3, 3 }).full(0);
         const tensor2 = tensor1.asStrided(.{ 2, 2 }, .{ 1, 2, 0 });
 
         try std.testing.expectEqual([_]usize{ 2, 2 }, tensor2.shape);
@@ -444,7 +492,7 @@ test "as strided" {
 }
 
 test "map" {
-    const tensor1 = comptime Tensor(.i32, .{ 2, 3, 4 }).full(3);
+    const tensor1 = comptime InferredStrides(.i32, .{ 2, 3, 4 }).full(3);
     const tensor2 = comptime tensor1.neg();
     try std.testing.expectEqual([_]usize{ 2, 3, 4 }, tensor2.shape);
     Graph.init();
@@ -455,8 +503,8 @@ test "map" {
 }
 
 test "zip" {
-    const tensor1 = comptime Tensor(.i32, .{ 2, 1, 4 }).full(2);
-    const tensor2 = comptime Tensor(.i32, .{ 3, 1 }).full(3);
+    const tensor1 = comptime InferredStrides(.i32, .{ 2, 1, 4 }).full(2);
+    const tensor2 = comptime InferredStrides(.i32, .{ 3, 1 }).full(3);
     const tensor3 = comptime tensor1.add(tensor2);
     try std.testing.expectEqual([_]usize{ 2, 3, 4 }, tensor3.shape);
     Graph.init();
@@ -468,7 +516,7 @@ test "zip" {
 }
 
 test "reduce" {
-    const tensor1 = comptime Tensor(.i32, .{ 2, 3, 4 }).full(5);
+    const tensor1 = comptime InferredStrides(.i32, .{ 2, 3, 4 }).full(5);
     const tensor2 = comptime tensor1.sum(1);
     try std.testing.expectEqual([_]usize{ 2, 1, 4 }, tensor2.shape);
     Graph.init();
@@ -480,7 +528,7 @@ test "reduce" {
 }
 
 test "multiple dim reduce" {
-    const tensor1 = comptime Tensor(.i32, .{ 2, 3, 4 }).full(5);
+    const tensor1 = comptime InferredStrides(.i32, .{ 2, 3, 4 }).full(5);
     const tensor2 = comptime tensor1.sum(.{ 0, 1 });
     try std.testing.expectEqual([_]usize{ 1, 1, 4 }, tensor2.shape);
     Graph.init();
@@ -492,8 +540,8 @@ test "multiple dim reduce" {
 }
 
 test "zip reduce" {
-    const tensor1 = comptime Tensor(.i32, .{ 2, 1, 4 }).full(2);
-    const tensor2 = comptime Tensor(.i32, .{ 2, 3, 1 }).full(3);
+    const tensor1 = comptime InferredStrides(.i32, .{ 2, 1, 4 }).full(2);
+    const tensor2 = comptime InferredStrides(.i32, .{ 2, 3, 1 }).full(3);
     const tensor3 = comptime tensor1.add(tensor2).sum(1);
     try std.testing.expectEqual([_]usize{ 2, 1, 4 }, tensor3.shape);
     Graph.init();
@@ -507,7 +555,7 @@ test "zip reduce" {
 }
 
 test "as_type" {
-    const tensor1 = comptime Tensor(.bool, .{3}).full(true);
+    const tensor1 = comptime InferredStrides(.bool, .{3}).full(true);
     try std.testing.expect(tensor1.dtype == .bool);
     const tensor2 = comptime tensor1.asType(.i32);
     try std.testing.expect(tensor2.dtype == .i32);
@@ -519,17 +567,17 @@ test "as_type" {
     try std.testing.expect(tensor5.dtype == .f32);
 }
 
-fn fn1() Tensor(.i32, .{ 2, 1, 4 }) {
-    const tensor1 = Tensor(.i32, .{ 2, 1, 4 }).full(1);
-    const tensor2 = Tensor(.i32, .{ 2, 3, 1 }).full(2);
+fn fn1() InferredStrides(.i32, .{ 2, 1, 4 }) {
+    const tensor1 = InferredStrides(.i32, .{ 2, 1, 4 }).full(1);
+    const tensor2 = InferredStrides(.i32, .{ 2, 3, 1 }).full(2);
     const tensor3 = tensor1.add(tensor2).sum(1);
     return tensor3;
 }
 
-fn fn2(input: anytype) Tensor(.i32, .{ 2, 3, 4 }) {
+fn fn2(input: anytype) InferredStrides(.i32, .{ 2, 3, 4 }) {
     return comptime blk: {
-        const tensor4 = Tensor(.i32, .{ 2, 1, 4 }).full(4);
-        const tensor5 = Tensor(.i32, .{ 2, 3, 1 }).full(5);
+        const tensor4 = InferredStrides(.i32, .{ 2, 1, 4 }).full(4);
+        const tensor5 = InferredStrides(.i32, .{ 2, 3, 1 }).full(5);
         const tensor6 = tensor4.mul(input).sum(1).add(tensor5);
         break :blk tensor6;
     };
