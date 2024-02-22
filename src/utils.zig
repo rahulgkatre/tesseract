@@ -46,7 +46,7 @@ pub fn arrayInsert(comptime len: u8, array: [len]usize, index: usize, val: usize
 
 pub fn arrayDelete(comptime len: u8, array: [len]usize, index: usize) [len - 1]usize {
     var new_array: [len - 1]usize = undefined;
-    for (0..index + 1) |i| {
+    for (0..index) |i| {
         new_array[i] = array[i];
     }
     for (index + 1..len) |i| {

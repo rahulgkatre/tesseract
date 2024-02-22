@@ -14,15 +14,18 @@ var nodes: std.AutoHashMap(usize, *Vertex) = undefined;
 var entrypoint: ?*Vertex = null;
 
 pub fn init() void {
+    // var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     allocator = arena.allocator();
     cache = std.AutoHashMap(usize, usize).init(allocator);
     ids = std.AutoHashMap(usize, usize).init(allocator);
     nodes = std.AutoHashMap(usize, *Vertex).init(allocator);
+    Program.init();
 }
 
 pub fn deinit() void {
     arena.deinit();
+    Program.deinit();
 }
 
 /// Build the computation graph for a tensor.
@@ -41,29 +44,27 @@ pub fn trace(comptime _tensor: anytype) void {
 /// and the opperation applied to it to produce the child.
 /// Also contains operation inlining/fusing info.
 pub const Edge = union(ops.GraphOps) {
-    MapOp: struct {
+    pub const MapOp = struct {
         op: ops.MapOp,
         x: *Vertex,
         fused_x: bool = false,
-    },
-    ZipOp: struct {
+    };
+    pub const ZipOp = struct {
         op: ops.ZipOp,
         a: *Vertex,
         b: *Vertex,
         fused_a: bool = false,
         fused_b: bool = false,
-    },
-    ReduceOp: struct {
+    };
+    pub const ReduceOp = struct {
         op: ops.ReduceOp,
         x: *Vertex,
         dims: []const bool,
         fused_x: bool = false,
-    },
-    TypeOp: struct {
+    };
+    pub const TypeOp = struct {
         op: ops.TypeOp,
-        x: *Vertex,
-        fused_x: bool = true,
-        new_info: union(ops.TypeOp) {
+        op_info: union(ops.TypeOp) {
             AsStrided: struct {
                 shape: []const usize,
                 strides: []const usize,
@@ -71,10 +72,18 @@ pub const Edge = union(ops.GraphOps) {
             AsType: dtypes.DType,
             View: []const usize,
         },
-    },
-    InitOp: struct {
+        x: *Vertex,
+        fused_x: bool = true,
+    };
+    pub const InitOp = struct {
         op: ops.InitOp,
-    },
+        // TODO: op_info for InitOp
+    };
+    MapOp: MapOp,
+    ZipOp: ZipOp,
+    ReduceOp: ReduceOp,
+    TypeOp: TypeOp,
+    InitOp: InitOp,
 };
 
 var viz_hash_table: std.AutoHashMap(usize, bool) = undefined;
@@ -85,11 +94,13 @@ pub const Vertex = struct {
     kernel_id: ?usize = null,
     cache_in_kernel: bool = false,
 
-    // Tensor metadata which will be used for lowering to loop representations
-    ndims: u8,
-    dtype: dtypes.DType,
-    shape: []const usize,
-    strides: []const usize,
+    // Tensor metadata
+    tensor: struct {
+        ndims: u8,
+        dtype: dtypes.DType,
+        shape: []const usize,
+        strides: []const usize,
+    },
 
     fn register(ptr: anytype, edge: Edge, comptime Tensor: type) !void {
         const key = @intFromPtr(ptr);
@@ -100,10 +111,12 @@ pub const Vertex = struct {
             vertex.* = .{
                 .id = id,
                 .edge = edge,
-                .ndims = Tensor.ndims,
-                .dtype = Tensor.dtype,
-                .shape = Tensor.shape[0..],
-                .strides = Tensor.strides[0..],
+                .tensor = .{
+                    .ndims = Tensor.ndims,
+                    .dtype = Tensor.dtype,
+                    .shape = Tensor.shape[0..],
+                    .strides = Tensor.strides[0..],
+                },
             };
             entrypoint = vertex;
             try nodes.put(id, vertex);
@@ -118,272 +131,151 @@ pub const Vertex = struct {
         return nodes.get(ids.get(@intFromPtr(ptr)).?).?;
     }
 
-    fn print(v: *Vertex) void {
+    fn nodeViz(node: *Vertex) std.mem.Allocator.Error!void {
         // To avoid printing the same thing multiple times use the hash table to check/mark as already printed
-        if (viz_hash_table.get(v.id).? == true) {
+        if (viz_hash_table.get(node.id).? == true) {
             return;
         }
-        viz_hash_table.put(v.id, true) catch @panic("Out of memory");
-        switch (v.edge) {
+        try viz_hash_table.put(node.id, true);
+        switch (node.edge) {
             inline else => |e| {
-                std.debug.print("T{d}[label=\"T{d}\"shape=box];\n", .{ v.id, v.id });
-                if (v.kernel_id != null and v.cache_in_kernel) {
-                    std.debug.print("subgraph cluster{d}{{T{d}_{d}[label=\"T{d}_{d}\"shape=box];}}\n", .{ v.kernel_id.?, v.id, v.kernel_id.?, v.id, v.kernel_id.? });
-                    std.debug.print("T{d}_{d}->T{d}[label=\" {s}{any}\"];\n", .{ v.id, v.kernel_id.?, v.id, @tagName(v.dtype), v.shape });
-                    std.debug.print("{s}{d}->T{d}_{d}[label=\" {s}{any}\"];\n", .{ @tagName(e.op), v.id, v.id, v.kernel_id.?, @tagName(v.dtype), v.shape });
+                std.debug.print("T{d}[label=\"T{d}\"shape=box];\n", .{ node.id, node.id });
+                if (node.kernel_id != null and node.cache_in_kernel) {
+                    std.debug.print("subgraph cluster{d}{{T{d}_{d}[label=\"T{d}_{d}\"shape=box];}}\n", .{ node.kernel_id.?, node.id, node.kernel_id.?, node.id, node.kernel_id.? });
+                    std.debug.print("T{d}_{d}->T{d}[label=\" {s}{any}\"];\n", .{ node.id, node.kernel_id.?, node.id, @tagName(node.tensor.dtype), node.tensor.shape });
+                    std.debug.print("{s}{d}->T{d}_{d}[label=\" {s}{any}\"];\n", .{ @tagName(e.op), node.id, node.id, node.kernel_id.?, @tagName(node.tensor.dtype), node.tensor.shape });
                 } else {
-                    std.debug.print("{s}{d}->T{d}[label=\" {s}{any}\"];\n", .{ @tagName(e.op), v.id, v.id, @tagName(v.dtype), v.shape });
+                    std.debug.print("{s}{d}->T{d}[label=\" {s}{any}\"];\n", .{ @tagName(e.op), node.id, node.id, @tagName(node.tensor.dtype), node.tensor.shape });
                 }
             },
         }
     }
 
-    /// Lower the node (and any nodes fused with it)
-    /// to a loop nest representation
-    pub fn lower(v: *Vertex) *Program.AffineLoop {
-        const expr: Program.Expr = switch (v.edge) {
-            .InitOp => |edge| .{ .InitOp = .{ .op = edge.op } },
-            .ZipOp => |edge| .{ .ZipOp = .{
-                .op = edge.op,
-                .a_id = edge.a.id,
-                .a_strides = edge.a.strides,
-                .b_id = edge.b.id,
-                .b_strides = edge.b.strides,
-                .out_id = v.id,
-                .out_strides = v.strides,
-            } },
-            .MapOp => |edge| .{ .MapOp = .{
-                .op = edge.op,
-                .x_id = edge.x.id,
-                .x_strides = edge.x.strides,
-                .out_id = v.id,
-                .out_strides = v.strides,
-            } },
-            .ReduceOp => |edge| .{ .ReduceOp = .{
-                .op = edge.op,
-                .x_id = edge.x.id,
-                .x_strides = edge.x.strides,
-                .out_id = v.id,
-                .out_strides = v.strides,
-            } },
-            .TypeOp => |edge| .{ .TypeOp = .{
-                .op = edge.op,
-                .x_id = edge.x.id,
-                .x_strides = edge.x.strides,
-                .out_id = v.id,
-                .out_strides = v.strides,
-            } },
-        };
-        const loop: *Program.AffineLoop = build_loop: {
-            const root_loop: *Program.AffineLoop = allocator.create(Program.AffineLoop) catch unreachable;
-            var curr_loop = root_loop;
-            for (0..v.ndims) |d| {
-                curr_loop.* = .{
-                    .upper_bound = v.shape[d],
-                    .loop_var = std.fmt.allocPrint(allocator, "idx{d}_dim{d}", .{ v.id, d }) catch unreachable,
-                    .acc = switch (v.edge) {
-                        .ReduceOp => |edge| edge.dims[d],
-                        else => false,
-                    },
-                    .body = .{
-                        .inner_loops = std.ArrayList(*Program.AffineLoop).init(allocator),
-                        .exprs = std.ArrayList(Program.Expr).init(allocator),
-                    },
-                    .prev = null,
-                };
-                if (d != v.ndims - 1) {
-                    const next_loop: *Program.AffineLoop = allocator.create(Program.AffineLoop) catch unreachable;
-                    curr_loop.body.inner_loops.append(next_loop) catch unreachable;
-                    curr_loop = next_loop;
-                } else {
-                    curr_loop.body.exprs.append(expr) catch unreachable;
-                }
+    fn initOpViz(node: *Vertex, edge: Edge.InitOp) std.mem.Allocator.Error!void {
+        if (node.kernel_id != null) {
+            std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op) });
+        } else {
+            std.debug.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
+        }
+    }
 
-                // if (curr_loop.body.inner_loops == null) {
-                //     // If there are no inner loops create a new one
-                //     curr_loop.body.inner_loops = std.ArrayList(Program.AffineLoop).init(allocator);
-                //     const next_loop: Program.AffineLoop = .{
-                //         .upper_bound = v.shape[d],
-                //         .loop_var = std.fmt.allocPrint(allocator, "idx{d}_dim{d}", .{ v.id, d }) catch unreachable,
-                //         .acc = switch (v.edge) {
-                //             .ReduceOp => |edge| edge.dims[d],
-                //             else => false,
-                //         },
-                //         .body = .{
-                //             .inner_loops = null,
-                //             .exprs = null,
-                //         },
-                //     };
-                //     curr_loop.body.inner_loops.?.append(next_loop) catch unreachable;
-                //     curr_loop = next_loop;
-                // } else {
-                //     // Otherwise try to find a loop with the same bounds
-                //     std.debug.print("Finding a inner loop to use\n", .{});
-
-                //     var found_next_loop = false;
-                //     for (curr_loop.body.inner_loops.?.items) |loop| {
-                //         if (loop.upper_bound == v.shape[d]) {
-                //             curr_loop = loop;
-                //             found_next_loop = true;
-                //         }
-                //     }
-                //     if (!found_next_loop) {
-                //         const next_loop: Program.AffineLoop = .{
-                //             .upper_bound = v.shape[d],
-                //             .loop_var = std.fmt.allocPrint(allocator, "idx{d}_dim{d}", .{ v.id, d }) catch unreachable,
-                //             .acc = switch (v.edge) {
-                //                 .ReduceOp => |edge| edge.dims[d],
-                //                 else => false,
-                //             },
-                //             .body = .{
-                //                 .inner_loops = null,
-                //                 .exprs = null,
-                //             },
-                //         };
-                //         curr_loop.body.inner_loops.?.append(next_loop) catch unreachable;
-                //         curr_loop = next_loop;
-                //     }
-                // }
+    fn mapOpViz(node: *Vertex, edge: Edge.MapOp) std.mem.Allocator.Error!void {
+        try edge.x.viz();
+        if (node.kernel_id != null) {
+            std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op) });
+        } else {
+            std.debug.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
+        }
+        if (edge.fused_x) {
+            switch (edge.x.edge) {
+                inline else => |x_edge| std.debug.print("{s}{d}", .{ @tagName(x_edge.op), edge.x.id }),
             }
-
-            break :build_loop root_loop;
-        };
-        switch (v.edge) {
-            .InitOp => {},
-            .ZipOp => |edge| {
-                const b_loop = edge.b.lower();
-                const a_loop = edge.a.lower();
-                loop.prev = a_loop;
-                a_loop.prev = b_loop;
-            },
-            inline else => |edge| {
-                const x_loop = edge.x.lower();
-                loop.prev = x_loop;
-            },
+        } else {
+            try edge.x.nodeViz();
+            if (node.kernel_id != null and node.kernel_id == edge.x.kernel_id and edge.x.cache_in_kernel) {
+                std.debug.print("T{d}_{?}", .{ edge.x.id, edge.x.kernel_id });
+            } else {
+                std.debug.print("T{d}", .{edge.x.id});
+            }
         }
-
-        return loop;
+        std.debug.print("->{s}{d}[label=\" {s}{any}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.x.tensor.dtype), edge.x.tensor.shape });
     }
 
-    pub fn viz(node: *Vertex) void {
+    fn zipOpViz(node: *Vertex, edge: Edge.ZipOp) std.mem.Allocator.Error!void {
+        try edge.a.viz();
+        try edge.b.viz();
+        if (node.kernel_id != null) {
+            std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op) });
+        } else {
+            std.debug.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
+        }
+        if (edge.fused_a) {
+            switch (edge.a.edge) {
+                inline else => |a_edge| std.debug.print("{s}{d}", .{ @tagName(a_edge.op), edge.a.id }),
+            }
+        } else {
+            try edge.a.nodeViz();
+            if (node.kernel_id != null and node.kernel_id == edge.a.kernel_id and edge.a.cache_in_kernel) {
+                std.debug.print("T{d}_{?}", .{ edge.a.id, edge.a.kernel_id });
+            } else {
+                std.debug.print("T{d}", .{edge.a.id});
+            }
+        }
+        std.debug.print("->{s}{d}[label=\" A: {s}{any}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.a.tensor.dtype), edge.a.tensor.shape });
+        if (edge.fused_b) {
+            switch (edge.b.edge) {
+                inline else => |b_edge| std.debug.print("{s}{d}", .{ @tagName(b_edge.op), edge.b.id }),
+            }
+        } else {
+            try edge.b.nodeViz();
+            if (node.kernel_id != null and node.kernel_id == edge.b.kernel_id and edge.b.cache_in_kernel) {
+                std.debug.print("T{d}_{?}", .{ edge.b.id, edge.b.kernel_id });
+            } else {
+                std.debug.print("T{d}", .{edge.b.id});
+            }
+        }
+        std.debug.print("->{s}{d}[label=\" B: {s}{any}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.b.tensor.dtype), edge.b.tensor.shape });
+    }
+
+    fn reduceOpViz(node: *Vertex, edge: Edge.ReduceOp) std.mem.Allocator.Error!void {
+        try edge.x.viz();
+        if (node.kernel_id != null) {
+            std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{any}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), edge.dims });
+        } else {
+            std.debug.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
+        }
+        if (edge.fused_x) {
+            switch (edge.x.edge) {
+                inline else => |x_edge| std.debug.print("{s}{d}", .{ @tagName(x_edge.op), edge.x.id }),
+            }
+        } else {
+            try edge.x.nodeViz();
+            if (node.kernel_id != null and node.kernel_id == edge.x.kernel_id and edge.x.cache_in_kernel) {
+                std.debug.print("T{d}_{?}", .{ edge.x.id, edge.x.kernel_id });
+            } else {
+                std.debug.print("T{d}", .{edge.x.id});
+            }
+        }
+        std.debug.print("->{s}{d}[label=\" {s}{any}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.x.tensor.dtype), edge.x.tensor.shape });
+    }
+
+    fn typeOpViz(node: *Vertex, edge: Edge.TypeOp) std.mem.Allocator.Error!void {
+        // TypeOps are fused by default
+        try edge.x.viz();
+        if (node.kernel_id != null) {
+            switch (edge.op_info) {
+                .AsType => |new_dtype| std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{{s}}}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), @tagName(new_dtype) }),
+                .AsStrided => |new_info| std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{shape:{any}, strides:{any}}}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), new_info.shape, new_info.strides }),
+                inline else => |new_info| std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{any}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), new_info }),
+            }
+        } else {
+            switch (edge.op_info) {
+                .AsType => |new_dtype| std.debug.print("{s}{d}[label=\"{s}{{{s}}}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op), @tagName(new_dtype) }),
+                .AsStrided => |new_info| std.debug.print("{s}{d}[label=\"{s}{{shape:{any}, strides:{any}}}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op), new_info.shape, new_info.strides }),
+                inline else => |new_info| std.debug.print("{s}{d}[label=\"{s}{any}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op), new_info }),
+            }
+        }
+        switch (edge.x.edge) {
+            inline else => |x_edge| std.debug.print("{s}{d}->{s}{d}[label=\" {s}{any}\"];\n", .{ @tagName(x_edge.op), edge.x.id, @tagName(edge.op), node.id, @tagName(edge.x.tensor.dtype), edge.x.tensor.shape }),
+        }
+    }
+
+    pub fn viz(node: *Vertex) std.mem.Allocator.Error!void {
         if (viz_hash_table.contains(node.id)) {
             return;
         }
-        viz_hash_table.put(node.id, false) catch @panic("Out of memory");
-        switch (node.edge) {
-            .InitOp => |edge| {
-                if (node.kernel_id != null) {
-                    std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op) });
-                } else {
-                    std.debug.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
-                }
-            },
-            .MapOp => |edge| {
-                edge.x.viz();
-                if (node.kernel_id != null) {
-                    std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op) });
-                } else {
-                    std.debug.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
-                }
-                if (edge.fused_x) {
-                    switch (edge.x.edge) {
-                        inline else => |x_edge| std.debug.print("{s}{d}", .{ @tagName(x_edge.op), edge.x.id }),
-                    }
-                } else {
-                    edge.x.print();
-                    if (node.kernel_id != null and node.kernel_id == edge.x.kernel_id and edge.x.cache_in_kernel) {
-                        std.debug.print("T{d}_{?}", .{ edge.x.id, edge.x.kernel_id });
-                    } else {
-                        std.debug.print("T{d}", .{edge.x.id});
-                    }
-                }
-                std.debug.print("->{s}{d}[label=\" {s}{any}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.x.dtype), edge.x.shape });
-            },
-            .ZipOp => |edge| {
-                edge.a.viz();
-                edge.b.viz();
-                if (node.kernel_id != null) {
-                    std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op) });
-                } else {
-                    std.debug.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
-                }
-                if (edge.fused_a) {
-                    switch (edge.a.edge) {
-                        inline else => |a_edge| std.debug.print("{s}{d}", .{ @tagName(a_edge.op), edge.a.id }),
-                    }
-                } else {
-                    edge.a.print();
-                    if (node.kernel_id != null and node.kernel_id == edge.a.kernel_id and edge.a.cache_in_kernel) {
-                        std.debug.print("T{d}_{?}", .{ edge.a.id, edge.a.kernel_id });
-                    } else {
-                        std.debug.print("T{d}", .{edge.a.id});
-                    }
-                }
-                std.debug.print("->{s}{d}[label=\" A: {s}{any}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.a.dtype), edge.a.shape });
-                if (edge.fused_b) {
-                    switch (edge.b.edge) {
-                        inline else => |b_edge| std.debug.print("{s}{d}", .{ @tagName(b_edge.op), edge.b.id }),
-                    }
-                } else {
-                    edge.b.print();
-                    if (node.kernel_id != null and node.kernel_id == edge.b.kernel_id and edge.b.cache_in_kernel) {
-                        std.debug.print("T{d}_{?}", .{ edge.b.id, edge.b.kernel_id });
-                    } else {
-                        std.debug.print("T{d}", .{edge.b.id});
-                    }
-                }
-                std.debug.print("->{s}{d}[label=\" B: {s}{any}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.b.dtype), edge.b.shape });
-            },
-            .ReduceOp => |edge| {
-                edge.x.viz();
-                if (node.kernel_id != null) {
-                    std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{any}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), edge.dims });
-                } else {
-                    std.debug.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
-                }
-                if (edge.fused_x) {
-                    switch (edge.x.edge) {
-                        inline else => |x_edge| std.debug.print("{s}{d}", .{ @tagName(x_edge.op), edge.x.id }),
-                    }
-                } else {
-                    edge.x.print();
-                    if (node.kernel_id != null and node.kernel_id == edge.x.kernel_id and edge.x.cache_in_kernel) {
-                        std.debug.print("T{d}_{?}", .{ edge.x.id, edge.x.kernel_id });
-                    } else {
-                        std.debug.print("T{d}", .{edge.x.id});
-                    }
-                }
-                std.debug.print("->{s}{d}[label=\" {s}{any}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.x.dtype), edge.x.shape });
-            },
-            .TypeOp => |edge| {
-                // TypeOps are fused by default
-                edge.x.viz();
-                if (node.kernel_id != null) {
-                    switch (edge.new_info) {
-                        .AsType => |new_dtype| std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{{s}}}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), @tagName(new_dtype) }),
-                        .AsStrided => |new_info| std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{shape:{any}, strides:{any}}}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), new_info.shape, new_info.strides }),
-                        inline else => |new_info| std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{any}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), new_info }),
-                    }
-                } else {
-                    switch (edge.new_info) {
-                        .AsType => |new_dtype| std.debug.print("{s}{d}[label=\"{s}{{{s}}}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op), @tagName(new_dtype) }),
-                        .AsStrided => |new_info| std.debug.print("{s}{d}[label=\"{s}{{shape:{any}, strides:{any}}}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op), new_info.shape, new_info.strides }),
-                        inline else => |new_info| std.debug.print("{s}{d}[label=\"{s}{any}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op), new_info }),
-                    }
-                }
-                switch (edge.x.edge) {
-                    inline else => |x_edge| std.debug.print("{s}{d}->{s}{d}[label=\" {s}{any}\"];\n", .{ @tagName(x_edge.op), edge.x.id, @tagName(edge.op), node.id, @tagName(edge.x.dtype), edge.x.shape }),
-                }
-            },
-        }
+        try viz_hash_table.put(node.id, false);
+        try switch (node.edge) {
+            .InitOp => |edge| initOpViz(node, edge),
+            .MapOp => |edge| mapOpViz(node, edge),
+            .ZipOp => |edge| zipOpViz(node, edge),
+            .ReduceOp => |edge| reduceOpViz(node, edge),
+            .TypeOp => |edge| typeOpViz(node, edge),
+        };
     }
 };
 
-pub fn lower() void {
-    Graph.entrypoint.?.lower().log();
-}
-
-pub fn viz() void {
+pub fn viz() !void {
     std.testing.expect(entrypoint != null) catch @panic("Graph has not been created, remember to call Graph.trace() on the output tensor");
     viz_hash_table = std.AutoHashMap(usize, bool).init(allocator);
     defer {
@@ -391,10 +283,10 @@ pub fn viz() void {
         viz_hash_table = undefined;
     }
     std.debug.print("digraph G {{\ncompound=true;\n", .{});
-    entrypoint.?.viz();
+    try entrypoint.?.viz();
     // Need to print the entrypoint separately because there is no other vertex
     // calling the entrypoint's print function
-    entrypoint.?.print();
+    try entrypoint.?.nodeViz();
     std.debug.print("}}\n", .{});
 }
 
@@ -594,14 +486,15 @@ test "manual vertical fusion" {
 }
 
 test "greedy fusion" {
-    const a = comptime tensor.InferredStrides(.f32, .{ 10, 10, 1 }).full(0);
-    const b = comptime tensor.InferredStrides(.f32, .{ 10, 1, 10 }).full(0);
-    const a_matmul_b = comptime a.mul(b).sum(a.ndims - 1).view(.{ 10, 10 });
+    const out = comptime blk: {
+        const a = tensor.InferredStrides(.f32, .{ 1024, 2048 }).full(2);
+        const b = tensor.InferredStrides(.f32, .{ 2048, 4096 }).full(3);
+        break :blk a.matmul(b);
+    };
     Graph.init();
     defer Graph.deinit();
-    Graph.trace(a_matmul_b);
+    Graph.trace(out);
     Graph.applyGreedyFusion();
     std.debug.print("\n", .{});
-    // Graph.viz();
-    Graph.lower();
+    try Graph.viz();
 }

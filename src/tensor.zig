@@ -133,35 +133,41 @@ fn Tensor(
             );
         }
         pub fn permute(x: *const Self, comptime perm: [ndims]u8) Permute(perm) {
-            comptime {
-                const Out = Permute(perm);
-                const traceFn = struct {
-                    fn trace(out: *const Out) void {
-                        Graph.trace(x);
-                        Graph.Vertex.new(out, .{
-                            .TypeOp = .{
-                                .op = .Permute,
-                                .x = Graph.Vertex.get(x),
-                                .new_info = .{ .View = Out.shape },
-                            },
-                        }, Out);
-                    }
-                }.trace;
-                return Out.init(traceFn);
+            const Out = Permute(perm);
+            return x.asStrided(Out.shape, Out.strides);
+        }
+        pub fn Transpose(comptime dim1: u8, comptime dim2: u8) type {
+            if (dim1 == dim2) {
+                return Self;
+            } else {
+                var new_shape = shape;
+                new_shape[dim1] = shape[dim2];
+                new_shape[dim2] = shape[dim1];
+                var new_strides = strides;
+                new_strides[dim1] = strides[dim2];
+                new_strides[dim2] = strides[dim1];
+                return AsStrided(new_shape, new_strides);
             }
         }
-
+        pub fn transpose(x: *const Self, comptime dim1: u8, comptime dim2: u8) Transpose(dim1, dim2) {
+            if (dim1 != dim2) {
+                const Out = Transpose(dim1, dim2);
+                return x.asStrided(Out.shape, Out.strides);
+            } else {
+                return x.*;
+            }
+        }
         pub fn view(x: *const Self, comptime new_shape: anytype) InferredStrides(dtype, new_shape) {
             comptime {
                 const Out = InferredStrides(dtype, new_shape);
-                if (x.isContiguous()) {
+                if (x.is_contiguous) {
                     const traceFn = struct {
                         fn trace(out: *const Out) void {
                             Graph.trace(x);
                             Graph.Vertex.new(out, .{ .TypeOp = .{
                                 .op = .View,
                                 .x = Graph.Vertex.get(x),
-                                .new_info = .{ .View = @as([new_shape.len]usize, new_shape)[0..] },
+                                .op_info = .{ .View = @as([new_shape.len]usize, new_shape)[0..] },
                             } }, Out);
                         }
                     }.trace;
@@ -173,7 +179,7 @@ fn Tensor(
         }
         pub fn reshape(x: *const Self, comptime new_shape: anytype) InferredStrides(dtype, new_shape) {
             comptime {
-                if (x.isContiguous()) {
+                if (x.is_contiguous) {
                     return x.view(new_shape);
                 } else {
                     // return x.copy().view(new_shape);
@@ -233,7 +239,7 @@ fn Tensor(
                     Graph.Vertex.new(out, .{ .TypeOp = .{
                         .op = .AsStrided,
                         .x = Graph.Vertex.get(x),
-                        .new_info = .{ .AsStrided = .{
+                        .op_info = .{ .AsStrided = .{
                             .shape = @as([new_shape.len]usize, new_shape)[0..],
                             .strides = @as([new_strides.len]usize, new_strides)[0..],
                         } },
@@ -251,7 +257,7 @@ fn Tensor(
                     Graph.Vertex.new(out, .{ .TypeOp = .{
                         .op = .AsType,
                         .x = Graph.Vertex.get(x),
-                        .new_info = .{ .AsType = new_dtype },
+                        .op_info = .{ .AsType = new_dtype },
                     } }, Out);
                 }
             }.trace;
@@ -472,7 +478,7 @@ test "as strided" {
         const tensor2 = tensor1.asStrided(.{ 2, 2 }, .{ 1, 2, 0 });
 
         try std.testing.expectEqual([_]usize{ 2, 2 }, tensor2.shape);
-        try std.testing.expectEqual(false, tensor2.isContiguous());
+        try std.testing.expectEqual(false, tensor2.is_contiguous);
 
         const test_indices = [_][2]usize{ .{ 0, 0 }, .{ 0, 1 }, .{ 1, 0 }, .{ 1, 1 } };
         const expected_flat_indices1 = [_]usize{ 0, 2, 1, 3 };
@@ -482,7 +488,7 @@ test "as strided" {
 
         const tensor3 = tensor1.asStrided(.{ 2, 2 }, .{ 1, 2, 1 });
         try std.testing.expectEqual([_]usize{ 2, 2 }, tensor2.shape);
-        try std.testing.expectEqual(false, tensor2.isContiguous());
+        try std.testing.expectEqual(false, tensor2.is_contiguous);
 
         const expected_flat_indices2 = [_]usize{ 1, 3, 2, 4 };
         for (expected_flat_indices2, test_indices) |expected_flat_i, test_i| {

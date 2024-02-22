@@ -1,95 +1,186 @@
 const ops = @import("ops.zig");
 const std = @import("std");
-/// Expression in the body of the loop of the form y = f(x)
-/// y can either be a location in an array or a temporary variable
-pub const Expr = union(ops.GraphOps) {
+const codegen = @import("codegen.zig");
+const Graph = @import("Graph.zig");
+const Program = @This();
+
+var arena: std.heap.ArenaAllocator = undefined;
+var allocator: std.mem.Allocator = undefined;
+var body: Body = undefined;
+
+pub fn init() void {
+    // var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    allocator = arena.allocator();
+}
+
+pub fn deinit() void {
+    arena.deinit();
+    arena = undefined;
+    allocator = undefined;
+}
+
+/// Lower the node (and any nodes fused with it)
+/// to a loop nest representation
+pub fn loops(v: *Graph.Vertex) *Loop {
+    const statement: Statement = switch (v.edge) {
+        .InitOp => |edge| .{ .InitOp = .{ .op = edge.op, .out = v } },
+        .ZipOp => |edge| .{ .ZipOp = .{ .op = edge.op, .a = edge.a, .b = edge.b, .out = v } },
+        .MapOp => |edge| .{ .MapOp = .{ .op = edge.op, .x = edge.x, .out = v } },
+        .ReduceOp => |edge| .{ .ReduceOp = .{ .op = edge.op, .x = edge.x, .out = v } },
+        .TypeOp => |edge| .{ .TypeOp = .{ .op = edge.op, .x = edge.x, .out = v } },
+    };
+
+    const loop: *Loop = build_loop: {
+        const root_loop: *Loop = allocator.create(Loop) catch unreachable;
+        var curr_loop = root_loop;
+        for (0..v.tensor.ndims) |d| {
+            curr_loop.* = .{
+                .upper_bound = switch (v.edge) {
+                    .ReduceOp => |edge| edge.x.tensor.shape[d],
+                    else => v.tensor.shape[d],
+                },
+                .node = v,
+                .dim = d,
+                .acc = switch (v.edge) {
+                    .ReduceOp => |edge| edge.dims[d],
+                    else => false,
+                },
+                .body = .{
+                    .contents = std.MultiArrayList(Body.Content){},
+                },
+                .prev = null,
+            };
+            if (d != v.tensor.ndims - 1) {
+                const next_loop: *Loop = allocator.create(Loop) catch unreachable;
+                curr_loop.body.contents.append(allocator, .{ .Loop = next_loop }) catch unreachable;
+                curr_loop = next_loop;
+            } else {
+                curr_loop.body.contents.append(allocator, .{ .Statement = statement }) catch unreachable;
+            }
+
+            // if (curr_loop.body.inner_loops == null) {
+            //     // If there are no inner loops create a new one
+            //     curr_loop.body.inner_loops = std.ArrayList(AffineLoop).init(allocator);
+            //     const next_loop: AffineLoop = .{
+            //         .upper_bound = v.tensor.shape[d],
+            //         .loop_var = std.fmt.allocPrint(allocator, "i{d}_d{d}", .{ v.id, d }) catch unreachable,
+            //         .acc = switch (v.edge) {
+            //             .ReduceOp => |edge| edge.dims[d],
+            //             else => false,
+            //         },
+            //         .body = .{
+            //             .inner_loops = null,
+            //             .exprs = null,
+            //         },
+            //     };
+            //     curr_loop.body.inner_loops.?.append(next_loop) catch unreachable;
+            //     curr_loop = next_loop;
+            // } else {
+            //     // Otherwise try to find a loop with the same bounds
+            //     std.debug.print("Finding a inner loop to use\n", .{});
+
+            //     var found_next_loop = false;
+            //     for (curr_loop.body.inner_loops.?.items) |loop| {
+            //         if (loop.upper_bound == v.tensor.shape[d]) {
+            //             curr_loop = loop;
+            //             found_next_loop = true;
+            //         }
+            //     }
+            //     if (!found_next_loop) {
+            //         const next_loop: AffineLoop = .{
+            //             .upper_bound = v.tensor.shape[d],
+            //             .loop_var = std.fmt.allocPrint(allocator, "i{d}_d{d}", .{ v.id, d }) catch unreachable,
+            //             .acc = switch (v.edge) {
+            //                 .ReduceOp => |edge| edge.dims[d],
+            //                 else => false,
+            //             },
+            //             .body = .{
+            //                 .inner_loops = null,
+            //                 .exprs = null,
+            //             },
+            //         };
+            //         curr_loop.body.inner_loops.?.append(next_loop) catch unreachable;
+            //         curr_loop = next_loop;
+            //     }
+            // }
+        }
+        break :build_loop root_loop;
+    };
+    switch (v.edge) {
+        .InitOp => {},
+        .ZipOp => |edge| {
+            const b_loop = edge.b.loops();
+            const a_loop = edge.a.loops();
+            loop.prev = a_loop;
+            a_loop.prev = b_loop;
+        },
+        .TypeOp => |edge| {
+            switch (edge.op) {
+                .AsType => {
+                    const x_loop = edge.x.loops();
+                    loop.prev = x_loop;
+                },
+                else => {
+                    return edge.x.loops();
+                },
+            }
+        },
+        inline else => |edge| {
+            const x_loop = edge.x.loops();
+            loop.prev = x_loop;
+        },
+    }
+    return loop;
+}
+
+/// Stameent of the form y = f(x)
+/// y can either be a value in an array or a variable
+/// f(x) is an arithmetic operation on a value in an array or a variable
+pub const Statement = union(ops.GraphOps) {
     MapOp: struct {
         op: ops.MapOp,
-        x_id: usize,
-        x_strides: []const usize,
-        out_id: usize,
-        out_strides: []const usize,
-
-        pub fn log(self: *const @This()) void {
-            std.debug.print("\t" ** 0 ++ "T{d} = {s}(T{d})\n", .{ self.out_id, @tagName(self.op), self.x_id });
-        }
+        x: *Graph.Vertex,
+        out: *Graph.Vertex,
     },
     ZipOp: struct {
         op: ops.ZipOp,
-        a_id: usize,
-        a_strides: []const usize,
-        b_id: usize,
-        b_strides: []const usize,
-        out_id: usize,
-        out_strides: []const usize,
-
-        pub fn log(self: *const @This()) void {
-            std.debug.print("\t" ** 0 ++ "T{d} = {s}(T{d}, T{d})\n", .{ self.out_id, @tagName(self.op), self.a_id, self.b_id });
-        }
+        a: *Graph.Vertex,
+        b: *Graph.Vertex,
+        out: *Graph.Vertex,
     },
     ReduceOp: struct {
         op: ops.ReduceOp,
-        x_id: usize,
-        x_strides: []const usize,
-        out_id: usize,
-        out_strides: []const usize,
-
-        pub fn log(self: *const @This()) void {
-            std.debug.print("\t" ** 0 ++ "T{d} = {s}(T{d})\n", .{ self.out_id, @tagName(self.op), self.x_id });
-        }
+        x: *Graph.Vertex,
+        out: *Graph.Vertex,
     },
     TypeOp: struct {
         op: ops.TypeOp,
-        x_id: usize,
-        x_strides: []const usize,
-        out_id: usize,
-        out_strides: []const usize,
-
-        pub fn log(self: *const @This()) void {
-            std.debug.print("\t" ** 0 ++ "T{d} = {s}(T{d})\n", .{ self.out_id, @tagName(self.op), self.x_id });
-        }
+        x: *Graph.Vertex,
+        out: *Graph.Vertex,
     },
     InitOp: struct {
         op: ops.InitOp,
-
-        pub fn log(_: *const @This()) void {}
+        out: *Graph.Vertex,
     },
 };
 
 /// Abstractions for lowering Graph.Node into a loop which can be codegened
 /// loop structs will be stored in a list (program) where order is exact order of code
 /// loops are defined as a grammar, every loop has a header and a body
-pub const AffineLoop = struct {
+pub const Loop = struct {
     upper_bound: usize,
-    loop_var: []const u8,
+    node: *Graph.Vertex,
+    dim: usize,
     acc: bool = false,
-    body: LoopBody,
-    prev: ?*AffineLoop,
-
-    pub fn log(self: *const AffineLoop) void {
-        if (self.prev != null) {
-            self.prev.?.log();
-        }
-        std.debug.print("\t" ** 0 ++ "for (0..{d}) |{s}| {{\n", .{ self.upper_bound, self.loop_var });
-        self.body.log();
-        std.debug.print("\t" ** 0 ++ "}}\n", .{});
-    }
+    body: Body,
+    prev: ?*Loop,
 };
 
-/// Affine loop body can either be another loop (normal or accumulating) or an expression
-/// Expression can just reuse Graph.Link as it has access to all needed information
-const LoopBody = struct {
-    inner_loops: std.ArrayList(*AffineLoop),
-    exprs: std.ArrayList(Expr),
-
-    pub fn log(self: *const LoopBody) void {
-        for (self.inner_loops.items) |loop| {
-            loop.log();
-        }
-        for (self.exprs.items) |expr| {
-            switch (expr) {
-                inline else => |expr_| expr_.log(),
-            }
-        }
-    }
+pub const Body = struct {
+    pub const Content = union(enum) {
+        Loop: *Loop,
+        Statement: Statement,
+    };
+    contents: std.MultiArrayList(Content),
 };
