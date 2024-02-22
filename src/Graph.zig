@@ -3,7 +3,6 @@ const ops = @import("ops.zig");
 const tensor = @import("tensor.zig");
 const utils = @import("utils.zig");
 const Graph = @This();
-const Program = @import("Program.zig");
 const dtypes = @import("dtypes.zig");
 
 var arena: std.heap.ArenaAllocator = undefined;
@@ -20,12 +19,10 @@ pub fn init() void {
     cache = std.AutoHashMap(usize, usize).init(allocator);
     ids = std.AutoHashMap(usize, usize).init(allocator);
     nodes = std.AutoHashMap(usize, *Vertex).init(allocator);
-    Program.init();
 }
 
 pub fn deinit() void {
     arena.deinit();
-    Program.deinit();
 }
 
 /// Build the computation graph for a tensor.
@@ -64,14 +61,6 @@ pub const Edge = union(ops.GraphOps) {
     };
     pub const TypeOp = struct {
         op: ops.TypeOp,
-        op_info: union(ops.TypeOp) {
-            AsStrided: struct {
-                shape: []const usize,
-                strides: []const usize,
-            },
-            AsType: dtypes.DType,
-            View: []const usize,
-        },
         x: *Vertex,
         fused_x: bool = true,
     };
@@ -131,7 +120,7 @@ pub const Vertex = struct {
         return nodes.get(ids.get(@intFromPtr(ptr)).?).?;
     }
 
-    fn nodeViz(node: *Vertex) std.mem.Allocator.Error!void {
+    fn nodeViz(node: *Vertex, writer: anytype) std.mem.Allocator.Error!void {
         // To avoid printing the same thing multiple times use the hash table to check/mark as already printed
         if (viz_hash_table.get(node.id).? == true) {
             return;
@@ -139,155 +128,155 @@ pub const Vertex = struct {
         try viz_hash_table.put(node.id, true);
         switch (node.edge) {
             inline else => |e| {
-                std.debug.print("T{d}[label=\"T{d}\"shape=box];\n", .{ node.id, node.id });
+                writer.print("T{d}[label=\"T{d}\"shape=box];\n", .{ node.id, node.id });
                 if (node.kernel_id != null and node.cache_in_kernel) {
-                    std.debug.print("subgraph cluster{d}{{T{d}_{d}[label=\"T{d}_{d}\"shape=box];}}\n", .{ node.kernel_id.?, node.id, node.kernel_id.?, node.id, node.kernel_id.? });
-                    std.debug.print("T{d}_{d}->T{d}[label=\" {s}{any}\"];\n", .{ node.id, node.kernel_id.?, node.id, @tagName(node.tensor.dtype), node.tensor.shape });
-                    std.debug.print("{s}{d}->T{d}_{d}[label=\" {s}{any}\"];\n", .{ @tagName(e.op), node.id, node.id, node.kernel_id.?, @tagName(node.tensor.dtype), node.tensor.shape });
+                    writer.print("subgraph cluster{d}{{T{d}_{d}[label=\"T{d}_{d}\"shape=box];}}\n", .{ node.kernel_id.?, node.id, node.kernel_id.?, node.id, node.kernel_id.? });
+                    writer.print("T{d}_{d}->T{d}[label=\" {s}{any}\"];\n", .{ node.id, node.kernel_id.?, node.id, @tagName(node.tensor.dtype), node.tensor.shape });
+                    writer.print("{s}{d}->T{d}_{d}[label=\" {s}{any}\"];\n", .{ @tagName(e.op), node.id, node.id, node.kernel_id.?, @tagName(node.tensor.dtype), node.tensor.shape });
                 } else {
-                    std.debug.print("{s}{d}->T{d}[label=\" {s}{any}\"];\n", .{ @tagName(e.op), node.id, node.id, @tagName(node.tensor.dtype), node.tensor.shape });
+                    writer.print("{s}{d}->T{d}[label=\" {s}{any}\"];\n", .{ @tagName(e.op), node.id, node.id, @tagName(node.tensor.dtype), node.tensor.shape });
                 }
             },
         }
     }
 
-    fn initOpViz(node: *Vertex, edge: Edge.InitOp) std.mem.Allocator.Error!void {
+    fn initOpViz(node: *Vertex, edge: Edge.InitOp, writer: anytype) std.mem.Allocator.Error!void {
         if (node.kernel_id != null) {
-            std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op) });
+            writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op) });
         } else {
-            std.debug.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
+            writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
         }
     }
 
-    fn mapOpViz(node: *Vertex, edge: Edge.MapOp) std.mem.Allocator.Error!void {
-        try edge.x.viz();
+    fn mapOpViz(node: *Vertex, edge: Edge.MapOp, writer: anytype) std.mem.Allocator.Error!void {
+        try edge.x.viz(writer);
         if (node.kernel_id != null) {
-            std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op) });
+            writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op) });
         } else {
-            std.debug.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
+            writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
         }
         if (edge.fused_x) {
             switch (edge.x.edge) {
-                inline else => |x_edge| std.debug.print("{s}{d}", .{ @tagName(x_edge.op), edge.x.id }),
+                inline else => |x_edge| writer.print("{s}{d}", .{ @tagName(x_edge.op), edge.x.id }),
             }
         } else {
-            try edge.x.nodeViz();
+            try edge.x.nodeViz(writer);
             if (node.kernel_id != null and node.kernel_id == edge.x.kernel_id and edge.x.cache_in_kernel) {
-                std.debug.print("T{d}_{?}", .{ edge.x.id, edge.x.kernel_id });
+                writer.print("T{d}_{?}", .{ edge.x.id, edge.x.kernel_id });
             } else {
-                std.debug.print("T{d}", .{edge.x.id});
+                writer.print("T{d}", .{edge.x.id});
             }
         }
-        std.debug.print("->{s}{d}[label=\" {s}{any}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.x.tensor.dtype), edge.x.tensor.shape });
+        writer.print("->{s}{d}[label=\" {s}{any}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.x.tensor.dtype), edge.x.tensor.shape });
     }
 
-    fn zipOpViz(node: *Vertex, edge: Edge.ZipOp) std.mem.Allocator.Error!void {
-        try edge.a.viz();
-        try edge.b.viz();
+    fn zipOpViz(node: *Vertex, edge: Edge.ZipOp, writer: anytype) std.mem.Allocator.Error!void {
+        try edge.a.viz(writer);
+        try edge.b.viz(writer);
         if (node.kernel_id != null) {
-            std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op) });
+            writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op) });
         } else {
-            std.debug.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
+            writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
         }
         if (edge.fused_a) {
             switch (edge.a.edge) {
-                inline else => |a_edge| std.debug.print("{s}{d}", .{ @tagName(a_edge.op), edge.a.id }),
+                inline else => |a_edge| writer.print("{s}{d}", .{ @tagName(a_edge.op), edge.a.id }),
             }
         } else {
-            try edge.a.nodeViz();
+            try edge.a.nodeViz(writer);
             if (node.kernel_id != null and node.kernel_id == edge.a.kernel_id and edge.a.cache_in_kernel) {
-                std.debug.print("T{d}_{?}", .{ edge.a.id, edge.a.kernel_id });
+                writer.print("T{d}_{?}", .{ edge.a.id, edge.a.kernel_id });
             } else {
-                std.debug.print("T{d}", .{edge.a.id});
+                writer.print("T{d}", .{edge.a.id});
             }
         }
-        std.debug.print("->{s}{d}[label=\" A: {s}{any}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.a.tensor.dtype), edge.a.tensor.shape });
+        writer.print("->{s}{d}[label=\" A: {s}{any}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.a.tensor.dtype), edge.a.tensor.shape });
         if (edge.fused_b) {
             switch (edge.b.edge) {
-                inline else => |b_edge| std.debug.print("{s}{d}", .{ @tagName(b_edge.op), edge.b.id }),
+                inline else => |b_edge| writer.print("{s}{d}", .{ @tagName(b_edge.op), edge.b.id }),
             }
         } else {
-            try edge.b.nodeViz();
+            try edge.b.nodeViz(writer);
             if (node.kernel_id != null and node.kernel_id == edge.b.kernel_id and edge.b.cache_in_kernel) {
-                std.debug.print("T{d}_{?}", .{ edge.b.id, edge.b.kernel_id });
+                writer.print("T{d}_{?}", .{ edge.b.id, edge.b.kernel_id });
             } else {
-                std.debug.print("T{d}", .{edge.b.id});
+                writer.print("T{d}", .{edge.b.id});
             }
         }
-        std.debug.print("->{s}{d}[label=\" B: {s}{any}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.b.tensor.dtype), edge.b.tensor.shape });
+        writer.print("->{s}{d}[label=\" B: {s}{any}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.b.tensor.dtype), edge.b.tensor.shape });
     }
 
-    fn reduceOpViz(node: *Vertex, edge: Edge.ReduceOp) std.mem.Allocator.Error!void {
-        try edge.x.viz();
+    fn reduceOpViz(node: *Vertex, edge: Edge.ReduceOp, writer: anytype) std.mem.Allocator.Error!void {
+        try edge.x.viz(writer);
         if (node.kernel_id != null) {
-            std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{any}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), edge.dims });
+            writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{any}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), edge.dims });
         } else {
-            std.debug.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
+            writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
         }
         if (edge.fused_x) {
             switch (edge.x.edge) {
-                inline else => |x_edge| std.debug.print("{s}{d}", .{ @tagName(x_edge.op), edge.x.id }),
+                inline else => |x_edge| writer.print("{s}{d}", .{ @tagName(x_edge.op), edge.x.id }),
             }
         } else {
-            try edge.x.nodeViz();
+            try edge.x.nodeViz(writer);
             if (node.kernel_id != null and node.kernel_id == edge.x.kernel_id and edge.x.cache_in_kernel) {
-                std.debug.print("T{d}_{?}", .{ edge.x.id, edge.x.kernel_id });
+                writer.print("T{d}_{?}", .{ edge.x.id, edge.x.kernel_id });
             } else {
-                std.debug.print("T{d}", .{edge.x.id});
+                writer.print("T{d}", .{edge.x.id});
             }
         }
-        std.debug.print("->{s}{d}[label=\" {s}{any}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.x.tensor.dtype), edge.x.tensor.shape });
+        writer.print("->{s}{d}[label=\" {s}{any}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.x.tensor.dtype), edge.x.tensor.shape });
     }
 
-    fn typeOpViz(node: *Vertex, edge: Edge.TypeOp) std.mem.Allocator.Error!void {
+    fn typeOpViz(node: *Vertex, edge: Edge.TypeOp, writer: anytype) std.mem.Allocator.Error!void {
         // TypeOps are fused by default
-        try edge.x.viz();
+        try edge.x.viz(writer);
         if (node.kernel_id != null) {
-            switch (edge.op_info) {
-                .AsType => |new_dtype| std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{{s}}}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), @tagName(new_dtype) }),
-                .AsStrided => |new_info| std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{shape:{any}, strides:{any}}}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), new_info.shape, new_info.strides }),
-                inline else => |new_info| std.debug.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{any}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), new_info }),
+            switch (edge.op) {
+                .AsType => writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{{s}}}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), @tagName(node.tensor.dtype) }),
+                .View => writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{shape:{any}}}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), node.tensor.shape }),
+                .AsStrided => writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{shape:{any}, strides:{any}}}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), node.tensor.shape, node.tensor.strides }),
             }
         } else {
-            switch (edge.op_info) {
-                .AsType => |new_dtype| std.debug.print("{s}{d}[label=\"{s}{{{s}}}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op), @tagName(new_dtype) }),
-                .AsStrided => |new_info| std.debug.print("{s}{d}[label=\"{s}{{shape:{any}, strides:{any}}}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op), new_info.shape, new_info.strides }),
-                inline else => |new_info| std.debug.print("{s}{d}[label=\"{s}{any}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op), new_info }),
+            switch (edge.op) {
+                .AsType => writer.print("{s}{d}[label=\"{s}{{{s}}}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op), @tagName(node.tensor.dtype) }),
+                .View => writer.print("{s}{d}[label=\"{s}{{shape:{any}}}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op), node.tensor.shape }),
+                .AsStrided => writer.print("{s}{d}[label=\"{s}{{shape:{any}, strides:{any}}}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op), node.tensor.shape, node.tensor.strides }),
             }
         }
         switch (edge.x.edge) {
-            inline else => |x_edge| std.debug.print("{s}{d}->{s}{d}[label=\" {s}{any}\"];\n", .{ @tagName(x_edge.op), edge.x.id, @tagName(edge.op), node.id, @tagName(edge.x.tensor.dtype), edge.x.tensor.shape }),
+            inline else => |x_edge| writer.print("{s}{d}->{s}{d}[label=\" {s}{any}\"];\n", .{ @tagName(x_edge.op), edge.x.id, @tagName(edge.op), node.id, @tagName(edge.x.tensor.dtype), edge.x.tensor.shape }),
         }
     }
 
-    pub fn viz(node: *Vertex) std.mem.Allocator.Error!void {
+    pub fn viz(node: *Vertex, writer: anytype) std.mem.Allocator.Error!void {
         if (viz_hash_table.contains(node.id)) {
             return;
         }
         try viz_hash_table.put(node.id, false);
         try switch (node.edge) {
-            .InitOp => |edge| initOpViz(node, edge),
-            .MapOp => |edge| mapOpViz(node, edge),
-            .ZipOp => |edge| zipOpViz(node, edge),
-            .ReduceOp => |edge| reduceOpViz(node, edge),
-            .TypeOp => |edge| typeOpViz(node, edge),
+            .InitOp => |edge| node.initOpViz(edge, writer),
+            .MapOp => |edge| node.mapOpViz(edge, writer),
+            .ZipOp => |edge| node.zipOpViz(edge, writer),
+            .ReduceOp => |edge| node.reduceOpViz(edge, writer),
+            .TypeOp => |edge| node.typeOpViz(edge, writer),
         };
     }
 };
 
-pub fn viz() !void {
+pub fn viz(writer: anytype) !void {
     std.testing.expect(entrypoint != null) catch @panic("Graph has not been created, remember to call Graph.trace() on the output tensor");
     viz_hash_table = std.AutoHashMap(usize, bool).init(allocator);
     defer {
         viz_hash_table.deinit();
         viz_hash_table = undefined;
     }
-    std.debug.print("digraph G {{\ncompound=true;\n", .{});
-    try entrypoint.?.viz();
+    writer.print("digraph G {{\ncompound=true;\n", .{});
+    try entrypoint.?.viz(writer);
     // Need to print the entrypoint separately because there is no other vertex
     // calling the entrypoint's print function
-    try entrypoint.?.nodeViz();
-    std.debug.print("}}\n", .{});
+    try entrypoint.?.nodeViz(writer);
+    writer.print("}}\n", .{});
 }
 
 const FusionError = error{
@@ -481,8 +470,8 @@ test "manual vertical fusion" {
     // try fuse(t2, t3);
     // const t1 = t2.edge.MapOp.x;
     // try fuse(t1, t2);
-    // std.debug.print("\n", .{});
-    // Graph.viz();
+    // writer.print("\n", .{});
+    // Graph.viz(std.debug);
 }
 
 test "greedy fusion" {
@@ -496,5 +485,5 @@ test "greedy fusion" {
     Graph.trace(out);
     Graph.applyGreedyFusion();
     std.debug.print("\n", .{});
-    try Graph.viz();
+    try Graph.viz(std.debug);
 }
