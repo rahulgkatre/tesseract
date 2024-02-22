@@ -6,34 +6,56 @@ const Program = @This();
 
 var arena: std.heap.ArenaAllocator = undefined;
 var allocator: std.mem.Allocator = undefined;
-var body: Body = undefined;
+var loop_hash_table: std.AutoArrayHashMap(usize, *Loop) = undefined;
+var subprograms: std.ArrayList(*Program) = undefined;
 
-pub fn init() void {
-    // var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+body: Body = undefined,
+
+pub fn init(backing_allocator: std.mem.Allocator) void {
+    arena = std.heap.ArenaAllocator.init(backing_allocator);
     allocator = arena.allocator();
+    loop_hash_table = std.AutoArrayHashMap(usize, *Loop).init(allocator);
+    subprograms = std.ArrayList(*Program).init(allocator);
+}
+
+pub fn fromGraph() !void {
+    var p = try new();
+    p.loops(Graph.entrypoint.?);
+}
+
+fn new() !*Program {
+    const program = try allocator.create(Program);
+    program.body = .{
+        .contents = std.MultiArrayList(Body.Content){},
+    };
+    return program;
 }
 
 pub fn deinit() void {
+    loop_hash_table.deinit();
+    loop_hash_table = undefined;
+    allocator = undefined;
     arena.deinit();
     arena = undefined;
-    allocator = undefined;
 }
 
 /// Lower the node (and any nodes fused with it)
 /// to a loop nest representation
-pub fn loops(v: *Graph.Vertex) *Loop {
+pub fn loops(program: *Program, v: *Graph.Vertex) !*Loop {
+    if (loop_hash_table.contains(v.id)) {
+        return loop_hash_table.get(v.id).?;
+    }
     const statement: Statement = switch (v.edge) {
-        .InitOp => |edge| .{ .InitOp = .{ .op = edge.op, .out = v } },
-        .ZipOp => |edge| .{ .ZipOp = .{ .op = edge.op, .a = edge.a, .b = edge.b, .out = v } },
-        .MapOp => |edge| .{ .MapOp = .{ .op = edge.op, .x = edge.x, .out = v } },
-        .ReduceOp => |edge| .{ .ReduceOp = .{ .op = edge.op, .x = edge.x, .out = v } },
-        .TypeOp => |edge| .{ .TypeOp = .{ .op = edge.op, .x = edge.x, .out = v } },
+        .InitOp => |edge| .{ .InitOp = .{ .id = 0, .op = edge.op, .out = v } },
+        .ZipOp => |edge| .{ .ZipOp = .{ .id = 0, .op = edge.op, .a = edge.a, .b = edge.b, .out = v } },
+        .MapOp => |edge| .{ .MapOp = .{ .id = 0, .op = edge.op, .x = edge.x, .out = v } },
+        .ReduceOp => |edge| .{ .ReduceOp = .{ .id = 0, .op = edge.op, .x = edge.x, .out = v } },
+        .TypeOp => |edge| .{ .TypeOp = .{ .id = 0, .op = edge.op, .x = edge.x, .out = v } },
     };
-
-    const loop: *Loop = build_loop: {
-        const root_loop: *Loop = allocator.create(Loop) catch unreachable;
-        var curr_loop = root_loop;
+    var loop: *Loop = build_loop: {
+        var reg_loops = std.ArrayList(*Loop).init(allocator);
+        var acc_loops = std.ArrayList(*Loop).init(allocator);
+        var curr_loop = try allocator.create(Loop);
         for (0..v.tensor.ndims) |d| {
             curr_loop.* = .{
                 .upper_bound = switch (v.edge) {
@@ -51,115 +73,101 @@ pub fn loops(v: *Graph.Vertex) *Loop {
                 },
                 .prev = null,
             };
-            if (d != v.tensor.ndims - 1) {
-                const next_loop: *Loop = allocator.create(Loop) catch unreachable;
-                curr_loop.body.contents.append(allocator, .{ .Loop = next_loop }) catch unreachable;
-                curr_loop = next_loop;
+            if (curr_loop.acc) {
+                try acc_loops.append(curr_loop);
             } else {
-                curr_loop.body.contents.append(allocator, .{ .Statement = statement }) catch unreachable;
+                try reg_loops.append(curr_loop);
             }
-
-            // if (curr_loop.body.inner_loops == null) {
-            //     // If there are no inner loops create a new one
-            //     curr_loop.body.inner_loops = std.ArrayList(AffineLoop).init(allocator);
-            //     const next_loop: AffineLoop = .{
-            //         .upper_bound = v.tensor.shape[d],
-            //         .loop_var = std.fmt.allocPrint(allocator, "i{d}_d{d}", .{ v.id, d }) catch unreachable,
-            //         .acc = switch (v.edge) {
-            //             .ReduceOp => |edge| edge.dims[d],
-            //             else => false,
-            //         },
-            //         .body = .{
-            //             .inner_loops = null,
-            //             .exprs = null,
-            //         },
-            //     };
-            //     curr_loop.body.inner_loops.?.append(next_loop) catch unreachable;
-            //     curr_loop = next_loop;
-            // } else {
-            //     // Otherwise try to find a loop with the same bounds
-            //     std.debug.print("Finding a inner loop to use\n", .{});
-
-            //     var found_next_loop = false;
-            //     for (curr_loop.body.inner_loops.?.items) |loop| {
-            //         if (loop.upper_bound == v.tensor.shape[d]) {
-            //             curr_loop = loop;
-            //             found_next_loop = true;
-            //         }
-            //     }
-            //     if (!found_next_loop) {
-            //         const next_loop: AffineLoop = .{
-            //             .upper_bound = v.tensor.shape[d],
-            //             .loop_var = std.fmt.allocPrint(allocator, "i{d}_d{d}", .{ v.id, d }) catch unreachable,
-            //             .acc = switch (v.edge) {
-            //                 .ReduceOp => |edge| edge.dims[d],
-            //                 else => false,
-            //             },
-            //             .body = .{
-            //                 .inner_loops = null,
-            //                 .exprs = null,
-            //             },
-            //         };
-            //         curr_loop.body.inner_loops.?.append(next_loop) catch unreachable;
-            //         curr_loop = next_loop;
-            //     }
-            // }
+            if (d != v.tensor.ndims - 1) {
+                const inner_loop: *Loop = try allocator.create(Loop);
+                curr_loop = inner_loop;
+            }
         }
+
+        // try curr_loop.body.contents.append(allocator, .{ .Loop = inner_loop });
+        const root_loop: *Loop = reg_loops.items[0];
+        curr_loop = root_loop;
+        for (reg_loops.items[1..]) |reg_loop| {
+            try curr_loop.body.contents.append(allocator, .{ .Loop = reg_loop });
+            curr_loop = reg_loop;
+        }
+        for (acc_loops.items) |acc_loop| {
+            try curr_loop.body.contents.append(allocator, .{ .Loop = acc_loop });
+            curr_loop = acc_loop;
+        }
+        try curr_loop.body.contents.append(allocator, .{ .Statement = statement });
         break :build_loop root_loop;
     };
     switch (v.edge) {
         .InitOp => {},
         .ZipOp => |edge| {
-            const b_loop = edge.b.loops();
-            const a_loop = edge.a.loops();
-            loop.prev = a_loop;
-            a_loop.prev = b_loop;
+            if (edge.a.group_id == edge.b.group_id and edge.b.group_id == v.group_id) {
+                var a_loop = program.loops(edge.a) catch unreachable;
+                a_loop.prev = program.loops(edge.b) catch unreachable;
+                loop.prev = a_loop;
+            } else {
+                if (edge.a.group_id == v.group_id) {
+                    loop.prev = program.loops(edge.a) catch unreachable;
+                } else if (edge.b.group_id == v.group_id) {
+                    loop.prev = program.loops(edge.b) catch unreachable;
+                }
+            }
         },
         .TypeOp => |edge| {
             switch (edge.op) {
                 .AsType => {
-                    const x_loop = edge.x.loops();
-                    loop.prev = x_loop;
+                    loop.prev = program.loops(edge.x) catch unreachable;
                 },
                 else => {
-                    return edge.x.loops();
+                    loop.* = (program.loops(edge.x) catch unreachable).*;
                 },
             }
         },
         inline else => |edge| {
-            const x_loop = edge.x.loops();
-            loop.prev = x_loop;
+            if (edge.x.group_id == v.group_id) {
+                loop.prev = program.loops(edge.x) catch unreachable;
+            }
         },
     }
+    if (!loop_hash_table.contains(loop.node.id)) {
+        try program.body.contents.append(allocator, .{ .Loop = loop });
+    }
+
+    try loop_hash_table.put(loop.node.id, loop);
     return loop;
 }
 
-/// Stameent of the form y = f(x)
+/// Statement of the form y = f(x)
 /// y can either be a value in an array or a variable
 /// f(x) is an arithmetic operation on a value in an array or a variable
 pub const Statement = union(ops.GraphOps) {
     MapOp: struct {
+        id: usize,
         op: ops.MapOp,
         x: *Graph.Vertex,
         out: *Graph.Vertex,
     },
     ZipOp: struct {
+        id: usize,
         op: ops.ZipOp,
         a: *Graph.Vertex,
         b: *Graph.Vertex,
         out: *Graph.Vertex,
     },
     ReduceOp: struct {
+        id: usize,
         op: ops.ReduceOp,
         x: *Graph.Vertex,
         out: *Graph.Vertex,
     },
     TypeOp: struct {
+        id: usize,
         op: ops.TypeOp,
         x: *Graph.Vertex,
         out: *Graph.Vertex,
     },
     InitOp: struct {
+        id: usize,
         op: ops.InitOp,
         out: *Graph.Vertex,
     },
@@ -184,3 +192,28 @@ pub const Body = struct {
     };
     contents: std.MultiArrayList(Content),
 };
+
+test "codegen" {
+    const tensor = @import("tensor.zig");
+    const Zig = @import("codegen/ZigCodegenV2.zig");
+    const out = comptime blk: {
+        const a = tensor.InferredStrides(.f32, .{ 1024, 2048 }).full(2);
+        const b = tensor.InferredStrides(.f32, .{ 2048, 4096 }).full(3);
+        break :blk a.matmul(b);
+    };
+    Graph.init(std.testing.allocator);
+    defer Graph.deinit();
+    Graph.trace(out);
+    // Graph.applyGreedyFusion();
+    std.debug.print("\n", .{});
+
+    Program.init(std.testing.allocator);
+    defer Program.deinit();
+    var program = try Program.new();
+    _ = try program.loops(Graph.entrypoint.?);
+
+    Zig.init(std.testing.allocator);
+    defer Zig.deinit();
+    try Zig.bodyCode(program.body, std.debug);
+    std.debug.print("\n", .{});
+}

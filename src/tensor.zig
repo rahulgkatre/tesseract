@@ -167,7 +167,6 @@ fn Tensor(
                             Graph.Vertex.new(out, .{ .TypeOp = .{
                                 .op = .View,
                                 .x = Graph.Vertex.get(x),
-                                .op_info = .{ .View = @as([new_shape.len]usize, new_shape)[0..] },
                             } }, Out);
                         }
                     }.trace;
@@ -239,10 +238,6 @@ fn Tensor(
                     Graph.Vertex.new(out, .{ .TypeOp = .{
                         .op = .AsStrided,
                         .x = Graph.Vertex.get(x),
-                        .op_info = .{ .AsStrided = .{
-                            .shape = @as([new_shape.len]usize, new_shape)[0..],
-                            .strides = @as([new_strides.len]usize, new_strides)[0..],
-                        } },
                     } }, Out);
                 }
             }.trace;
@@ -257,7 +252,6 @@ fn Tensor(
                     Graph.Vertex.new(out, .{ .TypeOp = .{
                         .op = .AsType,
                         .x = Graph.Vertex.get(x),
-                        .op_info = .{ .AsType = new_dtype },
                     } }, Out);
                 }
             }.trace;
@@ -501,7 +495,7 @@ test "map" {
     const tensor1 = comptime InferredStrides(.i32, .{ 2, 3, 4 }).full(3);
     const tensor2 = comptime tensor1.neg();
     try std.testing.expectEqual([_]usize{ 2, 3, 4 }, tensor2.shape);
-    Graph.init();
+    Graph.init(std.testing.allocator);
     defer Graph.deinit();
     Graph.trace(tensor2);
     try std.testing.expect(Graph.Vertex.get(&tensor2).edge.MapOp.op == .Neg);
@@ -513,7 +507,7 @@ test "zip" {
     const tensor2 = comptime InferredStrides(.i32, .{ 3, 1 }).full(3);
     const tensor3 = comptime tensor1.add(tensor2);
     try std.testing.expectEqual([_]usize{ 2, 3, 4 }, tensor3.shape);
-    Graph.init();
+    Graph.init(std.testing.allocator);
     defer Graph.deinit();
     Graph.trace(tensor3);
     try std.testing.expect(Graph.Vertex.get(&tensor3).edge.ZipOp.op == .Add);
@@ -525,7 +519,7 @@ test "reduce" {
     const tensor1 = comptime InferredStrides(.i32, .{ 2, 3, 4 }).full(5);
     const tensor2 = comptime tensor1.sum(1);
     try std.testing.expectEqual([_]usize{ 2, 1, 4 }, tensor2.shape);
-    Graph.init();
+    Graph.init(std.testing.allocator);
     defer Graph.deinit();
     Graph.trace(tensor2);
     try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.op == .Sum);
@@ -537,7 +531,7 @@ test "multiple dim reduce" {
     const tensor1 = comptime InferredStrides(.i32, .{ 2, 3, 4 }).full(5);
     const tensor2 = comptime tensor1.sum(.{ 0, 1 });
     try std.testing.expectEqual([_]usize{ 1, 1, 4 }, tensor2.shape);
-    Graph.init();
+    Graph.init(std.testing.allocator);
     defer Graph.deinit();
     Graph.trace(tensor2);
     try std.testing.expect(Graph.Vertex.get(&tensor2).edge.ReduceOp.op == .Sum);
@@ -550,7 +544,7 @@ test "zip reduce" {
     const tensor2 = comptime InferredStrides(.i32, .{ 2, 3, 1 }).full(3);
     const tensor3 = comptime tensor1.add(tensor2).sum(1);
     try std.testing.expectEqual([_]usize{ 2, 1, 4 }, tensor3.shape);
-    Graph.init();
+    Graph.init(std.testing.allocator);
     defer Graph.deinit();
     Graph.trace(tensor3);
     try std.testing.expect(Graph.Vertex.get(&tensor3).edge.ReduceOp.op == .Sum);
@@ -596,7 +590,7 @@ test "tensors from functions" {
         break :blk tensor6;
     };
 
-    Graph.init();
+    Graph.init(std.testing.allocator);
     defer Graph.deinit();
     Graph.trace(out);
     // Graph.viz();

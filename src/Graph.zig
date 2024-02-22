@@ -10,11 +10,10 @@ var allocator: std.mem.Allocator = undefined;
 var cache: std.AutoHashMap(usize, usize) = undefined;
 var ids: std.AutoHashMap(usize, usize) = undefined;
 var nodes: std.AutoHashMap(usize, *Vertex) = undefined;
-var entrypoint: ?*Vertex = null;
+pub var entrypoint: ?*Vertex = null;
 
-pub fn init() void {
-    // var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+pub fn init(backing_allocator: std.mem.Allocator) void {
+    arena = std.heap.ArenaAllocator.init(backing_allocator);
     allocator = arena.allocator();
     cache = std.AutoHashMap(usize, usize).init(allocator);
     ids = std.AutoHashMap(usize, usize).init(allocator);
@@ -79,9 +78,8 @@ var viz_hash_table: std.AutoHashMap(usize, bool) = undefined;
 pub const Vertex = struct {
     id: usize,
     edge: Edge,
-    fused: bool = false,
-    kernel_id: ?usize = null,
-    cache_in_kernel: bool = false,
+    group_id: ?usize = null,
+    cached: bool = false,
 
     // Tensor metadata
     tensor: struct {
@@ -129,10 +127,10 @@ pub const Vertex = struct {
         switch (node.edge) {
             inline else => |e| {
                 writer.print("T{d}[label=\"T{d}\"shape=box];\n", .{ node.id, node.id });
-                if (node.kernel_id != null and node.cache_in_kernel) {
-                    writer.print("subgraph cluster{d}{{T{d}_{d}[label=\"T{d}_{d}\"shape=box];}}\n", .{ node.kernel_id.?, node.id, node.kernel_id.?, node.id, node.kernel_id.? });
-                    writer.print("T{d}_{d}->T{d}[label=\" {s}{any}\"];\n", .{ node.id, node.kernel_id.?, node.id, @tagName(node.tensor.dtype), node.tensor.shape });
-                    writer.print("{s}{d}->T{d}_{d}[label=\" {s}{any}\"];\n", .{ @tagName(e.op), node.id, node.id, node.kernel_id.?, @tagName(node.tensor.dtype), node.tensor.shape });
+                if (node.group_id != null and node.cached) {
+                    writer.print("subgraph cluster{d}{{T{d}_{d}[label=\"T{d}_{d}\"shape=box];}}\n", .{ node.group_id.?, node.id, node.group_id.?, node.id, node.group_id.? });
+                    writer.print("T{d}_{d}->T{d}[label=\" {s}{any}\"];\n", .{ node.id, node.group_id.?, node.id, @tagName(node.tensor.dtype), node.tensor.shape });
+                    writer.print("{s}{d}->T{d}_{d}[label=\" {s}{any}\"];\n", .{ @tagName(e.op), node.id, node.id, node.group_id.?, @tagName(node.tensor.dtype), node.tensor.shape });
                 } else {
                     writer.print("{s}{d}->T{d}[label=\" {s}{any}\"];\n", .{ @tagName(e.op), node.id, node.id, @tagName(node.tensor.dtype), node.tensor.shape });
                 }
@@ -141,8 +139,8 @@ pub const Vertex = struct {
     }
 
     fn initOpViz(node: *Vertex, edge: Edge.InitOp, writer: anytype) std.mem.Allocator.Error!void {
-        if (node.kernel_id != null) {
-            writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op) });
+        if (node.group_id != null) {
+            writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.group_id.?, @tagName(edge.op), node.id, @tagName(edge.op) });
         } else {
             writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
         }
@@ -150,8 +148,8 @@ pub const Vertex = struct {
 
     fn mapOpViz(node: *Vertex, edge: Edge.MapOp, writer: anytype) std.mem.Allocator.Error!void {
         try edge.x.viz(writer);
-        if (node.kernel_id != null) {
-            writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op) });
+        if (node.group_id != null) {
+            writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.group_id.?, @tagName(edge.op), node.id, @tagName(edge.op) });
         } else {
             writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
         }
@@ -161,8 +159,8 @@ pub const Vertex = struct {
             }
         } else {
             try edge.x.nodeViz(writer);
-            if (node.kernel_id != null and node.kernel_id == edge.x.kernel_id and edge.x.cache_in_kernel) {
-                writer.print("T{d}_{?}", .{ edge.x.id, edge.x.kernel_id });
+            if (node.group_id != null and node.group_id == edge.x.group_id and edge.x.cached) {
+                writer.print("T{d}_{?}", .{ edge.x.id, edge.x.group_id });
             } else {
                 writer.print("T{d}", .{edge.x.id});
             }
@@ -173,8 +171,8 @@ pub const Vertex = struct {
     fn zipOpViz(node: *Vertex, edge: Edge.ZipOp, writer: anytype) std.mem.Allocator.Error!void {
         try edge.a.viz(writer);
         try edge.b.viz(writer);
-        if (node.kernel_id != null) {
-            writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op) });
+        if (node.group_id != null) {
+            writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.group_id.?, @tagName(edge.op), node.id, @tagName(edge.op) });
         } else {
             writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
         }
@@ -184,8 +182,8 @@ pub const Vertex = struct {
             }
         } else {
             try edge.a.nodeViz(writer);
-            if (node.kernel_id != null and node.kernel_id == edge.a.kernel_id and edge.a.cache_in_kernel) {
-                writer.print("T{d}_{?}", .{ edge.a.id, edge.a.kernel_id });
+            if (node.group_id != null and node.group_id == edge.a.group_id and edge.a.cached) {
+                writer.print("T{d}_{?}", .{ edge.a.id, edge.a.group_id });
             } else {
                 writer.print("T{d}", .{edge.a.id});
             }
@@ -197,8 +195,8 @@ pub const Vertex = struct {
             }
         } else {
             try edge.b.nodeViz(writer);
-            if (node.kernel_id != null and node.kernel_id == edge.b.kernel_id and edge.b.cache_in_kernel) {
-                writer.print("T{d}_{?}", .{ edge.b.id, edge.b.kernel_id });
+            if (node.group_id != null and node.group_id == edge.b.group_id and edge.b.cached) {
+                writer.print("T{d}_{?}", .{ edge.b.id, edge.b.group_id });
             } else {
                 writer.print("T{d}", .{edge.b.id});
             }
@@ -208,8 +206,8 @@ pub const Vertex = struct {
 
     fn reduceOpViz(node: *Vertex, edge: Edge.ReduceOp, writer: anytype) std.mem.Allocator.Error!void {
         try edge.x.viz(writer);
-        if (node.kernel_id != null) {
-            writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{any}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), edge.dims });
+        if (node.group_id != null) {
+            writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{any}\"];}}\n", .{ node.group_id.?, @tagName(edge.op), node.id, @tagName(edge.op), edge.dims });
         } else {
             writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.id, @tagName(edge.op) });
         }
@@ -219,8 +217,8 @@ pub const Vertex = struct {
             }
         } else {
             try edge.x.nodeViz(writer);
-            if (node.kernel_id != null and node.kernel_id == edge.x.kernel_id and edge.x.cache_in_kernel) {
-                writer.print("T{d}_{?}", .{ edge.x.id, edge.x.kernel_id });
+            if (node.group_id != null and node.group_id == edge.x.group_id and edge.x.cached) {
+                writer.print("T{d}_{?}", .{ edge.x.id, edge.x.group_id });
             } else {
                 writer.print("T{d}", .{edge.x.id});
             }
@@ -231,11 +229,11 @@ pub const Vertex = struct {
     fn typeOpViz(node: *Vertex, edge: Edge.TypeOp, writer: anytype) std.mem.Allocator.Error!void {
         // TypeOps are fused by default
         try edge.x.viz(writer);
-        if (node.kernel_id != null) {
+        if (node.group_id != null) {
             switch (edge.op) {
-                .AsType => writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{{s}}}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), @tagName(node.tensor.dtype) }),
-                .View => writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{shape:{any}}}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), node.tensor.shape }),
-                .AsStrided => writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{shape:{any}, strides:{any}}}\"];}}\n", .{ node.kernel_id.?, @tagName(edge.op), node.id, @tagName(edge.op), node.tensor.shape, node.tensor.strides }),
+                .AsType => writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{{s}}}\"];}}\n", .{ node.group_id.?, @tagName(edge.op), node.id, @tagName(edge.op), @tagName(node.tensor.dtype) }),
+                .View => writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{shape:{any}}}\"];}}\n", .{ node.group_id.?, @tagName(edge.op), node.id, @tagName(edge.op), node.tensor.shape }),
+                .AsStrided => writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{shape:{any}, strides:{any}}}\"];}}\n", .{ node.group_id.?, @tagName(edge.op), node.id, @tagName(edge.op), node.tensor.shape, node.tensor.strides }),
             }
         } else {
             switch (edge.op) {
@@ -362,17 +360,17 @@ pub fn unfuseIfCached(node: *Vertex) void {
     switch (node.edge) {
         .InitOp => {},
         .ZipOp => |*edge| {
-            if (edge.a.cache_in_kernel) {
+            if (edge.a.cached) {
                 edge.fused_a = false;
             }
             unfuseIfCached(edge.a);
-            if (edge.b.cache_in_kernel) {
+            if (edge.b.cached) {
                 edge.fused_b = false;
             }
             unfuseIfCached(edge.b);
         },
         inline else => |*edge| {
-            if (edge.x.cache_in_kernel) {
+            if (edge.x.cached) {
                 edge.fused_x = false;
             }
             unfuseIfCached(edge.x);
@@ -381,49 +379,49 @@ pub fn unfuseIfCached(node: *Vertex) void {
 }
 
 fn greedyClusteringFusion(cluster_id: usize, node: *Vertex) usize {
-    if (node.kernel_id != null or node.cache_in_kernel) {
-        node.cache_in_kernel = true;
-        return node.kernel_id.?;
+    if (node.group_id != null or node.cached) {
+        node.cached = true;
+        return node.group_id.?;
     }
     switch (node.edge) {
         .MapOp => |*edge| {
-            node.kernel_id = greedyClusteringFusion(cluster_id, edge.x);
-            if (edge.x.kernel_id == node.kernel_id and !node.cache_in_kernel) {
+            node.group_id = greedyClusteringFusion(cluster_id, edge.x);
+            if (edge.x.group_id == node.group_id and !node.cached) {
                 applyVerticalFusion(edge.x, node) catch unreachable;
             }
-            return node.kernel_id.?;
+            return node.group_id.?;
         },
         .ZipOp => |*edge| {
             const b_kernel_id = greedyClusteringFusion(cluster_id, edge.a);
-            node.kernel_id = greedyClusteringFusion(b_kernel_id, edge.b);
-            if (edge.a.kernel_id == node.kernel_id) {
+            node.group_id = greedyClusteringFusion(b_kernel_id, edge.b);
+            if (edge.a.group_id == node.group_id) {
                 applyVerticalFusion(edge.a, node) catch unreachable;
             }
-            if (edge.b.kernel_id == node.kernel_id and !node.cache_in_kernel) {
+            if (edge.b.group_id == node.group_id and !node.cached) {
                 applyVerticalFusion(edge.b, node) catch unreachable;
             }
-            return node.kernel_id.?;
+            return node.group_id.?;
         },
         .ReduceOp => |*edge| {
-            node.kernel_id = greedyClusteringFusion(cluster_id, edge.x);
-            if (edge.x.kernel_id == node.kernel_id and !node.cache_in_kernel) {
+            node.group_id = greedyClusteringFusion(cluster_id, edge.x);
+            if (edge.x.group_id == node.group_id and !node.cached) {
                 applyVerticalFusion(edge.x, node) catch unreachable;
             }
             // Increment kernel id to prevent multiple reduces from being in the same kernel
-            return node.kernel_id.? + 1;
+            return node.group_id.? + 1;
         },
         .TypeOp => |*edge| {
             // TypeOps can always be fused into the preceding kernel even if the typeop follows a reduce
             // This is because it is either just index manipulation (and does not correspond to a loop)
             // or it is a cast which can be inlined during the accumulation of a reduction
-            const kernel_id = greedyClusteringFusion(cluster_id, edge.x);
+            const group_id = greedyClusteringFusion(cluster_id, edge.x);
             // Sometimes the preceding operation might be an init which can happen in global scope (not in a kernel)
             // and it might not have a kernel id, in which case just use the returned kernel id
-            node.kernel_id = edge.x.kernel_id orelse kernel_id;
-            if (edge.x.kernel_id == node.kernel_id and !node.cache_in_kernel) {
+            node.group_id = edge.x.group_id orelse group_id;
+            if (edge.x.group_id == node.group_id and !node.cached) {
                 applyVerticalFusion(edge.x, node) catch unreachable;
             }
-            return node.kernel_id.?;
+            return node.group_id.?;
         },
         .InitOp => return cluster_id,
     }
@@ -450,7 +448,7 @@ test "manual vertical fusion" {
     const x = comptime tensor.InferredStrides(.f32, .{ 2, 16 }).full(0);
     const sm = comptime softmax(x, 1);
 
-    Graph.init();
+    Graph.init(std.testing.allocator);
     defer Graph.deinit();
     Graph.trace(sm);
 
@@ -480,10 +478,10 @@ test "greedy fusion" {
         const b = tensor.InferredStrides(.f32, .{ 2048, 4096 }).full(3);
         break :blk a.matmul(b);
     };
-    Graph.init();
+    Graph.init(std.testing.allocator);
     defer Graph.deinit();
     Graph.trace(out);
     Graph.applyGreedyFusion();
-    std.debug.print("\n", .{});
-    try Graph.viz(std.debug);
+    // std.debug.print("\n", .{});
+    // try Graph.viz(std.debug);
 }
