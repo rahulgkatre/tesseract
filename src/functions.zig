@@ -72,9 +72,9 @@ pub fn sub(comptime a: anytype, comptime b: anytype) @TypeOf(a.add(b.neg())) {
 }
 
 pub fn matmul(comptime a: anytype, comptime b: anytype) @TypeOf(a.*).MatMul(@TypeOf(b)) {
-    const a_unsqueeze = a.unsqueeze(@TypeOf(a.*).ndims);
-    const b_unsqueeze = b.unsqueeze(@TypeOf(b).ndims - 2);
-    const outer_prod = a_unsqueeze.mul(b_unsqueeze);
-    const outer_prod_T = outer_prod; //.transpose(@TypeOf(outer_prod).ndims - 2, @TypeOf(outer_prod).ndims - 1);
-    return outer_prod_T.sum(@TypeOf(outer_prod_T).ndims - 2).squeeze(@TypeOf(outer_prod_T).ndims - 2);
+    return a
+        .unsqueeze(a.ndims - 1)
+        .mul(b.transpose(b.ndims - 2, b.ndims - 1).copy().unsqueeze(b.ndims - 2))
+        .sum(b.ndims)
+        .squeeze(b.ndims);
 }

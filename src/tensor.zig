@@ -10,10 +10,12 @@ pub fn constant(comptime dtype: dtypes.DType, comptime value: anytype) InferredS
     return InferredStrides(dtype, .{1}).full(value);
 }
 
-pub fn range(comptime dtype: dtypes.DType, comptime start: dtype, comptime stop: dtype) InferredStrides(dtype, .{stop - start}) {
-    @setEvalBranchQuota(@as(u32, 2 * stop));
-    const data: [stop - start]dtype = std.simd.iota(dtype, stop - start) + @as(@Vector(stop - start, dtype), @splat(start));
-    return InferredStrides(dtype, .{stop - start}).from(data[0..]);
+pub fn range(
+    comptime dtype: dtypes.DType,
+    comptime start: if (dtypes.isInt(dtype)) comptime_int else @compileError("Range tensor must have int dtype"),
+    comptime stop: if (dtypes.isInt(dtype)) comptime_int else @compileError("Range tensor must have int dtype"),
+) InferredStrides(dtype, .{stop - start}) {
+    return InferredStrides(dtype, .{stop - start}).rand(start, stop);
 }
 
 pub fn InferredStrides(comptime dtype: dtypes.DType, comptime shape: anytype) type {
@@ -89,38 +91,61 @@ fn Tensor(
             return .{ .traceFn = traceFn };
         }
 
-        // Load the tensor's data from an array pointer
-        // Not a slice because this guarantees that the size requirement is met and verified in comptime
-        // pub fn from(data: *const [size]anytype) Self {
-        //     _ = data;
-        //     const traceFn = struct {
-        //         fn trace(self: *const Self) void {
-        //             Graph.Node.new(self, .{ .InitOp = .{ .op = .From } }, Self);
-        //         }
-        //     }.trace;
-        //     return init(traceFn);
-        // }
-
         // Fill a tensor with a value
         pub fn full(comptime value: anytype) Self {
-            _ = value;
             const traceFn = struct {
                 fn trace(self: *const Self) void {
-                    Graph.Vertex.new(self, .{ .InitOp = .{ .op = .Full } }, Self);
+                    Graph.Vertex.new(self, .{
+                        .InitOp = .{ .op = .Full, .value = .{ .Full = std.fmt.comptimePrint("{any}", .{value}) } },
+                    }, Self);
                 }
             }.trace;
             return init(traceFn);
         }
 
-        // Fill a tensor with a value
-        pub fn rand(comptime value: dtype) Self {
-            _ = value;
+        fn range(comptime start: comptime_int, comptime stop: comptime_int) Self {
+            if (ndims > 1) {
+                @compileError("Cannot use range() on a tensor with > 1 dimensions");
+            }
             const traceFn = struct {
                 fn trace(self: *const Self) void {
-                    Graph.Vertex.new(self, .{ .InitOp = .{ .op = .Rand } }, Self);
+                    Graph.Vertex.new(self, .{ .InitOp = .{ .op = .Rand, .value = .{ .Rand = .{
+                        .start = std.fmt.comptimePrint("{d}", .{start}),
+                        .stop = std.fmt.comptimePrint("{d}", .{stop}),
+                    } } } }, Self);
                 }
             }.trace;
             return init(traceFn);
+        }
+
+        pub fn rand() Self {
+            const traceFn = struct {
+                fn trace(self: *const Self) void {
+                    Graph.Vertex.new(self, .{ .InitOp = .{ .op = .Rand, .value = .{ .Rand = {} } } }, Self);
+                }
+            }.trace;
+            return init(traceFn);
+        }
+
+        pub fn Copy() type {
+            return InferredStrides(dtype, shape);
+        }
+        pub fn copy(x: *const Self) Copy() {
+            const Out = Copy();
+            if (!is_contiguous) {
+                const traceFn = struct {
+                    fn trace(out: *const Out) void {
+                        Graph.trace(x);
+                        Graph.Vertex.new(out, .{ .MapOp = .{
+                            .op = .Id,
+                            .x = Graph.Vertex.get(x),
+                        } }, Out);
+                    }
+                }.trace;
+                return Out.init(traceFn);
+            } else {
+                return x.*;
+            }
         }
 
         pub fn Permute(comptime perm: [ndims]u8) type {
@@ -158,32 +183,24 @@ fn Tensor(
             }
         }
         pub fn view(x: *const Self, comptime new_shape: anytype) InferredStrides(dtype, new_shape) {
-            comptime {
-                const Out = InferredStrides(dtype, new_shape);
-                if (x.is_contiguous) {
-                    const traceFn = struct {
-                        fn trace(out: *const Out) void {
-                            Graph.trace(x);
-                            Graph.Vertex.new(out, .{ .TypeOp = .{
-                                .op = .View,
-                                .x = Graph.Vertex.get(x),
-                            } }, Out);
-                        }
-                    }.trace;
-                    return Out.init(traceFn);
-                } else {
-                    @compileError("Must be contiguous to view");
-                }
+            const Out = InferredStrides(dtype, new_shape);
+            if (x.is_contiguous) {
+                const traceFn = struct {
+                    fn trace(out: *const Out) void {
+                        Graph.trace(x);
+                        Graph.Vertex.new(out, .{ .TypeOp = .{
+                            .op = .View,
+                            .x = Graph.Vertex.get(x),
+                        } }, Out);
+                    }
+                }.trace;
+                return Out.init(traceFn);
+            } else {
+                @compileError("Must be contiguous to view");
             }
         }
         pub fn reshape(x: *const Self, comptime new_shape: anytype) InferredStrides(dtype, new_shape) {
-            comptime {
-                if (x.is_contiguous) {
-                    return x.view(new_shape);
-                } else {
-                    // return x.copy().view(new_shape);
-                }
-            }
+            return x.copy().view(new_shape);
         }
 
         fn Unsqueeze(comptime dim: u8) type {

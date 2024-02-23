@@ -64,8 +64,17 @@ pub const Edge = union(ops.GraphOps) {
         fused_x: bool = true,
     };
     pub const InitOp = struct {
+        pub const InitValue = union(ops.InitOp) {
+            Input: void,
+            Full: []const u8,
+            Rand: void,
+            Range: struct {
+                start: []const u8,
+                stop: []const u8,
+            },
+        };
         op: ops.InitOp,
-        // TODO: op_info for InitOp
+        value: InitValue,
     };
     MapOp: MapOp,
     ZipOp: ZipOp,

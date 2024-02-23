@@ -46,7 +46,7 @@ pub fn loops(program: *Program, v: *Graph.Vertex) !*Loop {
         return loop_hash_table.get(v.id).?;
     }
     const statement: Statement = switch (v.edge) {
-        .InitOp => |edge| .{ .InitOp = .{ .id = 0, .op = edge.op, .out = v } },
+        .InitOp => |edge| .{ .InitOp = .{ .id = 0, .op = edge.op, .out = v, .init = edge.value } },
         .ZipOp => |edge| .{ .ZipOp = .{ .id = 0, .op = edge.op, .a = edge.a, .b = edge.b, .out = v } },
         .MapOp => |edge| .{ .MapOp = .{ .id = 0, .op = edge.op, .x = edge.x, .out = v } },
         .ReduceOp => |edge| .{ .ReduceOp = .{ .id = 0, .op = edge.op, .x = edge.x, .out = v } },
@@ -170,6 +170,7 @@ pub const Statement = union(ops.GraphOps) {
         id: usize,
         op: ops.InitOp,
         out: *Graph.Vertex,
+        init: Graph.Edge.InitOp.InitValue,
     },
 };
 
@@ -195,7 +196,7 @@ pub const Body = struct {
 
 test "codegen" {
     const tensor = @import("tensor.zig");
-    const Zig = @import("codegen/ZigCodegenV2.zig");
+    const Zig = @import("codegen/Zig.zig");
     const out = comptime blk: {
         const a = tensor.InferredStrides(.f32, .{ 1024, 2048 }).full(2);
         const b = tensor.InferredStrides(.f32, .{ 2048, 4096 }).full(3);
@@ -204,7 +205,7 @@ test "codegen" {
     Graph.init(std.testing.allocator);
     defer Graph.deinit();
     Graph.trace(out);
-    // Graph.applyGreedyFusion();
+    Graph.applyGreedyFusion();
     std.debug.print("\n", .{});
 
     Program.init(std.testing.allocator);

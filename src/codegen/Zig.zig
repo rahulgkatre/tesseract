@@ -71,6 +71,7 @@ pub fn loopCode(loop: *Program.Loop, writer: anytype) std.mem.Allocator.Error!vo
 
 fn mapOpCode(op: ops.MapOp, dtype: dtypes.DType, x: []const u8) ![]const u8 {
     return try switch (op) {
+        .Id => std.fmt.allocPrint(allocator, "{s}", .{x}),
         .Neg => if (dtypes.isBool(dtype)) std.fmt.allocPrint(allocator, "!({s})", .{x}) else std.fmt.allocPrint(allocator, "-({s})", .{x}),
         .Log2 => std.fmt.allocPrint(allocator, "@log2({s})", .{x}),
         .Exp2 => std.fmt.allocPrint(allocator, "@exp2({s})", .{x}),
@@ -81,6 +82,7 @@ fn mapOpCode(op: ops.MapOp, dtype: dtypes.DType, x: []const u8) ![]const u8 {
 }
 fn mapOpCodeLen(op: ops.MapOp, dtype: dtypes.DType) u64 {
     return (switch (op) {
+        .Id => "{s}",
         .Neg => if (dtypes.isBool(dtype)) "!({s})" else "-({s})",
         .Log2 => "@log2({s})",
         .Exp2 => "@exp2({s})",
@@ -134,8 +136,8 @@ pub fn statementCode(statement: Program.Statement) std.mem.Allocator.Error![]con
             defer allocator.free(rhs);
             return try std.fmt.allocPrint(allocator, "T{d}[{s}] = {s};", .{
                 map.out.id,
-                rhs,
                 try codegen.unravelCode(allocator, map.out),
+                rhs,
             });
         },
         .ZipOp => |zip| {
@@ -175,6 +177,23 @@ pub fn statementCode(statement: Program.Statement) std.mem.Allocator.Error![]con
                 reduce.out.id,
                 rhs,
             });
+        },
+        .InitOp => |initialize| {
+            if (initialize.op != .Input) {
+                const rhs = switch (initialize.init) {
+                    .Full => |value| try std.fmt.allocPrint(allocator, "{s}", .{value}),
+                    .Range => |range| try std.fmt.allocPrint(allocator, "{s}+d0", .{range.start}),
+                    .Rand => "random()",
+                    else => "",
+                };
+                return try std.fmt.allocPrint(allocator, "T{d}[{s}] = {s};", .{
+                    initialize.out.id,
+                    try codegen.unravelCode(allocator, initialize.out),
+                    rhs,
+                });
+            } else {
+                return "";
+            }
         },
         else => return "",
     }

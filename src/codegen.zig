@@ -10,8 +10,10 @@ const Program = @import("Program.zig");
 /// Based on implementation of unravel_index from numpy
 /// https://chromium.googlesource.com/external/github.com/numpy/numpy/+/maintenance/1.3.x/numpy/lib/index_tricks.py
 /// This is actually inlineable as opposed to the modulo method
-pub fn unravelCodeLen(node: *Graph.Vertex) u64 {
+pub fn unravelCode(allocator: std.mem.Allocator, node: *Graph.Vertex) std.mem.Allocator.Error![]const u8 {
     const ndims = node.tensor.ndims;
+    const strides = node.tensor.strides;
+
     var count = std.fmt.count("{d}", .{node.tensor.strides[ndims]});
     for (0..ndims) |d| {
         if (node.tensor.strides[ndims - 1 - d] != 0) {
@@ -22,12 +24,8 @@ pub fn unravelCodeLen(node: *Graph.Vertex) u64 {
             }
         }
     }
-    return count;
-}
-pub fn unravelCode(allocator: std.mem.Allocator, node: *Graph.Vertex) std.mem.Allocator.Error![]const u8 {
-    const ndims = node.tensor.ndims;
-    const strides = node.tensor.strides;
-    const buf: []u8 = try allocator.alloc(u8, unravelCodeLen(node));
+    const buf: []u8 = try allocator.alloc(u8, count);
+
     var printed = std.fmt.bufPrint(buf, "{d}", .{strides[ndims]}) catch unreachable;
     var offset = printed.len;
     for (0..ndims) |d| {
@@ -46,16 +44,19 @@ pub fn unravelCode(allocator: std.mem.Allocator, node: *Graph.Vertex) std.mem.Al
 }
 
 // Similar to above but with added logic for broadcasting the position between two tensors
-pub fn broadcastedUnravelCodeLen(
+pub fn broadcastedUnravelCode(
+    allocator: std.mem.Allocator,
     node: *Graph.Vertex,
     bc_node: *Graph.Vertex,
-) u64 {
+) ![]const u8 {
     const strides = node.tensor.strides;
     const shape = node.tensor.shape;
-    const ndims = node.tensor.ndims;
+    const ndims = strides.len - 1;
 
+    const bc_strides = bc_node.tensor.strides;
     const bc_shape = bc_node.tensor.shape;
-    const bc_ndims = bc_node.tensor.ndims;
+    const bc_ndims = bc_strides.len - 1;
+
     var count = std.fmt.count("{d}", .{strides[ndims]});
     for (0..bc_ndims) |d| {
         const dim = if (d >= ndims) 1 else shape[ndims - 1 - d];
@@ -70,22 +71,8 @@ pub fn broadcastedUnravelCodeLen(
             }
         }
     }
-    return count;
-}
-pub fn broadcastedUnravelCode(
-    allocator: std.mem.Allocator,
-    node: *Graph.Vertex,
-    bc_node: *Graph.Vertex,
-) ![]const u8 {
-    const strides = node.tensor.strides;
-    const shape = node.tensor.shape;
-    const ndims = strides.len - 1;
 
-    const bc_strides = bc_node.tensor.strides;
-    const bc_shape = bc_node.tensor.shape;
-    const bc_ndims = bc_strides.len - 1;
-
-    const buf: []u8 = try allocator.alloc(u8, broadcastedUnravelCodeLen(node, bc_node));
+    const buf: []u8 = try allocator.alloc(u8, count);
     var printed = std.fmt.bufPrint(buf, "{d}", .{strides[ndims]}) catch unreachable;
     var offset = printed.len;
     for (0..bc_ndims) |d| {
@@ -105,9 +92,6 @@ pub fn broadcastedUnravelCode(
 }
 
 const loop_var_fmt = "d{d}";
-pub fn loopVarCodeLen(loop: *Program.Loop) u64 {
-    return std.fmt.count(loop_var_fmt, .{loop.dim});
-}
 pub fn loopVarCode(allocator: std.mem.Allocator, loop: *Program.Loop) ![]const u8 {
     return try std.fmt.allocPrint(allocator, loop_var_fmt, .{loop.dim});
 }
