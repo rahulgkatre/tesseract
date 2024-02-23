@@ -1,8 +1,10 @@
 pub const std = @import("std");
-pub const dtypes = @import("dtypes.zig");
+pub const dtypes = @import("src/dtypes.zig");
 
 // Expose functions publicly when using Tesseract as a Zig library
-const tensor = @import("tensor.zig");
+const tensor = @import("src/tensor.zig");
+pub const Graph = @import("src/Graph.zig");
+pub const Program = @import("src/Program.zig");
 
 // Expose the simple Tensor function rather than the full one
 pub fn Tensor(comptime dtype: dtypes.DType, comptime shape: anytype) type {
@@ -17,8 +19,12 @@ pub fn range(comptime dtype: dtypes.DType, comptime start: dtype, comptime stop:
     return tensor.range(dtype, start, stop);
 }
 
-test {
-    @import("Graph.zig");
-    @import("Program.zig");
-    @import("tensor.zig");
+test "tesseract" {
+    _ = Program;
+}
+
+pub fn init() void {
+    // var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    Graph.init(std.heap.page_allocator);
+    Program.init(std.heap.page_allocator);
 }
