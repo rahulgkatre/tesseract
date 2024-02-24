@@ -1,30 +1,37 @@
 pub const std = @import("std");
 pub const dtypes = @import("src/dtypes.zig");
 
-// Expose functions publicly when using Tesseract as a Zig library
 const tensor = @import("src/tensor.zig");
-pub const Graph = @import("src/Graph.zig");
-pub const Program = @import("src/Program.zig");
+const GraphInternal = @import("src/Graph.zig");
+const ProgramInternal = @import("src/Program.zig");
 
 // Expose the simple Tensor function rather than the full one
-pub fn Tensor(comptime dtype: dtypes.DType, comptime shape: anytype) type {
-    return tensor.InferredStrides(dtype, shape);
-}
+pub const Tensor = tensor.InferredStrides;
+pub const constant = tensor.constant;
+pub const range = tensor.range;
 
-pub fn constant(comptime dtype: dtypes.DType, comptime value: anytype) Tensor(dtype, .{1}) {
-    return tensor.constant(dtype, value);
-}
+// Expose only some functions publicly when using Tesseract as a Zig library
+pub const Graph = struct {
+    pub const viz = GraphInternal.viz;
+    pub const trace = GraphInternal.trace;
+    pub const Fusion = GraphInternal.Fusion;
+};
 
-pub fn range(comptime dtype: dtypes.DType, comptime start: dtype, comptime stop: dtype) Tensor(dtype, .{stop - start}) {
-    return tensor.range(dtype, start, stop);
-}
+pub const Program = struct {
+    pub const code = ProgramInternal.code;
+    pub const fromGraph = ProgramInternal.fromGraph;
+};
 
 test "tesseract" {
-    _ = Program;
+    _ = ProgramInternal;
 }
 
 pub fn init() void {
-    // var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    Graph.init(std.heap.page_allocator);
-    Program.init(std.heap.page_allocator);
+    GraphInternal.init(std.heap.page_allocator);
+    ProgramInternal.init(std.heap.page_allocator);
+}
+
+pub fn deinit() void {
+    GraphInternal.deinit();
+    ProgramInternal.deinit();
 }

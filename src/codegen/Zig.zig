@@ -17,6 +17,10 @@ pub fn deinit() void {
     arena.deinit();
 }
 
+pub fn code(program: *const Program, writer: anytype) !void {
+    return try bodyCode(program.body, writer);
+}
+
 const acc_loop_header_fmt =
     \\var acc{d} = {s};
     \\for (0..{d}) |{s}| {{
@@ -30,17 +34,26 @@ fn headerCode(loop: *Program.Loop, writer: anytype) std.mem.Allocator.Error!void
     const loop_var_code = try codegen.loopVarCode(allocator, loop);
     defer allocator.free(loop_var_code);
     if (loop.acc) {
-        return writer.print(acc_loop_header_fmt, .{ loop.node.id, "0", loop.upper_bound, loop_var_code });
+        return writer.print(acc_loop_header_fmt, .{ loop.node.tensor.id, "0", loop.upper_bound, loop_var_code });
     } else {
         return writer.print(reg_loop_header_fmt, .{ loop.upper_bound, loop_var_code });
     }
 }
-pub fn bodyCode(body: Program.Body, writer: anytype) std.mem.Allocator.Error!void {
+fn bodyCode(body: Program.Body, writer: anytype) std.mem.Allocator.Error!void {
     const slice = body.contents.slice();
     for (slice.items(.tags), slice.items(.data)) |tag, data| {
         switch (tag) {
             .Loop => try loopCode(data.Loop, writer),
-            .Statement => writer.print("{s}", .{try statementCode(data.Statement)}),
+            .Statement => writer.print("{s} = {s};", .{
+                switch (data.Statement.*) {
+                    .ReduceOp => |reduce| try std.fmt.allocPrint(allocator, "acc{d}", .{reduce.out.id}),
+                    inline else => |stmt| try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
+                        stmt.out.id,
+                        try codegen.unravelCode(allocator, stmt.out),
+                    }),
+                },
+                try statementCode(data.Statement),
+            }),
         }
     }
 }
@@ -57,13 +70,13 @@ fn footerCode(loop: *Program.Loop, writer: anytype) !void {
     if (loop.acc) {
         const unravel_code = try codegen.unravelCode(allocator, loop.node);
         defer allocator.free(unravel_code);
-        return writer.print(acc_loop_footer_fmt, .{ loop.node.id, unravel_code, loop.node.id });
+        return writer.print(acc_loop_footer_fmt, .{ loop.node.tensor.id, unravel_code, loop.node.tensor.id });
     } else {
         return writer.print(reg_loop_footer_fmt, .{});
     }
 }
 
-pub fn loopCode(loop: *Program.Loop, writer: anytype) std.mem.Allocator.Error!void {
+fn loopCode(loop: *Program.Loop, writer: anytype) std.mem.Allocator.Error!void {
     try headerCode(loop, writer);
     try bodyCode(loop.body, writer);
     try footerCode(loop, writer);
@@ -122,79 +135,61 @@ fn reduceOpCode(op: ops.ReduceOp, x: []const u8, out_id: usize) ![]const u8 {
     );
 }
 
-pub fn statementCode(statement: Program.Statement) std.mem.Allocator.Error![]const u8 {
-    switch (statement) {
+fn statementCode(statement: *const Program.Statement) std.mem.Allocator.Error![]const u8 {
+    switch (statement.*) {
         .MapOp => |map| {
-            const unravel_x = try codegen.unravelCode(allocator, map.x);
-            defer allocator.free(unravel_x);
-            const read_x = try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
+            const inner_x = if (map.x_statement != null) try statementCode(map.x_statement.?) else try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
                 map.x.id,
-                unravel_x,
+                try codegen.unravelCode(allocator, map.x),
             });
-            defer allocator.free(read_x);
-            const rhs = try mapOpCode(map.op, map.x.tensor.dtype, read_x);
-            defer allocator.free(rhs);
-            return try std.fmt.allocPrint(allocator, "T{d}[{s}] = {s};", .{
-                map.out.id,
-                try codegen.unravelCode(allocator, map.out),
-                rhs,
-            });
+            defer allocator.free(inner_x);
+            return try mapOpCode(map.op, map.x.tensor.dtype, inner_x);
         },
         .ZipOp => |zip| {
-            const unravel_a = try codegen.broadcastedUnravelCode(allocator, zip.a, zip.out);
-            defer allocator.free(unravel_a);
-            const read_a = try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
+            const inner_a = if (zip.a_statement != null) try statementCode(zip.a_statement.?) else try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
                 zip.a.id,
-                unravel_a,
+                try codegen.broadcastedUnravelCode(allocator, zip.a, zip.out),
             });
-            defer allocator.free(read_a);
-            const unravel_b = try codegen.broadcastedUnravelCode(allocator, zip.b, zip.out);
-            defer allocator.free(unravel_b);
-            const read_b = try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
+            defer allocator.free(inner_a);
+            const inner_b = if (zip.b_statement != null) try statementCode(zip.b_statement.?) else try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
                 zip.b.id,
-                unravel_b,
+                try codegen.broadcastedUnravelCode(allocator, zip.b, zip.out),
             });
-            defer allocator.free(read_b);
-            const rhs = try zipOpCode(zip.op, read_a, read_b);
-            defer allocator.free(rhs);
-            return try std.fmt.allocPrint(allocator, "T{d}[{s}] = {s};", .{
-                zip.out.id,
-                try codegen.unravelCode(allocator, zip.out),
-                rhs,
-            });
+
+            defer allocator.free(inner_a);
+            return try zipOpCode(zip.op, inner_a, inner_b);
         },
         .ReduceOp => |reduce| {
-            const unravel_x = try codegen.unravelCode(allocator, reduce.x);
-            defer allocator.free(unravel_x);
-            const read_x = try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
+            const inner_x = if (reduce.x_statement != null) try statementCode(reduce.x_statement.?) else try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
                 reduce.x.id,
-                unravel_x,
+                try codegen.unravelCode(allocator, reduce.x),
             });
-            defer allocator.free(read_x);
-            const rhs = try reduceOpCode(reduce.op, read_x, reduce.out.id);
-            defer allocator.free(rhs);
-            return try std.fmt.allocPrint(allocator, "acc{d} = {s};", .{
-                reduce.out.id,
-                rhs,
-            });
+            defer allocator.free(inner_x);
+            return try reduceOpCode(reduce.op, inner_x, reduce.out.id);
         },
         .InitOp => |initialize| {
             if (initialize.op != .Input) {
-                const rhs = switch (initialize.init) {
+                return switch (initialize.init) {
                     .Full => |value| try std.fmt.allocPrint(allocator, "{s}", .{value}),
                     .Range => |range| try std.fmt.allocPrint(allocator, "{s}+d0", .{range.start}),
-                    .Rand => "random()",
+                    .Rand => |dtype| try std.fmt.allocPrint(allocator, "std.rand.random.floatNorm({s})", .{@tagName(dtype)}),
                     else => "",
                 };
-                return try std.fmt.allocPrint(allocator, "T{d}[{s}] = {s};", .{
-                    initialize.out.id,
-                    try codegen.unravelCode(allocator, initialize.out),
-                    rhs,
-                });
             } else {
-                return "";
+                unreachable;
             }
         },
-        else => return "",
+        .TypeOp => |typing| {
+            if (typing.op == .AsType) {
+                const inner_x = if (typing.x_statement != null) try statementCode(typing.x_statement.?) else try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
+                    typing.x.id,
+                    try codegen.unravelCode(allocator, typing.x),
+                });
+                defer allocator.free(inner_x);
+                return "";
+            } else {
+                unreachable;
+            }
+        },
     }
 }

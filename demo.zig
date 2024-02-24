@@ -28,7 +28,9 @@ pub fn main() !void {
     tesseract.init();
     // Call trace on the output to build its computation graph
     tesseract.Graph.trace(out);
-    tesseract.Graph.applyGreedyFusion();
-    // Show the graph
+    tesseract.Graph.Fusion.applyGreedyFusion();
     try tesseract.Graph.viz(std.debug);
+    std.debug.print("\n", .{});
+    const program = try tesseract.Program.fromGraph();
+    try tesseract.Program.code(program, @import("src/codegen/Zig.zig"), std.debug);
 }

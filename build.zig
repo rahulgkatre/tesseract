@@ -1,9 +1,6 @@
-// NOTE: This build.zig file is only for the demo
-// a build file for the library will be added later
 const std = @import("std");
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
-
     const tesseract_file = b.option([]const u8, "tfile", "Tesseract file to compile");
     if (tesseract_file != null) {
         const exe = b.addExecutable(.{
@@ -24,6 +21,7 @@ pub fn build(b: *std.Build) void {
         .target = b.host,
         .optimize = optimize,
     });
+
     // Does not work: https://github.com/ziglang/zig/issues/17756
     // Added a vscode task to run coverage for now
     // const coverage = b.option(bool, "test-coverage", "Generate test coverage") orelse false;

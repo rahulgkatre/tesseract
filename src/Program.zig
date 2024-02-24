@@ -7,6 +7,7 @@ const Program = @This();
 var arena: std.heap.ArenaAllocator = undefined;
 var allocator: std.mem.Allocator = undefined;
 var loop_hash_table: std.AutoArrayHashMap(usize, *Loop) = undefined;
+var statement_hash_table: std.AutoArrayHashMap(*Graph.Vertex, *Statement) = undefined;
 var subprograms: std.ArrayList(*Program) = undefined;
 
 body: Body = undefined,
@@ -15,12 +16,18 @@ pub fn init(backing_allocator: std.mem.Allocator) void {
     arena = std.heap.ArenaAllocator.init(backing_allocator);
     allocator = arena.allocator();
     loop_hash_table = std.AutoArrayHashMap(usize, *Loop).init(allocator);
+    statement_hash_table = std.AutoArrayHashMap(*Graph.Vertex, *Statement).init(allocator);
     subprograms = std.ArrayList(*Program).init(allocator);
 }
 
-pub fn fromGraph() !void {
+pub fn fromGraph() !*Program {
+    // TODO: A graph can have multiple groups and each group needs to correspond to a separate program
+    // A global arraylist will need to be maintained to add new programs to
+    // Similarly codegen will need to provide a top level function for generating code for multiple programs
+    // where each program corresponds to a function or a kernel
     var p = try new();
-    p.loops(Graph.entrypoint.?);
+    _ = try p.loops(Graph.entrypoint.?);
+    return p;
 }
 
 fn new() !*Program {
@@ -45,14 +52,8 @@ pub fn loops(program: *Program, v: *Graph.Vertex) !*Loop {
     if (loop_hash_table.contains(v.id)) {
         return loop_hash_table.get(v.id).?;
     }
-    const statement: Statement = switch (v.edge) {
-        .InitOp => |edge| .{ .InitOp = .{ .id = 0, .op = edge.op, .out = v, .init = edge.value } },
-        .ZipOp => |edge| .{ .ZipOp = .{ .id = 0, .op = edge.op, .a = edge.a, .b = edge.b, .out = v } },
-        .MapOp => |edge| .{ .MapOp = .{ .id = 0, .op = edge.op, .x = edge.x, .out = v } },
-        .ReduceOp => |edge| .{ .ReduceOp = .{ .id = 0, .op = edge.op, .x = edge.x, .out = v } },
-        .TypeOp => |edge| .{ .TypeOp = .{ .id = 0, .op = edge.op, .x = edge.x, .out = v } },
-    };
-    var loop: *Loop = build_loop: {
+
+    return build_loop: {
         var reg_loops = std.ArrayList(*Loop).init(allocator);
         var acc_loops = std.ArrayList(*Loop).init(allocator);
         var curr_loop = try allocator.create(Loop);
@@ -84,9 +85,9 @@ pub fn loops(program: *Program, v: *Graph.Vertex) !*Loop {
             }
         }
 
-        // try curr_loop.body.contents.append(allocator, .{ .Loop = inner_loop });
-        const root_loop: *Loop = reg_loops.items[0];
-        curr_loop = root_loop;
+        // Reorder loops such that accumulation happens innermost but with same dimensional order
+        const outer_loop: *Loop = reg_loops.items[0];
+        curr_loop = outer_loop;
         for (reg_loops.items[1..]) |reg_loop| {
             try curr_loop.body.contents.append(allocator, .{ .Loop = reg_loop });
             curr_loop = reg_loop;
@@ -95,46 +96,85 @@ pub fn loops(program: *Program, v: *Graph.Vertex) !*Loop {
             try curr_loop.body.contents.append(allocator, .{ .Loop = acc_loop });
             curr_loop = acc_loop;
         }
-        try curr_loop.body.contents.append(allocator, .{ .Statement = statement });
-        break :build_loop root_loop;
-    };
-    switch (v.edge) {
-        .InitOp => {},
-        .ZipOp => |edge| {
-            if (edge.a.group_id == edge.b.group_id and edge.b.group_id == v.group_id) {
-                var a_loop = program.loops(edge.a) catch unreachable;
-                a_loop.prev = program.loops(edge.b) catch unreachable;
-                loop.prev = a_loop;
-            } else {
-                if (edge.a.group_id == v.group_id) {
-                    loop.prev = program.loops(edge.a) catch unreachable;
-                } else if (edge.b.group_id == v.group_id) {
-                    loop.prev = program.loops(edge.b) catch unreachable;
+        switch (v.edge) {
+            .InitOp => {},
+            .ZipOp => |edge| {
+                if (edge.a.group_id == edge.b.group_id and edge.b.group_id == v.group_id) { // and !edge.fused_a and !edge.fused_b) {
+                    var a_loop = program.loops(edge.a) catch unreachable;
+                    a_loop.prev = program.loops(edge.b) catch unreachable;
+                    outer_loop.prev = a_loop;
+                } else {
+                    if (edge.a.group_id == v.group_id) { // and !edge.fused_a) {
+                        outer_loop.prev = program.loops(edge.a) catch unreachable;
+                    } else if (edge.b.group_id == v.group_id) { // and !edge.fused_b) {
+                        outer_loop.prev = program.loops(edge.b) catch unreachable;
+                    }
                 }
-            }
-        },
-        .TypeOp => |edge| {
-            switch (edge.op) {
-                .AsType => {
-                    loop.prev = program.loops(edge.x) catch unreachable;
+            },
+            .TypeOp => |edge| {
+                switch (edge.op) {
+                    .AsType => {
+                        outer_loop.prev = program.loops(edge.x) catch unreachable;
+                    },
+                    else => {
+                        outer_loop.* = (program.loops(edge.x) catch unreachable).*;
+                    },
+                }
+            },
+            inline else => |edge| {
+                if (edge.x.group_id == v.group_id) { // and !edge.fused_x) {
+                    outer_loop.prev = program.loops(edge.x) catch unreachable;
+                }
+            },
+        }
+        const statement: *Statement = try allocator.create(Statement);
+        statement.* = switch (v.edge) {
+            .InitOp => |edge| .{ .InitOp = .{ .id = 0, .op = edge.op, .out = v, .init = edge.value } },
+            .ZipOp => |edge| .{ .ZipOp = .{
+                .id = 0,
+                .op = edge.op,
+                .a = edge.a,
+                .a_statement = if (edge.fused_a) statement_hash_table.get(edge.a) else null,
+                .b = edge.b,
+                .b_statement = if (edge.fused_b) statement_hash_table.get(edge.b) else null,
+                .out = v,
+            } },
+            .MapOp => |edge| .{ .MapOp = .{
+                .id = 0,
+                .op = edge.op,
+                .x = edge.x,
+                .x_statement = if (edge.fused_x) statement_hash_table.get(edge.x) else null,
+                .out = v,
+            } },
+            .ReduceOp => |edge| .{ .ReduceOp = .{
+                .id = 0,
+                .op = edge.op,
+                .x = edge.x,
+                .x_statement = if (edge.fused_x) statement_hash_table.get(edge.x) else null,
+                .out = v,
+            } },
+            .TypeOp => |edge| .{
+                .TypeOp = .{
+                    .id = 0,
+                    .op = edge.op,
+                    .x = edge.x,
+                    .x_statement = if (edge.op == .AsType) statement_hash_table.get(edge.x) else {
+                        // Escape hatch, only AsType corresponds to a statement inside a loop
+                        outer_loop.* = loop_hash_table.get(edge.x.id).?.*;
+                        return outer_loop;
+                    },
+                    .out = v,
                 },
-                else => {
-                    loop.* = (program.loops(edge.x) catch unreachable).*;
-                },
-            }
-        },
-        inline else => |edge| {
-            if (edge.x.group_id == v.group_id) {
-                loop.prev = program.loops(edge.x) catch unreachable;
-            }
-        },
-    }
-    if (!loop_hash_table.contains(loop.node.id)) {
-        try program.body.contents.append(allocator, .{ .Loop = loop });
-    }
-
-    try loop_hash_table.put(loop.node.id, loop);
-    return loop;
+            },
+        };
+        try statement_hash_table.put(v, statement);
+        try curr_loop.body.contents.append(allocator, .{ .Statement = statement });
+        if (!loop_hash_table.contains(outer_loop.node.tensor.id)) {
+            try program.body.contents.append(allocator, .{ .Loop = outer_loop });
+        }
+        try loop_hash_table.put(outer_loop.node.tensor.id, outer_loop);
+        break :build_loop outer_loop;
+    };
 }
 
 /// Statement of the form y = f(x)
@@ -144,33 +184,38 @@ pub const Statement = union(ops.GraphOps) {
     MapOp: struct {
         id: usize,
         op: ops.MapOp,
-        x: *Graph.Vertex,
-        out: *Graph.Vertex,
+        x: *const Graph.Vertex,
+        x_statement: ?*const Statement,
+        out: *const Graph.Vertex,
     },
     ZipOp: struct {
         id: usize,
         op: ops.ZipOp,
-        a: *Graph.Vertex,
-        b: *Graph.Vertex,
-        out: *Graph.Vertex,
+        a: *const Graph.Vertex,
+        a_statement: ?*const Statement,
+        b: *const Graph.Vertex,
+        b_statement: ?*const Statement,
+        out: *const Graph.Vertex,
     },
     ReduceOp: struct {
         id: usize,
         op: ops.ReduceOp,
-        x: *Graph.Vertex,
+        x: *const Graph.Vertex,
+        x_statement: ?*const Statement,
         out: *Graph.Vertex,
     },
     TypeOp: struct {
         id: usize,
         op: ops.TypeOp,
-        x: *Graph.Vertex,
-        out: *Graph.Vertex,
+        x: *const Graph.Vertex,
+        x_statement: ?*const Statement,
+        out: *const Graph.Vertex,
     },
     InitOp: struct {
         id: usize,
         op: ops.InitOp,
-        out: *Graph.Vertex,
-        init: Graph.Edge.InitOp.InitValue,
+        out: *const Graph.Vertex,
+        init: ops.InitValue,
     },
 };
 
@@ -189,10 +234,15 @@ pub const Loop = struct {
 pub const Body = struct {
     pub const Content = union(enum) {
         Loop: *Loop,
-        Statement: Statement,
+        Statement: *Statement,
     };
     contents: std.MultiArrayList(Content),
 };
+
+pub fn code(program: *const Program, comptime Generator: type, writer: anytype) !void {
+    Generator.init(allocator);
+    try Generator.code(program, writer);
+}
 
 test "codegen" {
     const tensor = @import("tensor.zig");
@@ -205,16 +255,17 @@ test "codegen" {
     Graph.init(std.testing.allocator);
     defer Graph.deinit();
     Graph.trace(out);
-    Graph.applyGreedyFusion();
-    std.debug.print("\n", .{});
-
+    // Graph.applyGreedyFusion();
     Program.init(std.testing.allocator);
     defer Program.deinit();
-    var program = try Program.new();
-    _ = try program.loops(Graph.entrypoint.?);
-
+    const program = try Program.fromGraph();
     Zig.init(std.testing.allocator);
     defer Zig.deinit();
-    try Zig.bodyCode(program.body, std.debug);
-    std.debug.print("\n", .{});
+
+    const Logger = struct {
+        pub fn print(comptime fmt: anytype, args: anytype) void {
+            std.log.debug(fmt, args);
+        }
+    };
+    try Zig.code(program, Logger);
 }

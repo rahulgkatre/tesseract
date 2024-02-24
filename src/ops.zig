@@ -6,6 +6,16 @@ pub const ReduceOp = enum { Sum, Max };
 pub const TypeOp = enum { AsStrided, AsType, View };
 pub const InitOp = enum { Input, Full, Rand, Range };
 
+pub const InitValue = union(InitOp) {
+    Input: void,
+    Full: []const u8,
+    Rand: @import("dtypes.zig").DType,
+    Range: struct {
+        start: []const u8,
+        stop: []const u8,
+    },
+};
+
 pub const MemOps = enum {
     Load, // Load data
     Store, // Store data

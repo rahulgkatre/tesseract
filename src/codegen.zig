@@ -10,7 +10,7 @@ const Program = @import("Program.zig");
 /// Based on implementation of unravel_index from numpy
 /// https://chromium.googlesource.com/external/github.com/numpy/numpy/+/maintenance/1.3.x/numpy/lib/index_tricks.py
 /// This is actually inlineable as opposed to the modulo method
-pub fn unravelCode(allocator: std.mem.Allocator, node: *Graph.Vertex) std.mem.Allocator.Error![]const u8 {
+pub fn unravelCode(allocator: std.mem.Allocator, node: *const Graph.Vertex) std.mem.Allocator.Error![]const u8 {
     const ndims = node.tensor.ndims;
     const strides = node.tensor.strides;
 
@@ -46,8 +46,8 @@ pub fn unravelCode(allocator: std.mem.Allocator, node: *Graph.Vertex) std.mem.Al
 // Similar to above but with added logic for broadcasting the position between two tensors
 pub fn broadcastedUnravelCode(
     allocator: std.mem.Allocator,
-    node: *Graph.Vertex,
-    bc_node: *Graph.Vertex,
+    node: *const Graph.Vertex,
+    bc_node: *const Graph.Vertex,
 ) ![]const u8 {
     const strides = node.tensor.strides;
     const shape = node.tensor.shape;
@@ -92,6 +92,6 @@ pub fn broadcastedUnravelCode(
 }
 
 const loop_var_fmt = "d{d}";
-pub fn loopVarCode(allocator: std.mem.Allocator, loop: *Program.Loop) ![]const u8 {
+pub fn loopVarCode(allocator: std.mem.Allocator, loop: *const Program.Loop) ![]const u8 {
     return try std.fmt.allocPrint(allocator, loop_var_fmt, .{loop.dim});
 }
