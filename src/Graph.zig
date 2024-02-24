@@ -10,7 +10,11 @@ var allocator: std.mem.Allocator = undefined;
 var cache: std.AutoHashMap(usize, usize) = undefined;
 var ids: std.AutoHashMap(usize, usize) = undefined;
 var nodes: std.AutoHashMap(usize, *Vertex) = undefined;
-pub var entrypoint: ?*Vertex = null;
+pub var entry_node: ?*Vertex = null;
+
+pub fn entry() *Vertex {
+    return entry_node orelse @panic("Graph has no entrypoint. Remember to call trace() on an output tensor pointer");
+}
 
 pub fn init(backing_allocator: std.mem.Allocator) void {
     arena = std.heap.ArenaAllocator.init(backing_allocator);
@@ -286,7 +290,7 @@ pub fn vertex(ptr: anytype, edge: Edge, comptime Tensor: type) !void {
                 .strides = Tensor.strides[0..],
             },
         };
-        entrypoint = v;
+        entry_node = v;
         try nodes.put(id, v);
     }
 }
@@ -296,17 +300,16 @@ pub fn vertexOf(tensor_ptr: anytype) *Vertex {
 }
 
 pub fn viz(writer: anytype) !void {
-    std.testing.expect(entrypoint != null) catch @panic("Graph has not been created, remember to call Graph.trace() on the output tensor");
     viz_hash_table = std.AutoHashMap(usize, bool).init(allocator);
     defer {
         viz_hash_table.deinit();
         viz_hash_table = undefined;
     }
     writer.print("digraph G {{\ncompound=true;\n", .{});
-    try entrypoint.?.viz(writer);
+    try entry().viz(writer);
     // Need to print the entrypoint separately because there is no other vertex
     // calling the entrypoint's print function
-    try entrypoint.?.nodeViz(writer);
+    try entry().nodeViz(writer);
     writer.print("}}\n", .{});
 }
 
@@ -320,7 +323,7 @@ pub const Fusion = struct {
     fn fusionError(node1: *Vertex, node2: *Vertex, err: FusionError) FusionError {
         switch (err) {
             FusionError.ParentReduce => std.log.err(
-                \\
+                \\[TESSERACT ERROR]
                 \\Cannot fuse these two nodes as child depends on a parent which is the result of a reduction
                 \\
                 \\parent: {any}
@@ -329,7 +332,7 @@ pub const Fusion = struct {
                 \\
             , .{ node1, node2 }),
             FusionError.ParentInit => std.log.err(
-                \\
+                \\[TESSERACT ERROR]
                 \\Cannot fuse these two nodes as child depends on initialization of parent
                 \\
                 \\parent: {any}
@@ -338,7 +341,7 @@ pub const Fusion = struct {
                 \\
             , .{ node1, node2 }),
             FusionError.NotParentChild => std.log.err(
-                \\
+                \\[TESSERACT ERROR]
                 \\Cannot fuse these two nodes as node2 is not a child of parent node1
                 \\
                 \\node1: {any}
@@ -354,6 +357,8 @@ pub const Fusion = struct {
         switch (child.edge) {
             .InitOp => |*edge| {
                 switch (edge.op) {
+                    // Only fuse an init op if it is a constant value fill
+                    // This is trival to inline, but others may not be
                     .Full => edge.fused_init = true,
                     else => return fusionError(parent, child, FusionError.ParentInit),
                 }
@@ -376,26 +381,27 @@ pub const Fusion = struct {
                 }
             },
             .TypeOp => |*edge| {
-                if (edge.x.tensorId() == parent.tensorId()) {
-                    edge.fused_x = true;
-                } else {
+                // Fuse a TypeOp even when the previous op is a reduce op
+                // The only type op that has any loop is a cast, and that is trivial enough
+                // to warrant not needing an extra loop anyways
+                if (edge.x.tensorId() != parent.tensorId()) {
                     return fusionError(parent, child, FusionError.NotParentChild);
                 }
+                edge.fused_x = true;
             },
             inline else => |*edge| {
-                if (edge.x.tensorId() == parent.tensorId()) {
-                    if (edge.x.edge == .ReduceOp) {
-                        return fusionError(parent, child, FusionError.ParentReduce);
-                    }
-                    edge.fused_x = true;
-                } else {
+                if (edge.x.tensorId() != parent.tensorId()) {
                     return fusionError(parent, child, FusionError.NotParentChild);
                 }
+                if (edge.x.edge == .ReduceOp) {
+                    return fusionError(parent, child, FusionError.ParentReduce);
+                }
+                edge.fused_x = true;
             },
         }
     }
 
-    pub fn unfuseIfCached(node: *Vertex) void {
+    fn unfuseIfCached(node: *Vertex) void {
         switch (node.edge) {
             .InitOp => return,
             .ZipOp => |*edge| {
@@ -417,40 +423,37 @@ pub const Fusion = struct {
         }
     }
 
-    fn greedyFusion(cluster_id: usize, node: *Vertex) usize {
+    fn greedyFusionHelper(group_id: usize, node: *Vertex) FusionError!usize {
         if (node.group_id != null or node.cached) {
+            // A node can be cached in the kernel if it is being reused by 1 or more dependents
+            // Could also make this a counter to determine the number of times a tensor is reused
+            // to see if just repeatedly calculating it again is faster than reading it out of memory
             node.cached = true;
             return node.group_id.?;
         }
         switch (node.edge) {
             .MapOp => |*edge| {
-                // if (edge.fused_x) {
-                //     node.tensorId()= edge.x.id;
-                // }
-                node.group_id = greedyFusion(cluster_id, edge.x);
+                node.group_id = try greedyFusionHelper(group_id, edge.x);
                 if (edge.x.group_id == node.group_id and !node.cached) {
-                    verticalFusion(edge.x, node) catch unreachable;
+                    try verticalFusion(edge.x, node);
                 }
                 return node.group_id.?;
             },
             .ZipOp => |*edge| {
-                const b_kernel_id = greedyFusion(cluster_id, edge.a);
-                node.group_id = greedyFusion(b_kernel_id, edge.b);
+                // Greedy fusion helper returns the next group id so here it is passed from a -> b -> current
+                node.group_id = try greedyFusionHelper(try greedyFusionHelper(group_id, edge.a), edge.b);
                 if (edge.a.group_id == node.group_id) {
-                    verticalFusion(edge.a, node) catch unreachable;
+                    try verticalFusion(edge.a, node);
                 }
                 if (edge.b.group_id == node.group_id and !node.cached) {
-                    verticalFusion(edge.b, node) catch unreachable;
+                    try verticalFusion(edge.b, node);
                 }
                 return node.group_id.?;
             },
             .ReduceOp => |*edge| {
-                // if (edge.fused_x) {
-                //     node.tensorId()= edge.x.id;
-                // }
-                node.group_id = greedyFusion(cluster_id, edge.x);
+                node.group_id = try greedyFusionHelper(group_id, edge.x);
                 if (edge.x.group_id == node.group_id and !node.cached) {
-                    verticalFusion(edge.x, node) catch unreachable;
+                    try verticalFusion(edge.x, node);
                 }
                 // Increment kernel id to prevent multiple reduces from being in the same kernel
                 return node.group_id.? + 1;
@@ -459,39 +462,31 @@ pub const Fusion = struct {
                 // TypeOps can always be fused into the preceding kernel even if the typeop follows a reduce
                 // This is because it is either just index manipulation (and does not correspond to a loop)
                 // or it is a cast which can be inlined during the accumulation of a reduction
-                const group_id = greedyFusion(cluster_id, edge.x);
+                const node_group_id = try greedyFusionHelper(group_id, edge.x);
                 // Sometimes the preceding operation might be an init which can happen in global scope (not in a kernel)
                 // and it might not have a kernel id, in which case just use the returned kernel id
-                node.group_id = edge.x.group_id orelse group_id;
+                node.group_id = edge.x.group_id orelse node_group_id;
                 if (edge.x.group_id == node.group_id and !node.cached) {
-                    verticalFusion(edge.x, node) catch unreachable;
+                    try verticalFusion(edge.x, node);
                 }
-                // TODO: Regression when copying node ids from fused parent
-                // Will need to track tensor id separately
-                // switch (edge.op) {
-                //     .AsType => {},
-                //     else => {
-                //         node.tensorId()= edge.x.id;
-                //     },
-                // }
                 return node.group_id.?;
             },
             // Init will happen outisde a kernel (for now)
             .InitOp => |*edge| {
                 if (edge.op == .Full) {
-                    node.group_id = cluster_id;
+                    node.group_id = group_id;
                 }
-                return cluster_id;
+                return group_id;
             },
         }
     }
 
-    /// Traverse the graph and group nodes into clusters (kernels)
+    /// Traverse the graph and group nodes into clusters (kernels/functions)
     /// Each cluster can have at most one reduce op, but any amount of other ops
     /// The reduce op will be the last op unless it is followed by a type op
-    pub fn applyGreedyFusion() void {
-        _ = greedyFusion(0, entrypoint.?);
-        unfuseIfCached(entrypoint.?);
+    pub fn greedyFusion() !void {
+        _ = try greedyFusionHelper(0, entry());
+        unfuseIfCached(entry());
     }
 };
 
@@ -512,7 +507,7 @@ test "manual vertical fusion" {
     defer Graph.deinit();
     Graph.trace(&sm);
 
-    const t9 = Graph.entrypoint.?;
+    const t9 = Graph.entry();
     const t8 = t9.edge.ZipOp.b;
     try Fusion.verticalFusion(t8, t9);
     const t7 = t8.edge.TypeOp.x.edge.MapOp.x;

@@ -26,12 +26,10 @@ pub fn main() !void {
     };
 
     tesseract.init();
-    // Call trace on the output to build its computation graph
-    tesseract.Graph.trace(&out);
-    tesseract.Graph.Fusion.applyGreedyFusion();
-    try tesseract.Graph.viz(std.debug);
+    defer tesseract.deinit();
+    tesseract.trace(&out);
+    try tesseract.Fusion.greedyFusion();
+    try tesseract.viz(std.debug);
     std.debug.print("\n", .{});
-    const program = try tesseract.Program.fromGraph();
-    try tesseract.Program.code(program, @import("src/codegen/Zig.zig"), std.debug);
-    std.debug.print("\n{any}\n", .{program});
+    try tesseract.code(@import("src/codegen/Zig.zig"), std.debug);
 }

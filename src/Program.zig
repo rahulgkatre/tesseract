@@ -10,8 +10,9 @@ var loop_hash_table: std.AutoArrayHashMap(usize, *Loop) = undefined;
 var statement_hash_table: std.AutoArrayHashMap(*Graph.Vertex, *Statement) = undefined;
 var subprograms: std.ArrayList(*Program) = undefined;
 
+// Null group id corresponds to global scope
 group_id: ?usize = null,
-body: Body = undefined,
+body: Body,
 
 pub fn init(backing_allocator: std.mem.Allocator) void {
     arena = std.heap.ArenaAllocator.init(backing_allocator);
@@ -19,18 +20,6 @@ pub fn init(backing_allocator: std.mem.Allocator) void {
     loop_hash_table = std.AutoArrayHashMap(usize, *Loop).init(allocator);
     statement_hash_table = std.AutoArrayHashMap(*Graph.Vertex, *Statement).init(allocator);
     subprograms = std.ArrayList(*Program).init(allocator);
-}
-
-pub fn fromGraph() !*Program {
-    // TODO: A graph can have multiple groups and each group needs to correspond to a separate program
-    // A global arraylist will need to be maintained to add new programs to
-    // Similarly codegen will need to provide a top level function for generating code for multiple programs
-    // where each program corresponds to a function or a kernel
-    var p = try new();
-    const last_loop = try p.loops(Graph.entrypoint.?);
-    try p.body.contents.append(allocator, .{ .Loop = last_loop });
-    p.group_id = last_loop.node.group_id;
-    return p;
 }
 
 fn new() !*Program {
@@ -41,6 +30,22 @@ fn new() !*Program {
     return program;
 }
 
+pub fn code(comptime Generator: type, writer: anytype) !void {
+    var program = try new();
+    const last_loop = try program.loops(Graph.entry());
+    // Last loop will not get added to the program as it is the caller's responsibility to do so
+    // This is because only the caller knows if the Graph node corresponding to the loop is fused
+    // with the node corresponding to the caller
+    try program.body.contents.append(allocator, .{ .Loop = last_loop });
+    try loop_hash_table.put(last_loop.node.tensorId(), last_loop);
+    // Keep track of the group (kernel/function) that the program corresponds to
+    program.group_id = last_loop.node.group_id;
+    // Call the code generator
+    // TODO: Support for a list of programs to codegen together
+    Generator.init(allocator);
+    try Generator.code(program, writer);
+}
+
 pub fn deinit() void {
     loop_hash_table.deinit();
     loop_hash_table = undefined;
@@ -49,158 +54,154 @@ pub fn deinit() void {
     arena = undefined;
 }
 
-/// Lower the node (and any nodes fused with it)
-/// to a loop nest representation
-pub fn loops(program: *Program, v: *Graph.Vertex) !*Loop {
-    if (loop_hash_table.contains(v.tensorId())) {
-        return loop_hash_table.get(v.tensorId()).?;
+/// Lower the node to a loop nest representation
+pub fn loops(program: *Program, node: *Graph.Vertex) !*Loop {
+    if (loop_hash_table.contains(node.tensorId())) {
+        return loop_hash_table.get(node.tensorId()).?;
     }
 
-    return build_loop: {
-        var reg_loops = std.ArrayList(*Loop).init(allocator);
-        var acc_loops = std.ArrayList(*Loop).init(allocator);
-        var curr_loop = try allocator.create(Loop);
-        for (0..v.tensor.ndims) |d| {
-            curr_loop.* = .{
-                .upper_bound = switch (v.edge) {
-                    .ReduceOp => |edge| edge.x.tensor.shape[d],
-                    else => v.tensor.shape[d],
-                },
-                .node = v,
-                .dim = d,
-                .acc = switch (v.edge) {
-                    .ReduceOp => |edge| edge.dims[d],
-                    else => false,
-                },
-                .body = .{
-                    .contents = std.MultiArrayList(Body.Content){},
-                },
-                .prev = null,
-            };
-            if (curr_loop.acc) {
-                try acc_loops.append(curr_loop);
-            } else {
-                try reg_loops.append(curr_loop);
-            }
-            if (d != v.tensor.ndims - 1) {
-                const inner_loop: *Loop = try allocator.create(Loop);
-                curr_loop = inner_loop;
-            }
-        }
-
-        // Reorder loops such that accumulation happens innermost but with same dimensional order
-        const outer_loop: *Loop = reg_loops.items[0];
-        curr_loop = outer_loop;
-        for (reg_loops.items[1..]) |reg_loop| {
-            try curr_loop.body.contents.append(allocator, .{ .Loop = reg_loop });
-            curr_loop = reg_loop;
-        }
-        for (acc_loops.items) |acc_loop| {
-            try curr_loop.body.contents.append(allocator, .{ .Loop = acc_loop });
-            curr_loop = acc_loop;
-        }
-        switch (v.edge) {
-            .InitOp => {},
-            .ZipOp => |edge| {
-                var a_loop = program.loops(edge.a) catch unreachable;
-                const b_loop = program.loops(edge.b) catch unreachable;
-                if (edge.a.group_id == edge.b.group_id and edge.b.group_id == v.group_id and !edge.fused_a and !edge.fused_b) {
-                    a_loop.prev = b_loop;
-                    outer_loop.prev = a_loop;
-                    if (!loop_hash_table.contains(a_loop.node.tensorId())) {
-                        try program.body.contents.append(allocator, .{ .Loop = a_loop });
-                    }
-                    if (!loop_hash_table.contains(b_loop.node.tensorId())) {
-                        try program.body.contents.append(allocator, .{ .Loop = b_loop });
-                    }
-                } else {
-                    if (edge.a.group_id == v.group_id and !edge.fused_a) {
-                        outer_loop.prev = a_loop;
-                        if (!loop_hash_table.contains(a_loop.node.tensorId())) {
-                            try program.body.contents.append(allocator, .{ .Loop = a_loop });
-                        }
-                    } else if (edge.b.group_id == v.group_id and !edge.fused_b) {
-                        outer_loop.prev = b_loop;
-                        if (!loop_hash_table.contains(b_loop.node.tensorId())) {
-                            try program.body.contents.append(allocator, .{ .Loop = b_loop });
-                        }
-                    }
-                }
-                try loop_hash_table.put(a_loop.node.tensorId(), a_loop);
-                try loop_hash_table.put(b_loop.node.tensorId(), b_loop);
+    var reg_loops = std.ArrayList(*Loop).init(allocator);
+    var acc_loops = std.ArrayList(*Loop).init(allocator);
+    var curr_loop = try allocator.create(Loop);
+    for (0..node.tensor.ndims) |d| {
+        curr_loop.* = .{
+            .upper_bound = switch (node.edge) {
+                .ReduceOp => |edge| edge.x.tensor.shape[d],
+                else => node.tensor.shape[d],
             },
-            .TypeOp => |edge| {
-                const x_loop = program.loops(edge.x) catch unreachable;
-                switch (edge.op) {
-                    .AsType => {
-                        if (edge.x.group_id == v.group_id and !edge.fused_x) {
-                            outer_loop.prev = x_loop;
-                            if (!loop_hash_table.contains(x_loop.node.tensorId())) {
-                                try program.body.contents.append(allocator, .{ .Loop = x_loop });
-                            }
-                        }
-                    },
-                    else => {
+            .node = node,
+            .dim = d,
+            .acc = switch (node.edge) {
+                // If the op is a reduce, check if current dim is being reduced
+                .ReduceOp => |edge| edge.dims[d],
+                else => false,
+            },
+            .body = .{
+                // MultiArrayList list for body of Statements and Loops
+                .contents = std.MultiArrayList(Body.Content){},
+            },
+        };
+        // Add the loop to the correct list based on whether it is accumulating or not
+        if (curr_loop.acc) {
+            try acc_loops.append(curr_loop);
+        } else {
+            try reg_loops.append(curr_loop);
+        }
+        // Move 1 more loop into the nest
+        if (d != node.tensor.ndims - 1) {
+            const inner_loop: *Loop = try allocator.create(Loop);
+            curr_loop = inner_loop;
+        }
+    }
+    // Reorder loops such that accumulation happens innermost while preserving same dimensional order
+    const outer_loop: *Loop = reg_loops.items[0];
+    curr_loop = outer_loop;
+    for (reg_loops.items[1..]) |reg_loop| {
+        try curr_loop.body.contents.append(allocator, .{ .Loop = reg_loop });
+        curr_loop = reg_loop;
+    }
+    for (acc_loops.items) |acc_loop| {
+        try curr_loop.body.contents.append(allocator, .{ .Loop = acc_loop });
+        curr_loop = acc_loop;
+    }
+    // Recursive calls to lower the preceding loop
+    switch (node.edge) {
+        .InitOp => {},
+        .ZipOp => |edge| {
+            const a_loop = try program.loops(edge.a);
+            const b_loop = try program.loops(edge.b);
+            // Only add the preceding loop to the program if we know its statements are not fused
+            // and the node is associated with the same kernel group
+            if (edge.a.group_id == node.group_id and !edge.fused_a) {
+                if (!loop_hash_table.contains(a_loop.node.tensorId())) {
+                    try program.body.contents.append(allocator, .{ .Loop = a_loop });
+                }
+            } else if (edge.b.group_id == node.group_id and !edge.fused_b) {
+                if (!loop_hash_table.contains(b_loop.node.tensorId())) {
+                    try program.body.contents.append(allocator, .{ .Loop = b_loop });
+                }
+            }
+            try loop_hash_table.put(a_loop.node.tensorId(), a_loop);
+            try loop_hash_table.put(b_loop.node.tensorId(), b_loop);
+        },
+        .TypeOp => |edge| {
+            const x_loop = try program.loops(edge.x);
+            switch (edge.op) {
+                // Only the AsType type op corresponds to a loop action
+                // All other type ops are symbolic / logic happens in the statement itself
+                .AsType => {
+                    if (edge.x.group_id == node.group_id and !edge.fused_x) {
                         if (!loop_hash_table.contains(x_loop.node.tensorId())) {
                             try program.body.contents.append(allocator, .{ .Loop = x_loop });
                         }
-                    },
-                }
-                try loop_hash_table.put(x_loop.node.tensorId(), x_loop);
-            },
-            inline else => |edge| {
-                const x_loop = program.loops(edge.x) catch unreachable;
-                if (edge.x.group_id == v.group_id and !edge.fused_x) {
-                    outer_loop.prev = x_loop;
+                    }
+                },
+                else => {
+                    // Dont check for fusion here because the preceding loop is always necessary for the type op
                     if (!loop_hash_table.contains(x_loop.node.tensorId())) {
                         try program.body.contents.append(allocator, .{ .Loop = x_loop });
                     }
-                }
-                try loop_hash_table.put(x_loop.node.tensorId(), x_loop);
-            },
-        }
-
-        const statement: *Statement = try allocator.create(Statement);
-        statement.* = switch (v.edge) {
-            .InitOp => |edge| .{ .InitOp = .{ .op = edge.op, .out = v, .init = edge.value } },
-            .ZipOp => |edge| .{ .ZipOp = .{
-                .op = edge.op,
-                .a = edge.a,
-                .a_statement = if (edge.fused_a) statement_hash_table.get(edge.a) else null,
-                .b = edge.b,
-                .b_statement = if (edge.fused_b) statement_hash_table.get(edge.b) else null,
-                .out = v,
-            } },
-            .MapOp => |edge| .{ .MapOp = .{
-                .op = edge.op,
-                .x = edge.x,
-                .x_statement = if (edge.fused_x) statement_hash_table.get(edge.x) else null,
-                .out = v,
-            } },
-            .ReduceOp => |edge| .{ .ReduceOp = .{
-                .op = edge.op,
-                .x = edge.x,
-                .x_statement = if (edge.fused_x) statement_hash_table.get(edge.x) else null,
-                .out = v,
-            } },
-            .TypeOp => |edge| .{
-                .TypeOp = .{
-                    .op = edge.op,
-                    .x = edge.x,
-                    .x_statement = if (edge.op == .AsType) statement_hash_table.get(edge.x) else {
-                        // Escape hatch, only AsType corresponds to a statement inside a loop
-                        outer_loop.* = loop_hash_table.get(edge.x.tensorId()).?.*;
-                        return outer_loop;
-                    },
-                    .out = v,
                 },
-            },
-        };
+            }
+            try loop_hash_table.put(x_loop.node.tensorId(), x_loop);
+        },
+        // Applies to map and reduce ops
+        inline else => |edge| {
+            const x_loop = try program.loops(edge.x);
+            if (edge.x.group_id == node.group_id and !edge.fused_x) {
+                if (!loop_hash_table.contains(x_loop.node.tensorId())) {
+                    try program.body.contents.append(allocator, .{ .Loop = x_loop });
+                }
+            }
+            try loop_hash_table.put(x_loop.node.tensorId(), x_loop);
+        },
+    }
 
-        try statement_hash_table.put(v, statement);
-        try curr_loop.body.contents.append(allocator, .{ .Statement = statement });
-        break :build_loop outer_loop;
+    // Create the statement that goes in the innermost loop based on the op
+    // When fusion is happening, statements are nested inside each other
+    // TODO: Create a "Read statement" for reading a tensor rather than using null to indicate end of nesting
+    const statement: *Statement = try allocator.create(Statement);
+    statement.* = switch (node.edge) {
+        .InitOp => |edge| .{ .InitOp = .{ .op = edge.op, .out = node, .init = edge.value } },
+        .ZipOp => |edge| .{ .ZipOp = .{
+            .op = edge.op,
+            .a = edge.a,
+            .a_statement = if (edge.fused_a) statement_hash_table.get(edge.a) else null,
+            .b = edge.b,
+            .b_statement = if (edge.fused_b) statement_hash_table.get(edge.b) else null,
+            .out = node,
+        } },
+        .MapOp => |edge| .{ .MapOp = .{
+            .op = edge.op,
+            .x = edge.x,
+            .x_statement = if (edge.fused_x) statement_hash_table.get(edge.x) else null,
+            .out = node,
+        } },
+        .ReduceOp => |edge| .{ .ReduceOp = .{
+            .op = edge.op,
+            .x = edge.x,
+            .x_statement = if (edge.fused_x) statement_hash_table.get(edge.x) else null,
+            .out = node,
+        } },
+        .TypeOp => |edge| .{
+            .TypeOp = .{
+                .op = edge.op,
+                .x = edge.x,
+                .x_statement = if (edge.op == .AsType) statement_hash_table.get(edge.x) else {
+                    // Escape hatch, only AsType corresponds to a statement inside a loop
+                    // We don't want to add this loop to the program as it is essentially a no-op
+                    return loop_hash_table.get(edge.x.tensorId()).?;
+                },
+                .out = node,
+            },
+        },
     };
+    // TODO: Global statements need to be pushed to the global program
+    // This includes initializations that happen outside the loop
+    // TODO: Array declarations need to be pushed into the program body
+    try statement_hash_table.put(node, statement);
+    try curr_loop.body.contents.append(allocator, .{ .Statement = statement });
+    return outer_loop;
 }
 
 /// Statement of the form y = f(x)
@@ -249,7 +250,6 @@ pub const Loop = struct {
     dim: usize,
     acc: bool = false,
     body: Body,
-    prev: ?*Loop,
 };
 
 pub const Body = struct {
@@ -259,11 +259,6 @@ pub const Body = struct {
     };
     contents: std.MultiArrayList(Content),
 };
-
-pub fn code(program: *const Program, comptime Generator: type, writer: anytype) !void {
-    Generator.init(allocator);
-    try Generator.code(program, writer);
-}
 
 test "codegen" {
     const tensor = @import("tensor.zig");
@@ -276,17 +271,13 @@ test "codegen" {
     Graph.init(std.testing.allocator);
     defer Graph.deinit();
     Graph.trace(&out);
-    // Graph.applyGreedyFusion();
+    try Graph.Fusion.greedyFusion();
     Program.init(std.testing.allocator);
     defer Program.deinit();
-    const program = try Program.fromGraph();
-    Zig.init(std.testing.allocator);
-    defer Zig.deinit();
-
     const Logger = struct {
         pub fn print(comptime fmt: anytype, args: anytype) void {
             std.log.debug(fmt, args);
         }
     };
-    try Zig.code(program, Logger);
+    try Program.code(Zig, Logger);
 }
