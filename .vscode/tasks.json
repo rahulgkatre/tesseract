@@ -6,7 +6,7 @@
         {
             "label": "test-coverage",
             "type": "shell",
-            "command": "zig test tesseract.zig --test-cmd kcov --test-cmd --include-path=. --test-cmd --clean  --test-cmd coverage --test-cmd-bin",
+            "command": "zig test tesseract.zig --test-cmd kcov --test-cmd --include-path=src --test-cmd --clean  --test-cmd coverage --test-cmd-bin",
             "problemMatcher": [],
             "group": {
                 "kind": "test"
