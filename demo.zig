@@ -20,17 +20,18 @@ pub fn main() !void {
     //     1,
     // );
     const out = comptime blk: {
-        const a = Tensor(.f32, .{ 2, 3 }).full(2);
-        const b = Tensor(.f32, .{ 3, 4 }).full(3);
+        const a = Tensor(.f32, .{ 3, 3 }).full(2);
+        const b = Tensor(.f32, .{ 3, 3 }).input();
         break :blk a.matmul(b);
     };
 
     tesseract.init();
     // Call trace on the output to build its computation graph
-    tesseract.Graph.trace(out);
+    tesseract.Graph.trace(&out);
     tesseract.Graph.Fusion.applyGreedyFusion();
     try tesseract.Graph.viz(std.debug);
     std.debug.print("\n", .{});
     const program = try tesseract.Program.fromGraph();
     try tesseract.Program.code(program, @import("src/codegen/Zig.zig"), std.debug);
+    std.debug.print("\n{any}\n", .{program});
 }

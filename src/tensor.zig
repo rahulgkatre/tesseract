@@ -91,7 +91,18 @@ fn Tensor(
             return .{ .traceFn = traceFn };
         }
 
-        // Fill a tensor with a value
+        pub fn input() Self {
+            const traceFn = struct {
+                fn trace(self: *const Self) void {
+                    Graph.vertex(self, .{
+                        .InitOp = .{ .op = .Input, .value = .{ .Input = {} } },
+                    }, Self) catch unreachable;
+                }
+            }.trace;
+            return init(traceFn);
+        }
+
+        /// Fill a tensor with a value
         pub fn full(comptime value: anytype) Self {
             const traceFn = struct {
                 fn trace(self: *const Self) void {
@@ -102,14 +113,19 @@ fn Tensor(
             }.trace;
             return init(traceFn);
         }
+        pub fn fullLike(_: *const Self, comptime value: anytype) Self {
+            return Self.full(value);
+        }
 
+        /// Internal function to fill with range, this is not publicly exposed
+        /// as shape of range tensor must be constrained
         fn range(comptime start: comptime_int, comptime stop: comptime_int) Self {
             if (ndims > 1) {
                 @compileError("Cannot use range() on a tensor with > 1 dimensions");
             }
             const traceFn = struct {
                 fn trace(self: *const Self) void {
-                    Graph.vertex(self, .{ .InitOp = .{ .op = .Rand, .value = .{ .Rand = .{
+                    Graph.vertex(self, .{ .InitOp = .{ .op = .Range, .value = .{ .Range = .{
                         .start = std.fmt.comptimePrint("{d}", .{start}),
                         .stop = std.fmt.comptimePrint("{d}", .{stop}),
                     } } } }, Self) catch unreachable;
@@ -121,31 +137,30 @@ fn Tensor(
         pub fn rand() Self {
             const traceFn = struct {
                 fn trace(self: *const Self) void {
-                    Graph.vertex(self, .{ .InitOp = .{ .op = .Rand, .value = .{ .Rand = {} } } }, Self) catch unreachable;
+                    Graph.vertex(self, .{ .InitOp = .{ .op = .Rand, .value = .{ .Rand = dtype } } }, Self) catch unreachable;
                 }
             }.trace;
             return init(traceFn);
         }
+        pub fn randLike(_: *const Self) Self {
+            return Self.rand();
+        }
 
         /// A copy is only needed to make a non-contiguous tensor contiguous again.
-        /// The way that tensors are handled in Tesseract is that each tensor is immutable
+        /// Each tensor is immutable and operations already produce new tensors
         /// but intermediate tensors can be eliminated through optimization.
         pub fn copy(x: *const Self) InferredStrides(dtype, shape) {
             const Out = InferredStrides(dtype, shape);
-            if (!is_contiguous) {
-                const traceFn = struct {
-                    fn trace(out: *const Out) void {
-                        Graph.trace(x);
-                        Graph.vertex(out, .{ .MapOp = .{
-                            .op = .Id,
-                            .x = Graph.vertexOf(x),
-                        } }, Out) catch unreachable;
-                    }
-                }.trace;
-                return Out.init(traceFn);
-            } else {
-                @compileError("Pointless copy");
-            }
+            const traceFn = struct {
+                fn trace(out: *const Out) void {
+                    Graph.trace(x);
+                    Graph.vertex(out, .{ .MapOp = .{
+                        .op = .Copy,
+                        .x = Graph.vertexOf(x),
+                    } }, Out) catch unreachable;
+                }
+            }.trace;
+            return Out.init(traceFn);
         }
 
         fn Permute(comptime perm: [ndims]u8) type {
@@ -285,55 +300,87 @@ fn Tensor(
             }.trace;
             return Out.init(traceFn);
         }
+
         ///Apply an elementwise map operation
         pub fn map(comptime x: *const Self, comptime op: ops.MapOp) Self {
-            comptime {
-                const Out: type = @TypeOf(x.*);
-                const traceFn = struct {
-                    fn trace(out: *const Out) void {
-                        Graph.trace(x);
-                        Graph.vertex(out, .{ .MapOp = .{
-                            .op = op,
-                            .x = Graph.vertexOf(x),
-                        } }, Out) catch unreachable;
-                    }
-                }.trace;
-                return Out.init(traceFn);
-            }
+            const Out: type = @TypeOf(x.*);
+            const traceFn = struct {
+                fn trace(out: *const Out) void {
+                    Graph.trace(x);
+                    Graph.vertex(out, .{ .MapOp = .{
+                        .op = op,
+                        .x = Graph.vertexOf(x),
+                    } }, Out) catch unreachable;
+                }
+            }.trace;
+            return Out.init(traceFn);
         }
 
-        pub fn Broadcast(comptime Other: type, comptime op: ops.ZipOp) type {
-            const new_dtype = switch (op) {
-                .Equals, .LessThan => .bool,
-                else => dtype,
-            };
-            const bc_ndims = @max(ndims, Other.ndims);
+        pub fn Broadcast(comptime new_shape: anytype, comptime new_dtype: dtypes.DType) type {
+            if (std.mem.eql(usize, &shape, &new_shape)) {
+                return Self;
+            }
+            const bc_ndims = @max(ndims, new_shape.len);
             var bc_shape: [bc_ndims]usize = undefined;
             for (0..bc_ndims) |i| {
                 const dim1 = if (i >= ndims) 1 else shape[ndims - i - 1];
-                const dim2 = if (i >= Other.ndims) 1 else Other.shape[Other.ndims - i - 1];
+                const dim2 = if (i >= new_shape.len) 1 else new_shape[new_shape.len - i - 1];
                 if (dim1 != 1 and dim2 != 1 and dim1 != dim2) {
                     @compileError(comptimePrint(
                         "Cannot broadcast tensors of shapes {any} and {any}",
-                        .{ shape, Other.shape },
+                        .{ shape, new_shape },
                     ));
                 }
                 bc_shape[bc_ndims - i - 1] = if (dim1 == dim2 or dim2 == 1) dim1 else dim2;
             }
             return InferredStrides(new_dtype, bc_shape);
         }
-        /// Apply an elementwise zip (binary) operation on two arrays, with broadcasting
-        pub fn zip(comptime a: *const Self, comptime op: ops.ZipOp, comptime b: anytype) Broadcast(@TypeOf(b), op) {
-            const Out: type = Broadcast(@TypeOf(b), op);
+        pub fn expand(comptime x: *const Self, comptime new_shape: anytype) Broadcast(new_shape, dtype) {
+            const Out: type = Broadcast(new_shape, dtype);
+            if (Self == Out) {
+                return x.*;
+            }
             const traceFn = struct {
                 fn trace(out: *const Out) void {
-                    Graph.trace(a);
-                    Graph.trace(b);
+                    Graph.trace(x);
+                    Graph.vertex(out, .{
+                        .TypeOp = .{
+                            .op = .Broadcast,
+                            .x = Graph.vertexOf(x),
+                        },
+                    }, Out) catch unreachable;
+                }
+            }.trace;
+            return Out.init(traceFn);
+        }
+
+        /// Apply an elementwise zip (binary) operation on two arrays, with broadcasting
+        pub fn zip(comptime a: *const Self, comptime op: ops.ZipOp, comptime b: anytype) Broadcast(
+            b.shape,
+            switch (op) {
+                .Equals, .LessThan => .bool,
+                else => dtype,
+            },
+        ) {
+            const Out: type = Broadcast(
+                b.shape,
+                switch (op) {
+                    .Equals, .LessThan => .bool,
+                    else => dtype,
+                },
+            );
+
+            const a_expand = comptime a.expand(Out.shape);
+            const b_expand = comptime b.expand(Out.shape);
+            const traceFn = struct {
+                fn trace(out: *const Out) void {
+                    Graph.trace(&a_expand);
+                    Graph.trace(&b_expand);
                     Graph.vertex(out, .{
                         .ZipOp = .{
                             .op = op,
-                            .a = Graph.vertexOf(a),
-                            .b = Graph.vertexOf(&b),
+                            .a = Graph.vertexOf(&a_expand),
+                            .b = Graph.vertexOf(&b_expand),
                         },
                     }, Out) catch unreachable;
                 }
@@ -378,7 +425,8 @@ fn Tensor(
                 },
             }
         }
-        ///Perform a reduction across 1 or more (or all) dimensions of a tensor
+        /// Perform a reduction across 1 or more (or all) dimensions of a tensor.
+        /// Dimensions to reduce can be passed as a int for 1 dim, tuple for multiple dims, or null/void for all dims
         pub fn reduce(comptime x: *const Self, comptime op: ops.ReduceOp, comptime reduce_dims: anytype) Reduce(reduce_dims) {
             const Out: type = Reduce(reduce_dims);
             const reduction_dim_mask: [ndims]bool = switch (@typeInfo(@TypeOf(reduce_dims))) {
@@ -528,7 +576,7 @@ test "map" {
     try std.testing.expectEqual([_]usize{ 2, 3, 4 }, tensor2.shape);
     Graph.init(std.testing.allocator);
     defer Graph.deinit();
-    Graph.trace(tensor2);
+    Graph.trace(&tensor2);
     try std.testing.expect(Graph.vertexOf(&tensor2).edge.MapOp.op == .Neg);
     try std.testing.expect(Graph.vertexOf(&tensor2).edge.MapOp.x == Graph.vertexOf(&tensor1));
 }
@@ -540,10 +588,10 @@ test "zip" {
     try std.testing.expectEqual([_]usize{ 2, 3, 4 }, tensor3.shape);
     Graph.init(std.testing.allocator);
     defer Graph.deinit();
-    Graph.trace(tensor3);
+    Graph.trace(&tensor3);
     try std.testing.expect(Graph.vertexOf(&tensor3).edge.ZipOp.op == .Add);
-    try std.testing.expect(Graph.vertexOf(&tensor3).edge.ZipOp.a == Graph.vertexOf(&tensor1));
-    try std.testing.expect(Graph.vertexOf(&tensor3).edge.ZipOp.b == Graph.vertexOf(&tensor2));
+    try std.testing.expect(Graph.vertexOf(&tensor3).edge.ZipOp.a.edge.TypeOp.x == Graph.vertexOf(&tensor1));
+    try std.testing.expect(Graph.vertexOf(&tensor3).edge.ZipOp.b.edge.TypeOp.x == Graph.vertexOf(&tensor2));
 }
 
 test "reduce" {
@@ -552,7 +600,7 @@ test "reduce" {
     try std.testing.expectEqual([_]usize{ 2, 1, 4 }, tensor2.shape);
     Graph.init(std.testing.allocator);
     defer Graph.deinit();
-    Graph.trace(tensor2);
+    Graph.trace(&tensor2);
     try std.testing.expect(Graph.vertexOf(&tensor2).edge.ReduceOp.op == .Sum);
     try std.testing.expect(Graph.vertexOf(&tensor2).edge.ReduceOp.x == Graph.vertexOf(&tensor1));
     try std.testing.expectEqual(Graph.vertexOf(&tensor2).edge.ReduceOp.dims[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
@@ -564,7 +612,7 @@ test "multiple dim reduce" {
     try std.testing.expectEqual([_]usize{ 1, 1, 4 }, tensor2.shape);
     Graph.init(std.testing.allocator);
     defer Graph.deinit();
-    Graph.trace(tensor2);
+    Graph.trace(&tensor2);
     try std.testing.expect(Graph.vertexOf(&tensor2).edge.ReduceOp.op == .Sum);
     try std.testing.expect(Graph.vertexOf(&tensor2).edge.ReduceOp.x == Graph.vertexOf(&tensor1));
     try std.testing.expectEqual(Graph.vertexOf(&tensor2).edge.ReduceOp.dims[0..tensor2.ndims].*, [_]bool{ true, true, false });
@@ -577,12 +625,12 @@ test "zip reduce" {
     try std.testing.expectEqual([_]usize{ 2, 1, 4 }, tensor3.shape);
     Graph.init(std.testing.allocator);
     defer Graph.deinit();
-    Graph.trace(tensor3);
+    Graph.trace(&tensor3);
     try std.testing.expect(Graph.vertexOf(&tensor3).edge.ReduceOp.op == .Sum);
     // Anonymous intermediate tensor that stores tensor1 + tensor2
     const anon = Graph.vertexOf(&tensor3).edge.ReduceOp.x;
-    try std.testing.expect(anon.edge.ZipOp.a == Graph.vertexOf(&tensor1));
-    try std.testing.expect(anon.edge.ZipOp.b == Graph.vertexOf(&tensor2));
+    try std.testing.expect(anon.edge.ZipOp.a.edge.TypeOp.x == Graph.vertexOf(&tensor1));
+    try std.testing.expect(anon.edge.ZipOp.b.edge.TypeOp.x == Graph.vertexOf(&tensor2));
 }
 
 test "as_type" {
@@ -623,6 +671,6 @@ test "tensors from functions" {
 
     Graph.init(std.testing.allocator);
     defer Graph.deinit();
-    Graph.trace(out);
+    Graph.trace(&out);
     // Graph.viz();
 }

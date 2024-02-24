@@ -1,26 +1,31 @@
 pub const DType = enum {
-    i8,
-    i16,
-    i32,
-    i64,
-    f16,
-    f32,
-    f64,
+    u1,
     bool,
+    u8,
+    i8,
+    u16,
+    i16,
+    f16,
+    u32,
+    i32,
+    f32,
+    u64,
+    i64,
+    f64,
+    u128,
+    i128,
+    f128,
 };
 
 pub fn isFloat(t: DType) bool {
     return switch (t) {
-        .f16, .f32, .f64 => true,
+        .f16, .f32, .f64, .f128 => true,
         else => false,
     };
 }
 
 pub fn isInt(t: DType) bool {
-    return switch (t) {
-        .i8, .i16, .i32, .i64 => true,
-        else => false,
-    };
+    return !isFloat(t) and !isBool(t);
 }
 
 pub fn isBool(t: DType) bool {
@@ -32,9 +37,11 @@ pub fn isBool(t: DType) bool {
 
 pub fn bits(t: DType) u16 {
     return switch (t) {
-        .i8, .bool => 8,
-        .i16, .f16 => 16,
-        .i32, .f32 => 32,
-        .i64, .f64 => 64,
+        .u1, .bool => 1,
+        .u8, .i8 => 8,
+        .u16, .i16, .f16 => 16,
+        .u32, .i32, .f32 => 32,
+        .u64, .i64, .f64 => 64,
+        .u128, .i128, .f128 => 128,
     };
 }

@@ -18,7 +18,7 @@ pub fn deinit() void {
 }
 
 pub fn code(program: *const Program, writer: anytype) !void {
-    return try bodyCode(program.body, writer);
+    return try bodyCode(program, program.body, writer);
 }
 
 const acc_loop_header_fmt =
@@ -34,21 +34,21 @@ fn headerCode(loop: *Program.Loop, writer: anytype) std.mem.Allocator.Error!void
     const loop_var_code = try codegen.loopVarCode(allocator, loop);
     defer allocator.free(loop_var_code);
     if (loop.acc) {
-        return writer.print(acc_loop_header_fmt, .{ loop.node.tensor.id, "0", loop.upper_bound, loop_var_code });
+        return writer.print(acc_loop_header_fmt, .{ loop.node.tensorId(), "0", loop.upper_bound, loop_var_code });
     } else {
         return writer.print(reg_loop_header_fmt, .{ loop.upper_bound, loop_var_code });
     }
 }
-fn bodyCode(body: Program.Body, writer: anytype) std.mem.Allocator.Error!void {
+fn bodyCode(program: *const Program, body: Program.Body, writer: anytype) std.mem.Allocator.Error!void {
     const slice = body.contents.slice();
     for (slice.items(.tags), slice.items(.data)) |tag, data| {
         switch (tag) {
-            .Loop => try loopCode(data.Loop, writer),
-            .Statement => writer.print("{s} = {s};", .{
+            .Loop => try loopCode(program, data.Loop, writer),
+            .Statement => writer.print("{s} = {s};\n", .{
                 switch (data.Statement.*) {
-                    .ReduceOp => |reduce| try std.fmt.allocPrint(allocator, "acc{d}", .{reduce.out.id}),
+                    .ReduceOp => |reduce| try std.fmt.allocPrint(allocator, "acc{d}", .{reduce.out.tensorId()}),
                     inline else => |stmt| try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
-                        stmt.out.id,
+                        stmt.out.tensorId(),
                         try codegen.unravelCode(allocator, stmt.out),
                     }),
                 },
@@ -70,21 +70,23 @@ fn footerCode(loop: *Program.Loop, writer: anytype) !void {
     if (loop.acc) {
         const unravel_code = try codegen.unravelCode(allocator, loop.node);
         defer allocator.free(unravel_code);
-        return writer.print(acc_loop_footer_fmt, .{ loop.node.tensor.id, unravel_code, loop.node.tensor.id });
+        return writer.print(acc_loop_footer_fmt, .{ loop.node.tensorId(), unravel_code, loop.node.tensorId() });
     } else {
         return writer.print(reg_loop_footer_fmt, .{});
     }
 }
 
-fn loopCode(loop: *Program.Loop, writer: anytype) std.mem.Allocator.Error!void {
-    try headerCode(loop, writer);
-    try bodyCode(loop.body, writer);
-    try footerCode(loop, writer);
+fn loopCode(program: *const Program, loop: *Program.Loop, writer: anytype) std.mem.Allocator.Error!void {
+    if (loop.node.group_id == program.group_id) {
+        try headerCode(loop, writer);
+        try bodyCode(program, loop.body, writer);
+        try footerCode(loop, writer);
+    }
 }
 
 fn mapOpCode(op: ops.MapOp, dtype: dtypes.DType, x: []const u8) ![]const u8 {
     return try switch (op) {
-        .Id => std.fmt.allocPrint(allocator, "{s}", .{x}),
+        .Copy => std.fmt.allocPrint(allocator, "{s}", .{x}),
         .Neg => if (dtypes.isBool(dtype)) std.fmt.allocPrint(allocator, "!({s})", .{x}) else std.fmt.allocPrint(allocator, "-({s})", .{x}),
         .Log2 => std.fmt.allocPrint(allocator, "@log2({s})", .{x}),
         .Exp2 => std.fmt.allocPrint(allocator, "@exp2({s})", .{x}),
@@ -139,7 +141,7 @@ fn statementCode(statement: *const Program.Statement) std.mem.Allocator.Error![]
     switch (statement.*) {
         .MapOp => |map| {
             const inner_x = if (map.x_statement != null) try statementCode(map.x_statement.?) else try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
-                map.x.id,
+                map.x.tensorId(),
                 try codegen.unravelCode(allocator, map.x),
             });
             defer allocator.free(inner_x);
@@ -147,12 +149,12 @@ fn statementCode(statement: *const Program.Statement) std.mem.Allocator.Error![]
         },
         .ZipOp => |zip| {
             const inner_a = if (zip.a_statement != null) try statementCode(zip.a_statement.?) else try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
-                zip.a.id,
+                zip.a.tensorId(),
                 try codegen.broadcastedUnravelCode(allocator, zip.a, zip.out),
             });
             defer allocator.free(inner_a);
             const inner_b = if (zip.b_statement != null) try statementCode(zip.b_statement.?) else try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
-                zip.b.id,
+                zip.b.tensorId(),
                 try codegen.broadcastedUnravelCode(allocator, zip.b, zip.out),
             });
 
@@ -161,11 +163,11 @@ fn statementCode(statement: *const Program.Statement) std.mem.Allocator.Error![]
         },
         .ReduceOp => |reduce| {
             const inner_x = if (reduce.x_statement != null) try statementCode(reduce.x_statement.?) else try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
-                reduce.x.id,
+                reduce.x.tensorId(),
                 try codegen.unravelCode(allocator, reduce.x),
             });
             defer allocator.free(inner_x);
-            return try reduceOpCode(reduce.op, inner_x, reduce.out.id);
+            return try reduceOpCode(reduce.op, inner_x, reduce.out.tensorId());
         },
         .InitOp => |initialize| {
             if (initialize.op != .Input) {
@@ -173,16 +175,16 @@ fn statementCode(statement: *const Program.Statement) std.mem.Allocator.Error![]
                     .Full => |value| try std.fmt.allocPrint(allocator, "{s}", .{value}),
                     .Range => |range| try std.fmt.allocPrint(allocator, "{s}+d0", .{range.start}),
                     .Rand => |dtype| try std.fmt.allocPrint(allocator, "std.rand.random.floatNorm({s})", .{@tagName(dtype)}),
-                    else => "",
+                    else => unreachable,
                 };
             } else {
-                unreachable;
+                return "";
             }
         },
         .TypeOp => |typing| {
             if (typing.op == .AsType) {
                 const inner_x = if (typing.x_statement != null) try statementCode(typing.x_statement.?) else try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
-                    typing.x.id,
+                    typing.x.tensorId(),
                     try codegen.unravelCode(allocator, typing.x),
                 });
                 defer allocator.free(inner_x);
