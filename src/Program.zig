@@ -132,17 +132,15 @@ pub fn loops(program: *Program, node: *Graph.Vertex) !*Loop {
                 // Only the AsType type op corresponds to a loop action
                 // All other type ops are symbolic / logic happens in the statement itself
                 .AsType => {
-                    if (edge.x.group_id == node.group_id and !edge.fused_x) {
+                    if (edge.x.group_id == node.group_id) {
                         if (!loop_hash_table.contains(x_loop.node.tensorId())) {
                             try program.body.contents.append(allocator, .{ .Loop = x_loop });
                         }
                     }
                 },
                 else => {
-                    // Dont check for fusion here because the preceding loop is always necessary for the type op
-                    if (!loop_hash_table.contains(x_loop.node.tensorId())) {
-                        try program.body.contents.append(allocator, .{ .Loop = x_loop });
-                    }
+                    // Don't add the loop to the program because the next loop will automatically
+                    // pass through the statement from this loop.
                 },
             }
             try loop_hash_table.put(x_loop.node.tensorId(), x_loop);
@@ -189,21 +187,20 @@ pub fn loops(program: *Program, node: *Graph.Vertex) !*Loop {
             .TypeOp = .{
                 .op = edge.op,
                 .x = edge.x,
-                .x_statement = if (edge.op == .AsType) statement_hash_table.get(edge.x) else {
-                    // Escape hatch, only AsType corresponds to a statement inside a loop
-                    // We don't want to add this loop to the program as it is essentially a no-op
-                    return loop_hash_table.get(edge.x.tensorId()).?;
-                },
+                .x_statement = statement_hash_table.get(edge.x),
                 .out = node,
             },
         },
     };
+    try statement_hash_table.putNoClobber(node, statement);
+    try curr_loop.body.contents.append(allocator, .{ .Statement = statement });
+    return switch (node.edge) {
+        .TypeOp => |edge| loop_hash_table.get(edge.x.tensorId()).?,
+        inline else => outer_loop,
+    };
     // TODO: Global statements need to be pushed to the global program
     // This includes initializations that happen outside the loop
     // TODO: Array declarations need to be pushed into the program body
-    try statement_hash_table.put(node, statement);
-    try curr_loop.body.contents.append(allocator, .{ .Statement = statement });
-    return outer_loop;
 }
 
 /// Statement of the form y = f(x)
@@ -261,25 +258,3 @@ pub const Body = struct {
     };
     contents: std.MultiArrayList(Content),
 };
-
-test "codegen" {
-    const tensor = @import("tensor.zig");
-    const Zig = @import("codegen/Zig.zig");
-    const out = comptime blk: {
-        const a = tensor.InferredStrides(.f32, .{ 1024, 2048 }).full(2);
-        const b = tensor.InferredStrides(.f32, .{ 2048, 4096 }).full(3);
-        break :blk a.matmul(b);
-    };
-    Graph.init(std.testing.allocator);
-    defer Graph.deinit();
-    Graph.trace(&out);
-    try Graph.Fusion.greedyFusion();
-    Program.init(std.testing.allocator);
-    defer Program.deinit();
-    const Logger = struct {
-        pub fn print(comptime fmt: anytype, args: anytype) void {
-            std.log.debug(fmt, args);
-        }
-    };
-    try Program.code(Zig, Logger);
-}

@@ -324,7 +324,7 @@ fn Tensor(
             var bc_shape: [bc_ndims]usize = undefined;
             for (0..bc_ndims) |i| {
                 const dim1 = if (i >= ndims) 1 else shape[ndims - i - 1];
-                const dim2 = if (i >= new_shape.len) 1 else new_shape[new_shape.len - i - 1];
+                const dim2 = if (i >= new_shape.len) 1 else new_shape[new_shape.len - i - 1]; // orelse dim1;
                 if (dim1 != 1 and dim2 != 1 and dim1 != dim2) {
                     @compileError(comptimePrint(
                         "Cannot broadcast tensors of shapes {any} and {any}",
