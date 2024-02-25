@@ -94,11 +94,13 @@ pub fn loops(program: *Program, node: *Graph.Vertex) !*Loop {
         }
     }
     // Reorder loops such that accumulation happens innermost while preserving same dimensional order
-    const outer_loop: *Loop = reg_loops.items[0];
+    const outer_loop: *Loop = if (reg_loops.items.len > 0) reg_loops.items[0] else acc_loops.items[0];
     curr_loop = outer_loop;
-    for (reg_loops.items[1..]) |reg_loop| {
-        try curr_loop.body.contents.append(allocator, .{ .Loop = reg_loop });
-        curr_loop = reg_loop;
+    if (reg_loops.items.len > 1) {
+        for (reg_loops.items[1..]) |reg_loop| {
+            try curr_loop.body.contents.append(allocator, .{ .Loop = reg_loop });
+            curr_loop = reg_loop;
+        }
     }
     for (acc_loops.items) |acc_loop| {
         try curr_loop.body.contents.append(allocator, .{ .Loop = acc_loop });

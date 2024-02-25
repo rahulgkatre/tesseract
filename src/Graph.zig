@@ -10,6 +10,7 @@ var allocator: std.mem.Allocator = undefined;
 var cache: std.AutoHashMap(usize, usize) = undefined;
 var ids: std.AutoHashMap(usize, usize) = undefined;
 var nodes: std.AutoHashMap(usize, *Vertex) = undefined;
+var reduction_groups: std.AutoHashMap(usize, bool) = undefined;
 pub var entry_node: ?*Vertex = null;
 
 pub fn entry() *Vertex {
@@ -22,6 +23,7 @@ pub fn init(backing_allocator: std.mem.Allocator) void {
     cache = std.AutoHashMap(usize, usize).init(allocator);
     ids = std.AutoHashMap(usize, usize).init(allocator);
     nodes = std.AutoHashMap(usize, *Vertex).init(allocator);
+    reduction_groups = std.AutoHashMap(usize, bool).init(allocator);
 }
 
 pub fn deinit() void {
@@ -320,6 +322,13 @@ pub const Fusion = struct {
         NotParentChild,
     };
 
+    fn groupContainsReduction(group_id: ?usize) bool {
+        if (group_id == null) {
+            return false;
+        }
+        return reduction_groups.get(group_id.?) orelse false;
+    }
+
     fn fusionError(node1: *Vertex, node2: *Vertex, err: FusionError) FusionError {
         switch (err) {
             FusionError.ParentReduce => std.log.err(
@@ -368,13 +377,13 @@ pub const Fusion = struct {
                     return fusionError(parent, child, FusionError.NotParentChild);
                 }
                 if (edge.a.tensorId() == parent.tensorId()) {
-                    if (edge.a.edge == .ReduceOp) {
+                    if (edge.a.edge == .ReduceOp or groupContainsReduction(parent.group_id)) {
                         return fusionError(parent, child, FusionError.ParentReduce);
                     }
                     edge.fused_a = true;
                 }
                 if (edge.b.tensorId() == parent.tensorId()) {
-                    if (edge.b.edge == .ReduceOp) {
+                    if (edge.b.edge == .ReduceOp or groupContainsReduction(parent.group_id)) {
                         return fusionError(parent, child, FusionError.ParentReduce);
                     }
                     edge.fused_b = true;
@@ -393,7 +402,7 @@ pub const Fusion = struct {
                 if (edge.x.tensorId() != parent.tensorId()) {
                     return fusionError(parent, child, FusionError.NotParentChild);
                 }
-                if (edge.x.edge == .ReduceOp) {
+                if (edge.x.edge == .ReduceOp or groupContainsReduction(parent.group_id)) {
                     return fusionError(parent, child, FusionError.ParentReduce);
                 }
                 edge.fused_x = true;
@@ -433,9 +442,11 @@ pub const Fusion = struct {
         }
         switch (node.edge) {
             .MapOp => |*edge| {
-                node.group_id = try greedyFusionHelper(group_id, edge.x);
+                node.group_id = greedyFusionHelper(group_id, edge.x) catch return group_id;
                 if (edge.x.group_id == node.group_id and !node.cached) {
-                    try verticalFusion(edge.x, node);
+                    verticalFusion(edge.x, node) catch {
+                        node.group_id = node.group_id.? + 1;
+                    };
                 }
                 return node.group_id.?;
             },
@@ -443,17 +454,24 @@ pub const Fusion = struct {
                 // Greedy fusion helper returns the next group id so here it is passed from a -> b -> current
                 node.group_id = try greedyFusionHelper(try greedyFusionHelper(group_id, edge.a), edge.b);
                 if (edge.a.group_id == node.group_id) {
-                    try verticalFusion(edge.a, node);
+                    verticalFusion(edge.a, node) catch {
+                        node.group_id = node.group_id.? + 1;
+                    };
                 }
                 if (edge.b.group_id == node.group_id and !node.cached) {
-                    try verticalFusion(edge.b, node);
+                    verticalFusion(edge.b, node) catch {
+                        node.group_id = node.group_id.? + 1;
+                    };
                 }
                 return node.group_id.?;
             },
             .ReduceOp => |*edge| {
                 node.group_id = try greedyFusionHelper(group_id, edge.x);
                 if (edge.x.group_id == node.group_id and !node.cached) {
-                    try verticalFusion(edge.x, node);
+                    verticalFusion(edge.x, node) catch {
+                        node.group_id = node.group_id.? + 1;
+                    };
+                    reduction_groups.put(node.group_id.?, true) catch unreachable;
                 }
                 // Increment kernel id to prevent multiple reduces from being in the same kernel
                 return node.group_id.? + 1;

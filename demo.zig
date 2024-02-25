@@ -20,9 +20,9 @@ pub fn main() !void {
     //     1,
     // );
     const out = comptime blk: {
-        const a = Tensor(.f32, .{ 3, 3 }).full(2);
-        const b = Tensor(.f32, .{ 3, 3 }).input();
-        break :blk a.matmul(b);
+        const a = Tensor(.f32, .{ 2, 3 }).full(2);
+        const b = Tensor(.f32, .{ 3, 16 }).input();
+        break :blk softmax(a.matmul(b), 1);
     };
 
     tesseract.init();
