@@ -1,114 +1,82 @@
-const ops = @import("ops.zig");
 const tensor = @import("tensor.zig");
 
-// Higher order functions
-pub inline fn map(x_ptr: anytype, op: ops.MapOp) @TypeOf(x_ptr.*) {
-    return x_ptr.backend.map(op, x_ptr);
+// MapOps
+pub fn exp2(comptime x: anytype) @TypeOf(x.*) {
+    return x.map(.Exp2);
+}
+pub fn log2(comptime x: anytype) @TypeOf(x.*) {
+    return x.map(.Log2);
+}
+pub fn neg(comptime x: anytype) @TypeOf(x.*) {
+    return x.map(.Neg);
+}
+pub fn recip(comptime x: anytype) @TypeOf(x.*) {
+    return x.map(.Recip);
+}
+pub fn sin(comptime x: anytype) @TypeOf(x.*) {
+    return x.map(.Sin);
+}
+pub fn sqrt(comptime x: anytype) @TypeOf(x.*) {
+    return x.map(.Sqrt);
 }
 
-pub inline fn zip(a_ptr: anytype, op: ops.ZipOp, b_ptr: anytype) @TypeOf(a_ptr.*).Broadcast(@TypeOf(b_ptr.*)) {
-    return a_ptr.backend.zip(op, a_ptr, b_ptr);
+// ZipOps
+pub fn add(comptime a: anytype, comptime b: anytype) @TypeOf(a.zip(.Add, b)) {
+    return a.zip(.Add, b);
+}
+pub fn mul(comptime a: anytype, comptime b: anytype) @TypeOf(a.zip(.Mul, b)) {
+    return a.zip(.Mul, b);
+}
+pub fn maximum(comptime a: anytype, comptime b: anytype) @TypeOf(a.zip(.Maximum, b)) {
+    return a.zip(.Maximum, b);
+}
+pub fn mod(comptime a: anytype, comptime b: anytype) @TypeOf(a.zip(.Mod, b)) {
+    return a.zip(.Mod, b);
+}
+pub fn less_than(comptime a: anytype, comptime b: anytype) @TypeOf(a.zip(.LessThan, b)) {
+    return a.zip(.LessThan, b);
+}
+pub fn equals(comptime a: anytype, comptime b: anytype) @TypeOf(a.zip(.Equals, b)) {
+    return a.zip(.Equals, b);
+}
+pub fn xor(comptime a: anytype, comptime b: anytype) @TypeOf(a.zip(.Xor, b)) {
+    return a.zip(.Xor, b);
 }
 
-pub inline fn reduce(x_ptr: anytype, op: ops.ReduceOp, comptime dim: ?u8) @TypeOf(x_ptr.*).Reduce(dim) {
-    return x_ptr.backend.reduce(op, x_ptr, dim);
+// ReduceOps
+pub fn sum(comptime x: anytype, comptime reduce_dims: anytype) @TypeOf(x.*).Reduce(reduce_dims) {
+    return x.reduce(.Sum, reduce_dims);
+}
+pub fn max(comptime x: anytype, comptime reduce_dims: anytype) @TypeOf(x.*).Reduce(reduce_dims) {
+    return x.reduce(.Max, reduce_dims);
 }
 
-fn FuncType(comptime op: ops.Op) type {
-    return @TypeOf(switch (op) {
-        .MapOp => struct {
-            inline fn mapFn(self: anytype) @TypeOf(self.*) {
-                unreachable;
-            }
-        }.mapFn,
-        .ZipOp => struct {
-            inline fn zipFn(self: anytype, other: anytype) @TypeOf(self.*).Broadcast(@TypeOf(other)) {
-                unreachable;
-            }
-        }.zipFn,
-        .ReduceOp => struct {
-            inline fn reduceFn(self: anytype, comptime dim: ?u8) @TypeOf(self.*).Reduce(dim) {
-                unreachable;
-            }
-        }.reduceFn,
-    });
+// Compound functions that use the ops
+pub fn exp(comptime x: anytype) @TypeOf(x.*) {
+    // 1 / ln(2) = 1.44269504089
+    // e^x = 2^(x / ln(2))
+    const recip_ln2 = tensor.constant(@TypeOf(x.*).dtype, 1.44269504089);
+    return x.mul(recip_ln2).exp2();
+}
+pub fn log(comptime x: anytype) @TypeOf(x.*) {
+    // ln(2) = 0.69314718056
+    // ln(x) = log2(x)ln(2)
+    const ln2 = tensor.constant(@TypeOf(x.*).dtype, 0.69314718056);
+    return x.log2().mul(ln2);
+}
+pub fn div(comptime a: anytype, comptime b: anytype) @TypeOf(a.mul(b.recip())) {
+    return a.mul(b.recip());
+}
+pub fn sub(comptime a: anytype, comptime b: anytype) @TypeOf(a.add(b.neg())) {
+    return a.add(b.neg());
 }
 
-inline fn Func(comptime op: ops.Op) FuncType(op) {
-    return switch (op) {
-        .MapOp => struct {
-            inline fn f(self: anytype) @TypeOf(self.*) {
-                return map(self, op.MapOp);
-            }
-        },
-        .ZipOp => struct {
-            inline fn f(self: anytype, other: anytype) @TypeOf(self.*).Broadcast(@TypeOf(other)) {
-                return zip(self, op.ZipOp, @constCast(&other));
-            }
-        },
-        .ReduceOp => struct {
-            inline fn f(self: anytype, comptime dim: ?u8) @TypeOf(self.*).Reduce(dim) {
-                return reduce(self, op.ReduceOp, dim);
-            }
-        },
-    }.f;
-}
-
-// KEEPING THIS HERE FOR NOW
-// Pre-defined User Functions
-inline fn mapZipFunc(comptime map_op: ops.MapOp, comptime zip_op: ops.ZipOp) FuncType(.{ .ZipOp = zip_op }) {
-    return struct {
-        inline fn f(a_ptr: anytype, b: anytype) @TypeOf(a_ptr.*).Broadcast(@TypeOf(b)) {
-            return zip(@constCast(&map(a_ptr, map_op)), zip_op, b);
-        }
-    }.f;
-}
-
-inline fn zipMapFunc(comptime map_op: ops.MapOp, comptime zip_op: ops.ZipOp) FuncType(.{ .MapOp = map_op }) {
-    return struct {
-        inline fn f(a_ptr: anytype, b: anytype) @TypeOf(a_ptr.*).Broadcast(@TypeOf(b)) {
-            return map(@constCast(&zip(a_ptr, zip_op, b)), map_op);
-        }
-    }.f;
-}
-
-inline fn composeFunc(comptime map_op_f: ops.MapOp, comptime map_op_g: ops.MapOp) FuncType(.{ .MapOp = map_op_f }) {
-    return struct {
-        inline fn f(a_ptr: anytype) @TypeOf(a_ptr.*) {
-            return map(@constCast(&map(a_ptr, map_op_g)), map_op_f);
-        }
-    }.f;
-}
-
-// This is where all the actual functions of a tensor are
-// TODO: Make each of these functions differentiable
-
-pub const exp2 = Func(.{ .MapOp = .Exp2 });
-pub const log2 = Func(.{ .MapOp = .Log2 });
-
-pub inline fn exp(self: anytype) @TypeOf(self.*) {
-    // 1 / log(2) = 1.44269504089
-    // e^x = 2^(x / log(2))
-    return self.mul(tensor.constant(self.backend, @TypeOf(self.*).dtype, 1.44269504089)).exp2();
-}
-
-pub inline fn ln(comptime self: anytype) @TypeOf(self.*) {
-    // log(2) = 0.69314718056
-    // log(x) = log2(x)log(2)
-    return self.log2().mul(tensor.constant(self.backend, self.dtype, 0.69314718056));
-}
-
-pub const neg = Func(.{ .MapOp = .Neg });
-pub const add = Func(.{ .ZipOp = .Add });
-pub const mul = Func(.{ .ZipOp = .Mul });
-pub const sum = Func(.{ .ReduceOp = .Sum });
-pub const max = Func(.{ .ReduceOp = .Max });
-pub const recip = Func(.{ .MapOp = .Recip });
-
-pub inline fn div(self: anytype, other: anytype) @TypeOf(self.*).Broadcast(@TypeOf(other)) {
-    return self.mul(other.recip());
-}
-
-pub inline fn sub(self: anytype, other: anytype) @TypeOf(self.*).Broadcast(@TypeOf(other)) {
-    return self.add(other.neg());
+pub fn matmul(comptime a: anytype, comptime b: anytype) @TypeOf(a.*).MatMul(@TypeOf(b)) {
+    const a_mul_b = a
+        .unsqueeze(a.ndims - 1)
+        .mul(b.transpose(b.ndims - 2, b.ndims - 1).copy().unsqueeze(b.ndims - 2));
+    const acc = a_mul_b
+        .sum(a_mul_b.ndims - 1)
+        .squeeze(a_mul_b.ndims - 1);
+    return acc;
 }

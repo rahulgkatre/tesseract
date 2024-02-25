@@ -1,0 +1,6 @@
+{
+    "coverage-gutters.coverageFileNames": [
+        "./coverage/test.*/cov.xml",
+        "./coverage/test.*/cobertura.xml",
+    ],
+}

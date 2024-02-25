@@ -1,132 +1,69 @@
 # Tesseract
 
-A tensor library written in Zig that features compile time verification of all tensor operations and soon, compute graph optimization. The goal is to be able to run differentiable tensor operations on a variety of processors/accelerators (through compiling with LLVM or through codegen), and to power a deep learning framework. 
+Tesseract is a tensor library written in Zig. Its defining feature is that it can verify the validity of tensor operations (broadcasting, matrix multiplciation) at compile time, and generated optimized code using ahead-of-time knowledge of tensor shapes. Zig was chosen specifically for this purpose due to its compile time type functions, which Tesseract makes heavy use of to reason about the shapes and strides of tensors at compile time to provide memory safety and compile time checks. 
+
+Tesseract is somewhere between an n-dimensional array library like NumPy, ArrayFire, PyTorch, Tinygrad, etc. and an array processing domain-specific language (DSL) like Halide, TVM, Tiramisu, etc. which has an optimizing compiler. Tesseract code does not get executed, but is instead lowered to 2 intermediate representations, and a final source / IR file that gets compiled. 
+
+Generated code comes in the form of a library (.so) follows the C ABI in order to be called from any language, enhancing the ability to incorporate Tesseract code into existing codebases that use other languages via FFI / C interfaces. The end goal of Tesseract is to run differentiable tensor operations on a variety of processors/accelerators and to power a high performance deep learning framework.
 
 ## Core Principles
 
-### Do as much as possible at compile time
+### Verification During Compilation
 
-- Take advantage of Zig's compile time evaluation to evaluate tensor operations
-- Verify that all shapes and dtypes for inputs/outputs are valid using Zig's type system and generics
-- Errors involving broadcasting between two tensors will no longer exist at runtime
+- Trace all operations to build the computation graph
+- Verify that all shapes and dtypes for inputs/outputs are valid
+- Invalid operations will fail to compile (and provide nice error messages)
 
-### Laziness
+### Aggressive Optimization
 
-- Tensors are lazy, no data is allocated or operated on until requested
-- This builds on the side effects of compile time evaluation, as data does not exist at compile time
-- The operations still "run" (in compile time) to produce output tensor metadata
-- A function can be called on the output tensor to evaluate the compute graph
+- Avoid heap allocation entirely (array sizes are predetermined)
+- Minimize usage of slower memory, automatically inline
+- Optimize loops for parallelism and locality
 
-### Efficiency
-- Avoid heap allocation as much as possible, and use compile time evaluation to predetermine memory requirements
-- The compute graph will be static and storage for batches of training data can be allocated once. 
-- Fuse operations to reduce memory bandwidth requirements during inference
-
-### Acceleration
-- Interface with high performance hardware by compiling Zig code or through codegen
-- Direct compilation depends heavily on the Zig language's support through LLVM
-- Codegen will emit code that will be compiled by an external compiler and run on the device
-
-### Run anywhere
-- No dependencies required, unless targeting a specific accelerator
-- The library ships with a Zig backend for tensor operations that only uses builtins
-- If Zig can compile for a device, code written with this library can run on it
-
-## Structure
-
-The library consists of a few prevailing structures: ops, backends, storage, and tensors.
-
-### Ops 
-- Enums for unary (map), binary (zip), reduce ops, and others
-- Defines the core set of operations that any backend must implement
-- To make it easy to write a backend, the number of ops is kept small
-- Each op maps to a function defined by each backend to actually perform the computation
-
-### Backends 
-- Provide implementations of ops, and higher level functions that are composed of multiple ops
-- Use device specific APIs to provide an interface for managing memory (allocation, freeing)
-- The implementations of ops will directly manipulate data in the storage
-
-For example, when writing a CUDA backend, the ops might be implemented as CUDA kernels that manipulate data in the CUDA device's memory. 
-
-### Storage
-- A reserved section of memory that contains the data for a tensor in a 1D format
-- Highly coupled to a single backend, each backend must provide a Storage implementation
-- Storage does not exist at compile time, as no memory can be allocated during compile time evaluation
-
-### Tensor / TensorView
-- Generic type defined by the element type, shape, and strides
-- Contains a backend and the backend's associated storage 
-- Provides a multidimensional view into the 1 dimensional storage using shape and strides
-- Contains functions to perform operations using the backend
-- Makes up the computation graph defined by input tensor(s) and the op applied to them
-
-## Demo
-
-A demo of the library can be found in `demo.zig`. In general to use the library your code would look something like this:
-
-```zig
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const Tensor = @import("src/tensor.zig").Tensor;
-const Backend = @import("src/backend.zig").Backend;
-
-pub fn main() !void {
-    // All tensor code must be in comptime
-    const out = comptime blk: {
-        const x1 = fn1();
-        const x2 = fn2(x1);
-        break :blk x2;
-    };
-
-    // Use comptime on the graph call to see the compute graph
-    // comptime out.graph();
-
-    // Print the tensors created during compile time, which now exist at runtime
-    // as they have memory addresses
-    out.graph();
-
-    // Initialize the backend which will allow for allocation of tensor storage
-    TestBackend.runtime(.{});
-    defer TestBackend.finished();
-
-    // Print the storage to show the data
-    const eval_out = out.eval();
-    std.debug.print("\n{any}\n", .{eval_out.storage});
-}
-```
+### Minimal Dependencies, Fast Compilation
+- Minimize dependencies by using only Zig compiler (including self-hosted)
+- Access other compilers via C API or build commands
+- Small codebase for better maintainability
+- Use codegen or compiler APIs to generate device specific code
+- Keep compile times low so that external JIT compilation is fast
 
 ## Roadmap
 
-### First Milestone
+### MVP Feature Checklist
 
-- [x] Compile time verification of shapes and strides
-    - [x] Contiguousness of strides is checked
-    - [x] Check if a broadcast between two arrays of different shapes are valid
-    - [x] Reducing a tensor along a dim yields a new tensor type where the reduce dim is now 1
-    - [x] Operations for reshaping, permuting, flattening, etc. a tensor
-- [x] Building the compute graph at compile time
-    - [x] When a function is called, the output tensor receives a closure to evaluate itself
-    - [x] The recursive traversal (calling of input evaluate functions) can happen at compile time
-    - [ ] Automated fusion of operators to reduce memory bandwidth requirements
-- [x] Using the compute graph to perform computations on tensors
-    - [x] Implementations of ops for the Zig backend
-    - [ ] Implement matrix multiplication (GEMM)
-    - [ ] Use SIMD via @Vector and multithreading as needed to accelerate the Zig backend
-- [ ] Backpropagation and calculatation of gradients
-- [ ] Model definition, traning, and inference and purely using this library
-    - [ ] Implementations of gradient descent based optimizers
-    - [ ] Convolutional neural network for the MNIST dataset
+- Compile time shapes/strides
+    - [x] Broadcasting, reduction
+    - [x] Reshaping, re-striding
+    - [x] Matrix multiplication
+    - [ ] Convolution
+    - [ ] Symbolic shapes and strides
+- Computation graph 
+    - [x] Building up the compute graph
+    - [x] Generating code to evaluate the compute graph
+    - [ ] Automatic differentiation, backwards compute graph
+- Optimization passes
+    - [x] Fusing of map, zip, reduce ops where possible and optimal
+    - [ ] Polyhedral analysis and optimization of nested loops
+    - [ ] Automatic parallelization with OpenMP for CPU and GPU groups, blocks, warps
+    - [ ] Applying machine learning to learn a heuristic for optimization
 
 ### Future Goals
- 
-- Python interface
-    - Use JIT compilation to take advantage of type guards in this library
-    - Use Python buffer protocol to load and unload data
-    - Support existing deep learning codebases and pipelines 
-- Support existing neural network formats like ONNX, PyTorch
-    - Make it easy to import models and weights 
-- Support for accelerator frameworks like CUDA, Metal, WebGPU, etc.
+
+- Support for accelerator frameworks like CUDA, HIP/ROCm, Metal, WebGPU, etc.
     - Use codegen or LLVM targets to generate device specific code
-- Support for other deep learning compiler IRs like StableHLO, Triton-IR
+    - Target as many platform specific instructions/functions as possible (e.g. fused mul add)
+- Support for other deep learning compiler IRs like StableHLO, MLIR, Triton-IR
     - Take advantage of optimizations implemented by teams developing XLA, etc.
+    - Be able to run Tesseract on closed-source hardware (e.g. TPU)
+- Python/C interface
+    - Use JIT compilation to take advantage of type guards in this library
+    - Load and unload data from NumPy / C arrays
+    - Support existing deep learning codebases and pipelines like OpenCV
+- Nerual network library
+    - Module architecture
+    - Drop-in replacement for PyTorch (the nn namespace)
+    - Support existing neural network formats like ONNX, PyTorch
+    - Convert files to Tesseract tensor definitions
+- Distributed computing
+    - Multiple GPUs
+    - Multiple computers with multiple GPUs

@@ -1,36 +1,7 @@
 const std = @import("std");
 const comptimePrint = std.fmt.comptimePrint;
 
-pub fn storageSizeForTensor(comptime ndims: u8, shape: [ndims]usize, strides: [ndims + 1]usize) usize {
-    // The storage size is 1 + last index calculated by the strides and shape
-    // shape[d] - 1 is the last index in dimension d
-    // Also incorporate the storage offset
-    var size: usize = strides[ndims] + 1;
-    for (0..ndims) |d| {
-        size += (shape[d] - 1) * strides[d];
-    }
-    // The result is the size of the storage needed to visit all indices of the tensor
-    return size;
-}
-pub fn stridesFromShape(shape: anytype) [shape.len + 1]usize {
-    const ndims = shape.len;
-    var offset: usize = 1;
-    var strides: [ndims + 1]usize = undefined;
-    for (0..ndims - 1) |d| {
-        const stride = shape[ndims - d - 1] * offset;
-        strides[ndims - d - 2] = stride;
-        offset = stride;
-    }
-    strides[ndims - 1] = 1;
-    strides[ndims] = 0;
-    for (0..ndims) |d| {
-        if (shape[d] == 0 or shape[d] == 1) {
-            strides[d] = 0;
-        }
-    }
-    return strides;
-}
-pub fn permuteArray(comptime len: u8, array: [len]usize, perm: [len]u8) [len]usize {
+pub fn arrayPermute(comptime len: u8, array: [len]usize, perm: [len]u8) [len]usize {
     var used: [len]bool = [_]bool{false} ** len;
     for (perm) |p| {
         if (p < len and !used[p]) {
@@ -60,13 +31,34 @@ pub fn permuteArray(comptime len: u8, array: [len]usize, perm: [len]u8) [len]usi
     }
     return new_array;
 }
-pub fn isContiguous(comptime ndims: u8, strides: [ndims + 1]usize) bool {
-    var prev = strides[0];
-    for (strides[1..ndims]) |s| {
-        if (s > prev and s > 0) {
-            return false;
-        }
-        prev = s;
+
+pub fn arrayInsert(comptime len: u8, array: [len]usize, index: usize, val: usize) [len + 1]usize {
+    var new_array: [len + 1]usize = undefined;
+    for (0..index) |i| {
+        new_array[i] = array[i];
     }
-    return true;
+    new_array[index] = val;
+    for (index..len) |i| {
+        new_array[i + 1] = array[i];
+    }
+    return new_array;
+}
+
+pub fn arrayDelete(comptime len: u8, array: [len]usize, index: usize) [len - 1]usize {
+    var new_array: [len - 1]usize = undefined;
+    for (0..index) |i| {
+        new_array[i] = array[i];
+    }
+    for (index + 1..len) |i| {
+        new_array[i - 1] = array[i];
+    }
+    return new_array;
+}
+
+pub fn ravelMultiIndex(comptime ndims: u8, strides: [ndims + 1]usize, multi_idx: [ndims]usize) usize {
+    var flat_idx = strides[ndims];
+    for (0..ndims) |d| {
+        flat_idx += multi_idx[d] * strides[d];
+    }
+    return flat_idx;
 }
