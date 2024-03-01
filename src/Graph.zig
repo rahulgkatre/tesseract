@@ -8,11 +8,11 @@ const dtypes = @import("dtypes.zig");
 var arena: std.heap.ArenaAllocator = undefined;
 var allocator: std.mem.Allocator = undefined;
 var ids: std.AutoArrayHashMap(usize, usize) = undefined;
-var nodes: std.AutoHashMap(usize, *Vertex) = undefined;
+var nodes: std.AutoHashMap(usize, *VirtualTensorNode) = undefined;
 var reduction_groups: std.AutoHashMap(usize, bool) = undefined;
-var entry_node: ?*Vertex = null;
+var entry_node: ?*VirtualTensorNode = null;
 
-pub fn entry() *Vertex {
+pub fn entry() *VirtualTensorNode {
     return entry_node orelse @panic("Graph has no entrypoint. Remember to call trace() on an output tensor pointer");
 }
 
@@ -20,7 +20,7 @@ pub fn init(backing_allocator: std.mem.Allocator) void {
     arena = std.heap.ArenaAllocator.init(backing_allocator);
     allocator = arena.allocator();
     ids = std.AutoArrayHashMap(usize, usize).init(allocator);
-    nodes = std.AutoHashMap(usize, *Vertex).init(allocator);
+    nodes = std.AutoHashMap(usize, *VirtualTensorNode).init(allocator);
     reduction_groups = std.AutoHashMap(usize, bool).init(allocator);
 }
 
@@ -38,45 +38,63 @@ pub fn trace(tensor_ptr: anytype) void {
     }
 }
 
-/// Edges in the computation graph (child -> parent).
-///
-/// Stores a pointer to a node (parent)
-/// and the opperation applied to it to produce the child.
-/// Also contains operation inlining/fusing info.
-pub const Edge = union(ops.GraphOps) {
+pub const OpNode = union(ops.GraphOps) {
+    const Input = struct {
+        node: *VirtualTensorNode,
+        fused: bool = false,
+    };
+    const Output = *VirtualTensorNode;
     pub const MapOp = struct {
         op: ops.MapOp,
-        x: *Vertex,
-        fused_x: bool = false,
+        x: Input,
+        out: Output,
     };
     pub const ZipOp = struct {
         op: ops.ZipOp,
-        a: *Vertex,
-        b: *Vertex,
-        fused_a: bool = false,
-        fused_b: bool = false,
+        a: Input,
+        b: Input,
+        out: Output,
     };
     pub const ReduceOp = struct {
         op: ops.ReduceOp,
-        x: *Vertex,
+        x: Input,
         dims: []const bool,
-        fused_x: bool = false,
+        out: Output,
     };
     pub const TypeOp = struct {
         op: ops.TypeOp,
-        x: *Vertex,
-        fused_x: bool = true,
+        x: Input,
+        out: Output,
     };
     pub const InitOp = struct {
         op: ops.InitOp,
         value: ops.InitValue,
-        fused_init: bool = true,
+        fused: bool = true,
+        out: Output,
     };
     MapOp: MapOp,
     ZipOp: ZipOp,
     ReduceOp: ReduceOp,
     TypeOp: TypeOp,
     InitOp: InitOp,
+
+    fn opViz(self: *const OpNode, input: *const Input, writer: anytype) !void {
+        switch (self.*) {
+            .InitOp => unreachable,
+            inline else => |op_node| {
+                if (input.fused) {
+                    writer.print("{s}{d}" ++ "->" ++ "{s}{d}" ++ "[label=\" {s}{any}\"];\n", .{ @tagName(op_node.op), input.node.nodeId(), @tagName(op_node.op), op_node.out.nodeId(), @tagName(input.node.tensor.dtype), input.node.tensor.shape });
+                } else {
+                    try input.node.nodeViz(writer);
+                    if (op_node.out.group_id != null and input.node.group_id == op_node.out.group_id and input.node.cached) {
+                        writer.print("T{d}_{?}" ++ "->" ++ "{s}{d}" ++ "[label=\" {s}{any}\"];\n", .{ input.node.tensorId(), input.node.group_id, @tagName(op_node.op), op_node.out.nodeId(), @tagName(input.node.tensor.dtype), input.node.tensor.shape });
+                    } else {
+                        writer.print("T{d}" ++ "->" ++ "{s}{d}" ++ "[label=\" {s}{any}\"];\n", .{ input.node.tensorId(), @tagName(op_node.op), op_node.out.nodeId(), @tagName(input.node.tensor.dtype), input.node.tensor.shape });
+                    }
+                }
+            },
+        }
+    }
 };
 
 var viz_hash_table: std.AutoHashMap(usize, bool) = undefined;
@@ -87,160 +105,170 @@ const TensorInfo = struct {
     strides: []const usize,
 };
 
-pub const Vertex = struct {
-    ptr: usize,
-    edge: Edge,
+pub const VirtualTensorNode = struct {
+    ptr: *anyopaque,
+    op_node: OpNode,
+    vizFnPtr: *const fn (ptr: *VirtualTensorNode, writer: anytype) void,
     group_id: ?usize = null,
     cached: bool = false,
 
-    // Tensor metadata
-    tensor: TensorInfo,
+    pub fn init(obj: anytype, comptime vizFn: fn (ptr: @TypeOf(obj)) void) VirtualTensorNode {
+        const Ptr = @TypeOf(obj);
+        std.debug.assert(@typeInfo(Ptr)) == .Pointer;
+        std.debug.assert(@typeInfo(Ptr).Pointer.size) == .One;
+        std.debug.assert(@typeInfo(@typeInfo(Ptr).Pointer.child) == .Struct);
+        const impl = struct {
+            fn viz(ptr: *anyopaque, writer: anytype) void {
+                const self = @as(Ptr, @ptrCast(@alignCast(ptr)));
+                vizFn(self, writer);
+            }
+        };
+        return .{
+            .ptr = obj,
+            .vizFnPtr = impl.viz,
+        };
+    }
 
-    pub fn nodeId(node: *const Vertex) usize {
+    pub fn nodeId(node: *const VirtualTensorNode) usize {
         return ids.get(node.ptr).?;
     }
 
-    pub fn tensorId(node: *const Vertex) usize {
-        return switch (node.edge) {
+    pub fn tensorId(node: *const VirtualTensorNode) usize {
+        return switch (node.op_node) {
             .InitOp => node.nodeId(),
             .ZipOp => |edge| if (edge.fused_a and !edge.fused_b) edge.a.tensorId() else if (edge.fused_b and !edge.fused_a) edge.b.tensorId() else node.nodeId(),
             inline else => |edge| if (edge.fused_x) edge.x.tensorId() else node.nodeId(),
         };
     }
-
-    fn nodeViz(node: *const Vertex, writer: anytype) std.mem.Allocator.Error!void {
-        // To avoid printing the same thing multiple times use the hash table to check/mark as already printed
-        if (viz_hash_table.get(node.nodeId()).? == true) {
-            return;
-        }
-        try viz_hash_table.put(node.nodeId(), true);
-        switch (node.edge) {
-            inline else => |e| {
-                writer.print("T{d}[label=\"T{d}\"shape=box];\n", .{ node.tensorId(), node.tensorId() });
-                if (node.cached) {
-                    writer.print("subgraph cluster{d}{{T{d}_{d}[label=\"T{d}_{d}\"shape=box];}}\n", .{ node.group_id.?, node.tensorId(), node.group_id.?, node.tensorId(), node.group_id.? });
-                    writer.print("T{d}_{d}->T{d}[label=\" {s}{any}\"];\n", .{ node.tensorId(), node.group_id.?, node.tensorId(), @tagName(node.tensor.dtype), node.tensor.shape });
-                    writer.print("{s}{d}->T{d}_{d}[label=\" {s}{any}\"];\n", .{ @tagName(e.op), node.nodeId(), node.tensorId(), node.group_id.?, @tagName(node.tensor.dtype), node.tensor.shape });
-                } else {
-                    writer.print("{s}{d}->T{d}[label=\" {s}{any}\"];\n", .{ @tagName(e.op), node.nodeId(), node.tensorId(), @tagName(node.tensor.dtype), node.tensor.shape });
-                }
-            },
-        }
-    }
-
-    fn edgeViz(dst: *const Graph.Vertex, src: *const Graph.Vertex, op: anytype, fused: bool, writer: anytype) !void {
-        if (fused) {
-            switch (src.edge) {
-                inline else => |src_edge| writer.print("{s}{d}", .{ @tagName(src_edge.op), src.nodeId() }),
-            }
-        } else {
-            try src.nodeViz(writer);
-            if (dst.group_id != null and src.group_id == dst.group_id and src.cached) {
-                writer.print("T{d}_{?}", .{ src.tensorId(), src.group_id });
-            } else {
-                writer.print("T{d}", .{src.tensorId()});
-            }
-        }
-        writer.print("->{s}{d}[label=\" {s}{any}\"];\n", .{ @tagName(op), dst.nodeId(), @tagName(src.tensor.dtype), src.tensor.shape });
-    }
-
-    fn initOpViz(node: *const Vertex, edge: Edge.InitOp, writer: anytype) std.mem.Allocator.Error!void {
-        if (node.group_id != null) {
-            writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.group_id.?, @tagName(edge.op), node.nodeId(), @tagName(edge.op) });
-        } else {
-            writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.nodeId(), @tagName(edge.op) });
-        }
-    }
-
-    fn mapOpViz(node: *const Vertex, edge: Edge.MapOp, writer: anytype) std.mem.Allocator.Error!void {
-        try edge.x.viz(writer);
-        if (node.group_id != null) {
-            writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.group_id.?, @tagName(edge.op), node.nodeId(), @tagName(edge.op) });
-        } else {
-            writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.nodeId(), @tagName(edge.op) });
-        }
-        try node.edgeViz(edge.x, edge.op, edge.fused_x, writer);
-    }
-
-    fn zipOpViz(node: *const Vertex, edge: Edge.ZipOp, writer: anytype) std.mem.Allocator.Error!void {
-        try edge.a.viz(writer);
-        try edge.b.viz(writer);
-        if (node.group_id != null) {
-            writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.group_id.?, @tagName(edge.op), node.nodeId(), @tagName(edge.op) });
-        } else {
-            writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.nodeId(), @tagName(edge.op) });
-        }
-        try node.edgeViz(edge.a, edge.op, edge.fused_a, writer);
-        try node.edgeViz(edge.b, edge.op, edge.fused_b, writer);
-    }
-
-    fn reduceOpViz(node: *const Vertex, edge: Edge.ReduceOp, writer: anytype) std.mem.Allocator.Error!void {
-        try edge.x.viz(writer);
-        if (node.group_id != null) {
-            writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{any}\"];}}\n", .{ node.group_id.?, @tagName(edge.op), node.nodeId(), @tagName(edge.op), edge.dims });
-        } else {
-            writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.nodeId(), @tagName(edge.op) });
-        }
-        try node.edgeViz(edge.x, edge.op, edge.fused_x, writer);
-    }
-
-    fn typeOpViz(node: *const Vertex, edge: Edge.TypeOp, writer: anytype) std.mem.Allocator.Error!void {
-        try edge.x.viz(writer);
-        if (node.group_id != null) {
-            switch (edge.op) {
-                .AsType => writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{{s}}}\"];}}\n", .{ node.group_id.?, @tagName(edge.op), node.nodeId(), @tagName(edge.op), @tagName(node.tensor.dtype) }),
-                .View, .Broadcast => writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{shape:{any}}}\"];}}\n", .{ node.group_id.?, @tagName(edge.op), node.nodeId(), @tagName(edge.op), node.tensor.shape }),
-                .AsStrided => writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{shape:{any}, strides:{any}}}\"];}}\n", .{ node.group_id.?, @tagName(edge.op), node.nodeId(), @tagName(edge.op), node.tensor.shape, node.tensor.strides }),
-            }
-        } else {
-            switch (edge.op) {
-                .AsType => writer.print("{s}{d}[label=\"{s}{{{s}}}\"];\n", .{ @tagName(edge.op), node.nodeId(), @tagName(edge.op), @tagName(node.tensor.dtype) }),
-                .View, .Broadcast => writer.print("{s}{d}[label=\"{s}{{shape:{any}}}\"];\n", .{ @tagName(edge.op), node.nodeId(), @tagName(edge.op), node.tensor.shape }),
-                .AsStrided => writer.print("{s}{d}[label=\"{s}{{shape:{any}, strides:{any}}}\"];\n", .{ @tagName(edge.op), node.nodeId(), @tagName(edge.op), node.tensor.shape, node.tensor.strides }),
-            }
-        }
-        try node.edgeViz(edge.x, edge.op, edge.fused_x, writer);
-    }
-
-    pub fn viz(node: *const Vertex, writer: anytype) std.mem.Allocator.Error!void {
-        if (viz_hash_table.contains(node.nodeId())) {
-            return;
-        }
-        try viz_hash_table.putNoClobber(node.nodeId(), false);
-        try switch (node.edge) {
-            .InitOp => |edge| node.initOpViz(edge, writer),
-            .MapOp => |edge| node.mapOpViz(edge, writer),
-            .ZipOp => |edge| node.zipOpViz(edge, writer),
-            .ReduceOp => |edge| node.reduceOpViz(edge, writer),
-            .TypeOp => |edge| node.typeOpViz(edge, writer),
-        };
-    }
 };
 
-pub fn vertex(ptr: anytype, edge: Edge, comptime Tensor: type) !void {
-    const key = @intFromPtr(ptr);
-    if (!ids.contains(key)) {
-        const id = ids.count();
-        try ids.putNoClobber(key, id);
-        const v = try allocator.create(Vertex);
-        v.* = .{
-            .ptr = @intFromPtr(ptr),
-            .edge = edge,
-            .tensor = .{
-                .ndims = Tensor.ndims,
-                .dtype = Tensor.dtype,
-                .shape = Tensor.shape[0..],
-                .strides = Tensor.strides[0..],
-            },
-        };
-        entry_node = v;
-        try nodes.putNoClobber(id, v);
-    }
+pub fn TensorNode(
+    comptime Tensor: type,
+) type {
+    return struct {
+        const Self = @This();
+        graph_node: VirtualTensorNode,
+        tensor: Tensor,
+
+        fn init(ptr: *const Tensor, op_node: OpNode) !void {
+            const key = @intFromPtr(ptr);
+            if (!ids.contains(key)) {
+                const id = ids.count();
+                try ids.putNoClobber(key, id);
+                const tensor_node = try allocator.create(Self);
+                tensor_node.* = .{
+                    .tensor = .{
+                        .ndims = Tensor.ndims,
+                        .dtype = Tensor.dtype,
+                        .shape = Tensor.shape[0..],
+                        .strides = Tensor.strides[0..],
+                    },
+                };
+                entry_node = tensor_node;
+                _ = op_node;
+                try nodes.putNoClobber(id, tensor_node);
+            }
+        }
+
+        fn nodeViz(node: *const VirtualTensorNode, writer: anytype) std.mem.Allocator.Error!void {
+            // To avoid printing the same thing multiple times use the hash table to check/mark as already printed
+            if (viz_hash_table.get(node.nodeId()).? == true) {
+                return;
+            }
+            try viz_hash_table.put(node.nodeId(), true);
+            switch (node.op_node) {
+                inline else => |e| {
+                    writer.print("T{d}[label=\"T{d}\"shape=box];\n", .{ node.tensorId(), node.tensorId() });
+                    if (node.cached) {
+                        writer.print("subgraph cluster{d}{{T{d}_{d}[label=\"T{d}_{d}\"shape=box];}}\n", .{ node.group_id.?, node.tensorId(), node.group_id.?, node.tensorId(), node.group_id.? });
+                        writer.print("T{d}_{d}->T{d}[label=\" {s}{any}\"];\n", .{ node.tensorId(), node.group_id.?, node.tensorId(), @tagName(node.tensor.dtype), node.tensor.shape });
+                        writer.print("{s}{d}->T{d}_{d}[label=\" {s}{any}\"];\n", .{ @tagName(e.op), node.nodeId(), node.tensorId(), node.group_id.?, @tagName(node.tensor.dtype), node.tensor.shape });
+                    } else {
+                        writer.print("{s}{d}->T{d}[label=\" {s}{any}\"];\n", .{ @tagName(e.op), node.nodeId(), node.tensorId(), @tagName(node.tensor.dtype), node.tensor.shape });
+                    }
+                },
+            }
+        }
+
+        fn initOpViz(node: *const Self, edge: OpNode.InitOp, writer: anytype) std.mem.Allocator.Error!void {
+            if (node.group_id != null) {
+                writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ node.group_id.?, @tagName(edge.op), node.nodeId(), @tagName(edge.op) });
+            } else {
+                writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), node.nodeId(), @tagName(edge.op) });
+            }
+        }
+
+        fn mapOpViz(t_node: *const Self, op_node: OpNode.MapOp, writer: anytype) std.mem.Allocator.Error!void {
+            try op_node.x.viz(writer);
+            if (t_node.group_id != null) {
+                writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ t_node.group_id.?, @tagName(op_node.op), t_node.nodeId(), @tagName(op_node.op) });
+            } else {
+                writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(op_node.op), t_node.nodeId(), @tagName(op_node.op) });
+            }
+            try t_node.edgeViz(op_node.x, op_node.op, op_node.fused_x, writer);
+        }
+
+        fn zipOpViz(t_node: *const Self, op_node: OpNode.ZipOp, writer: anytype) std.mem.Allocator.Error!void {
+            try op_node.a.viz(writer);
+            try op_node.b.viz(writer);
+            if (t_node.group_id != null) {
+                writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ t_node.group_id.?, @tagName(op_node.op), t_node.nodeId(), @tagName(op_node.op) });
+            } else {
+                writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(op_node.op), t_node.nodeId(), @tagName(op_node.op) });
+            }
+            try t_node.edgeViz(op_node.a, op_node.op, op_node.fused_a, writer);
+            try t_node.edgeViz(op_node.b, op_node.op, op_node.fused_b, writer);
+        }
+
+        fn reduceOpViz(t_node: *const Self, edge: OpNode.ReduceOp, writer: anytype) std.mem.Allocator.Error!void {
+            try edge.x.viz(writer);
+            if (t_node.group_id != null) {
+                writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{any}\"];}}\n", .{ t_node.group_id.?, @tagName(edge.op), t_node.nodeId(), @tagName(edge.op), edge.dims });
+            } else {
+                writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(edge.op), t_node.nodeId(), @tagName(edge.op) });
+            }
+            try t_node.edgeViz(edge.x, edge.op, edge.fused_x, writer);
+        }
+
+        fn typeOpViz(node: *const Self, edge: OpNode.TypeOp, writer: anytype) std.mem.Allocator.Error!void {
+            try edge.x.viz(writer);
+            if (node.group_id != null) {
+                switch (edge.op) {
+                    .AsType => writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{{s}}}\"];}}\n", .{ node.group_id.?, @tagName(edge.op), node.nodeId(), @tagName(edge.op), @tagName(node.tensor.dtype) }),
+                    .View, .Broadcast => writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{shape:{any}}}\"];}}\n", .{ node.group_id.?, @tagName(edge.op), node.nodeId(), @tagName(edge.op), node.tensor.shape }),
+                    .AsStrided => writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}{{shape:{any}, strides:{any}}}\"];}}\n", .{ node.group_id.?, @tagName(edge.op), node.nodeId(), @tagName(edge.op), node.tensor.shape, node.tensor.strides }),
+                }
+            } else {
+                switch (edge.op) {
+                    .AsType => writer.print("{s}{d}[label=\"{s}{{{s}}}\"];\n", .{ @tagName(edge.op), node.nodeId(), @tagName(edge.op), @tagName(node.tensor.dtype) }),
+                    .View, .Broadcast => writer.print("{s}{d}[label=\"{s}{{shape:{any}}}\"];\n", .{ @tagName(edge.op), node.nodeId(), @tagName(edge.op), node.tensor.shape }),
+                    .AsStrided => writer.print("{s}{d}[label=\"{s}{{shape:{any}, strides:{any}}}\"];\n", .{ @tagName(edge.op), node.nodeId(), @tagName(edge.op), node.tensor.shape, node.tensor.strides }),
+                }
+            }
+            try node.edgeViz(edge.x, edge.op, edge.fused_x, writer);
+        }
+
+        pub fn viz(node: *const VirtualTensorNode, writer: anytype) std.mem.Allocator.Error!void {
+            if (viz_hash_table.contains(node.nodeId())) {
+                return;
+            }
+            try viz_hash_table.putNoClobber(node.nodeId(), false);
+            try switch (node.op_node) {
+                .InitOp => |edge| node.initOpViz(edge, writer),
+                .MapOp => |edge| node.mapOpViz(edge, writer),
+                .ZipOp => |edge| node.zipOpViz(edge, writer),
+                .ReduceOp => |edge| node.reduceOpViz(edge, writer),
+                .TypeOp => |edge| node.typeOpViz(edge, writer),
+            };
+        }
+    };
 }
 
-pub fn vertexOf(tensor_ptr: anytype) *Vertex {
-    return nodes.get(ids.get(@intFromPtr(tensor_ptr)).?).?;
-}
+// pub fn vertex(ptr: anytype, edge: OpNode, comptime Tensor: type) !void {}
+
+// pub fn vertexOf(tensor_ptr: anytype) *Vertex {
+//     return nodes.get(ids.get(@intFromPtr(tensor_ptr)).?).?;
+// }
 
 pub fn viz(writer: anytype) !void {
     viz_hash_table = std.AutoHashMap(usize, bool).init(allocator);
@@ -263,9 +291,9 @@ pub const Fusion = struct {
         NotParentChild,
     };
 
-    pub fn verticalFusion(parent: *Vertex, child: *Vertex) FusionError!void {
+    pub fn verticalFusion(parent: *VirtualTensorNode, child: *VirtualTensorNode) FusionError!void {
         const parent_group_contains_reduction = if (parent.group_id) |group_id| reduction_groups.get(group_id) orelse false else false;
-        switch (child.edge) {
+        switch (child.op_node) {
             .InitOp => |*edge| {
                 switch (edge.op) {
                     // Only fuse an init op if it is a constant value fill
@@ -321,7 +349,7 @@ pub const Fusion = struct {
         }
     }
 
-    fn greedyFusionHelper(group_id: usize, node: *Vertex) usize {
+    fn greedyFusionHelper(group_id: usize, node: *VirtualTensorNode) usize {
         if (node.group_id == group_id) {
             // A node can be cached in the kernel if it is being reused by 1 or more dependents
             // in the same tensor
@@ -335,7 +363,7 @@ pub const Fusion = struct {
             }
             return node.group_id.?;
         }
-        switch (node.edge) {
+        switch (node.op_node) {
             .MapOp => |*edge| {
                 node.group_id = greedyFusionHelper(group_id, edge.x);
                 if (edge.x.group_id == node.group_id and !edge.x.cached) {
@@ -425,7 +453,7 @@ test "manual vertical fusion" {
     Graph.trace(&sm);
 
     const t9 = Graph.entry();
-    const t8 = t9.edge.ZipOp.b;
+    const t8 = t9.op_node.ZipOp.b;
     try Fusion.verticalFusion(t8, t9);
     const t7 = t8.edge.TypeOp.x.edge.MapOp.x;
     const t6 = t7.edge.ReduceOp.x;

@@ -28,7 +28,7 @@ pub fn main() !void {
     tesseract.init();
     defer tesseract.deinit();
     tesseract.trace(&out);
-    try tesseract.Fusion.greedyFusion();
+    // try tesseract.Fusion.greedyFusion();
     try tesseract.viz(std.debug);
     std.debug.print("\n", .{});
     try tesseract.code(@import("src/codegen/Zig.zig"), std.debug);

@@ -88,23 +88,12 @@ fn mapOpCode(op: ops.MapOp, dtype: dtypes.DType, x: []const u8) ![]const u8 {
     return try switch (op) {
         .Copy => std.fmt.allocPrint(allocator, "{s}", .{x}),
         .Neg => if (dtypes.isBool(dtype)) std.fmt.allocPrint(allocator, "!({s})", .{x}) else std.fmt.allocPrint(allocator, "-({s})", .{x}),
-        .Log2 => std.fmt.allocPrint(allocator, "@log2({s})", .{x}),
-        .Exp2 => std.fmt.allocPrint(allocator, "@exp2({s})", .{x}),
+        .Log => std.fmt.allocPrint(allocator, "@log({s})", .{x}),
+        .Exp => std.fmt.allocPrint(allocator, "@exp({s})", .{x}),
         .Sqrt => std.fmt.allocPrint(allocator, "@sqrt({s})", .{x}),
         .Recip => if (dtypes.isFloat(dtype)) std.fmt.allocPrint(allocator, "1.0 / ({s})", .{x}) else if (dtypes.isInt(dtype)) std.fmt.allocPrint(allocator, "@divFloor(1, {s})", .{x}) else unreachable,
         else => unreachable,
     };
-}
-fn mapOpCodeLen(op: ops.MapOp, dtype: dtypes.DType) u64 {
-    return (switch (op) {
-        .Id => "{s}",
-        .Neg => if (dtypes.isBool(dtype)) "!({s})" else "-({s})",
-        .Log2 => "@log2({s})",
-        .Exp2 => "@exp2({s})",
-        .Sqrt => "@sqrt({s})",
-        .Recip => if (dtypes.isFloat(dtype)) "1.0 / ({s})" else if (dtypes.isInt(dtype)) "@divFloor(1, {s})" else unreachable,
-        else => unreachable,
-    }).len;
 }
 
 fn zipOpCode(
