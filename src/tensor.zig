@@ -93,10 +93,8 @@ fn Tensor(
 
         pub fn input() Self {
             const traceFn = struct {
-                fn trace(self: *const Self) void {
-                    Graph.vertex(self, .{
-                        .InitOp = .{ .op = .Input, .value = .{ .Input = {} } },
-                    }, Self) catch unreachable;
+                fn trace(out: *const Self) void {
+                    Graph.operation(.{ .InitOp = .Input }, {}, out, .{ .Input = {} });
                 }
             }.trace;
             return init(traceFn);
@@ -105,10 +103,8 @@ fn Tensor(
         /// Fill a tensor with a value
         pub fn full(comptime value: anytype) Self {
             const traceFn = struct {
-                fn trace(self: *const Self) void {
-                    Graph.vertex(self, .{
-                        .InitOp = .{ .op = .Full, .value = .{ .Full = std.fmt.comptimePrint("{any}", .{value}) } },
-                    }, Self) catch unreachable;
+                fn trace(out: *const Self) void {
+                    Graph.operation(.{ .InitOp = .Full }, {}, out, .{ .Full = std.fmt.comptimePrint("{any}", .{value}) });
                 }
             }.trace;
             return init(traceFn);
@@ -124,11 +120,8 @@ fn Tensor(
                 @compileError("Cannot use range() on a tensor with > 1 dimensions");
             }
             const traceFn = struct {
-                fn trace(self: *const Self) void {
-                    Graph.vertex(self, .{ .InitOp = .{ .op = .Range, .value = .{ .Range = .{
-                        .start = std.fmt.comptimePrint("{d}", .{start}),
-                        .stop = std.fmt.comptimePrint("{d}", .{stop}),
-                    } } } }, Self) catch unreachable;
+                fn trace(out: *const Self) void {
+                    Graph.operation(.{ .InitOp = .Range }, {}, out, .{ .Range = .{ .start = std.fmt.comptimePrint("{d}", .{start}), .stop = std.fmt.comptimePrint("{d}", .{stop}) } });
                 }
             }.trace;
             return init(traceFn);
@@ -136,8 +129,8 @@ fn Tensor(
 
         pub fn rand() Self {
             const traceFn = struct {
-                fn trace(self: *const Self) void {
-                    Graph.vertex(self, .{ .InitOp = .{ .op = .Rand, .value = .{ .Rand = dtype } } }, Self) catch unreachable;
+                fn trace(out: *const Self) void {
+                    Graph.operation(.{ .InitOp = .Rand }, {}, out, .{ .Rand = dtype });
                 }
             }.trace;
             return init(traceFn);
@@ -154,10 +147,7 @@ fn Tensor(
             const traceFn = struct {
                 fn trace(out: *const Out) void {
                     Graph.trace(x);
-                    Graph.vertex(out, .{ .MapOp = .{
-                        .op = .Copy,
-                        .x = Graph.vertexOf(x),
-                    } }, Out) catch unreachable;
+                    Graph.operation(.{ .MapOp = .Copy }, x, out, {});
                 }
             }.trace;
             return Out.init(traceFn);
@@ -207,10 +197,7 @@ fn Tensor(
             const traceFn = struct {
                 fn trace(out: *const Out) void {
                     Graph.trace(x);
-                    Graph.vertex(out, .{ .TypeOp = .{
-                        .op = .View,
-                        .x = Graph.vertexOf(x),
-                    } }, Out) catch unreachable;
+                    Graph.operation(.{ .TypeOp = .View }, x, out, {});
                 }
             }.trace;
             return Out.init(traceFn);
@@ -277,10 +264,7 @@ fn Tensor(
             const traceFn = struct {
                 fn trace(out: *const Out) void {
                     Graph.trace(x);
-                    Graph.vertex(out, .{ .TypeOp = .{
-                        .op = .AsStrided,
-                        .x = Graph.vertexOf(x),
-                    } }, Out) catch unreachable;
+                    Graph.operation(.{ .TypeOp = .AsStrided }, x, out, {});
                 }
             }.trace;
             return Out.init(traceFn);
@@ -292,10 +276,7 @@ fn Tensor(
             const traceFn = struct {
                 fn trace(out: *const Out) void {
                     Graph.trace(x);
-                    Graph.vertex(out, .{ .TypeOp = .{
-                        .op = .AsType,
-                        .x = Graph.vertexOf(x),
-                    } }, Out) catch unreachable;
+                    Graph.operation(.{ .TypeOp = .AsType }, x, out, {});
                 }
             }.trace;
             return Out.init(traceFn);
@@ -307,10 +288,7 @@ fn Tensor(
             const traceFn = struct {
                 fn trace(out: *const Out) void {
                     Graph.trace(x);
-                    Graph.vertex(out, .{ .MapOp = .{
-                        .op = op,
-                        .x = Graph.vertexOf(x),
-                    } }, Out) catch unreachable;
+                    Graph.operation(.{ .MapOp = op }, x, out, {});
                 }
             }.trace;
             return Out.init(traceFn);
@@ -343,12 +321,7 @@ fn Tensor(
             const traceFn = struct {
                 fn trace(out: *const Out) void {
                     Graph.trace(x);
-                    Graph.vertex(out, .{
-                        .TypeOp = .{
-                            .op = .Broadcast,
-                            .x = Graph.vertexOf(x),
-                        },
-                    }, Out) catch unreachable;
+                    Graph.operation(.{ .TypeOp = .Broadcast }, x, out, .{});
                 }
             }.trace;
             return Out.init(traceFn);
@@ -376,13 +349,7 @@ fn Tensor(
                 fn trace(out: *const Out) void {
                     Graph.trace(&a_expand);
                     Graph.trace(&b_expand);
-                    Graph.vertex(out, .{
-                        .ZipOp = .{
-                            .op = op,
-                            .a = Graph.vertexOf(&a_expand),
-                            .b = Graph.vertexOf(&b_expand),
-                        },
-                    }, Out) catch unreachable;
+                    Graph.operation(.{ .ZipOp = op }, .{ .a = &a_expand, .b = &b_expand }, out, .{});
                 }
             }.trace;
             return Out.init(traceFn);
@@ -447,11 +414,7 @@ fn Tensor(
             const traceFn = struct {
                 fn trace(out: *const Out) void {
                     Graph.trace(x);
-                    Graph.vertex(out, .{ .ReduceOp = .{
-                        .op = op,
-                        .x = Graph.vertexOf(x),
-                        .dims = reduction_dim_mask[0..],
-                    } }, Out) catch unreachable;
+                    Graph.operation(.{ .ReduceOp = op }, x, out, .{ .dims = &reduction_dim_mask });
                 }
             }.trace;
             return Out.init(traceFn);

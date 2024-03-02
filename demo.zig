@@ -31,5 +31,5 @@ pub fn main() !void {
     // try tesseract.Fusion.greedyFusion();
     try tesseract.viz(std.debug);
     std.debug.print("\n", .{});
-    try tesseract.code(@import("src/codegen/Zig.zig"), std.debug);
+    // try tesseract.code(@import("src/codegen/Zig.zig"), std.debug);
 }

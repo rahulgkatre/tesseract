@@ -22,10 +22,12 @@ pub const MemOps = enum {
     Move, // Move between devices
 };
 
-pub const GraphOps = enum {
-    MapOp,
-    ZipOp,
-    ReduceOp,
-    TypeOp,
-    InitOp,
+pub const OpTypes = enum { MapOp, ZipOp, ReduceOp, TypeOp, InitOp };
+
+pub const GraphOp = union(OpTypes) {
+    MapOp: MapOp,
+    ZipOp: ZipOp,
+    ReduceOp: ReduceOp,
+    TypeOp: TypeOp,
+    InitOp: InitOp,
 };
