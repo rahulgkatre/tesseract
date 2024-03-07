@@ -8,7 +8,7 @@ const dtypes = @import("dtypes.zig");
 var arena: std.heap.ArenaAllocator = undefined;
 var allocator: std.mem.Allocator = undefined;
 var tensor_nodes: std.AutoHashMap(usize, *TensorNode) = undefined;
-var preceding_op_nodes: std.AutoHashMap(*const TensorNode, OpNode) = undefined;
+var op_nodes: std.AutoHashMap(usize, OpNode) = undefined;
 var reduction_groups: std.AutoHashMap(usize, bool) = undefined;
 var entry_node: ?*TensorNode = null;
 
@@ -20,7 +20,7 @@ pub fn init(backing_allocator: std.mem.Allocator) void {
     arena = std.heap.ArenaAllocator.init(backing_allocator);
     allocator = arena.allocator();
     tensor_nodes = std.AutoHashMap(usize, *TensorNode).init(allocator);
-    preceding_op_nodes = std.AutoHashMap(*const TensorNode, OpNode).init(allocator);
+    op_nodes = std.AutoHashMap(usize, OpNode).init(allocator);
     reduction_groups = std.AutoHashMap(usize, bool).init(allocator);
 }
 
@@ -33,53 +33,14 @@ pub fn deinit() void {
 /// by recursively calling each tensor's `traceFn` callback.
 pub fn trace(tensor_ptr: anytype) void {
     switch (@typeInfo(@TypeOf(tensor_ptr))) {
-        .Pointer => tensor_ptr.traceFn(tensor_ptr),
-        else => @compileError("Must pass a tensor pointer"),
+        .Pointer => tensor_ptr.trace_fn(tensor_ptr),
+        else => @compileError("Must pass a tensor pointer to Graph.trace()"),
     }
+    entry_node = TensorNode.of(tensor_ptr);
 }
 
-pub fn operation(comptime op: ops.GraphOp, input: anytype, output: anytype, comptime args: anytype) void {
-    if (!tensor_nodes.contains(@intFromPtr(output))) {
-        const op_node: OpNode = switch (op) {
-            .MapOp => .{ .MapOp = .{
-                .op = op.MapOp,
-                .x = .{ .node = TensorNode.of(input) },
-                .out = TensorNode.of(output),
-                .op_node_label = std.fmt.comptimePrint("{s}", .{@tagName(op)}),
-            } },
-            .ZipOp => .{ .ZipOp = .{
-                .op = op.ZipOp,
-                .a = .{ .node = TensorNode.of(input.a) },
-                .b = .{ .node = TensorNode.of(input.b) },
-                .out = TensorNode.of(output),
-                .op_node_label = std.fmt.comptimePrint("{s}", .{@tagName(op)}),
-            } },
-            .ReduceOp => .{ .ReduceOp = .{
-                .op = op.ReduceOp,
-                .x = .{ .node = TensorNode.of(input) },
-                .out = TensorNode.of(output),
-                .dims = args.dims,
-                .op_node_label = std.fmt.comptimePrint("{s}{any}", .{ @tagName(op), args.dims }),
-            } },
-            .TypeOp => .{ .TypeOp = .{
-                .op = op.TypeOp,
-                .x = .{ .node = TensorNode.of(input) },
-                .op_node_label = switch (op.TypeOp) {
-                    .AsType => std.fmt.comptimePrint("{s}{any}", .{ @tagName(op), @TypeOf(output.*).dtype }),
-                    .View, .Broadcast => std.fmt.comptimePrint("{s}{any}", .{ @tagName(op), @TypeOf(output.*).shape }),
-                    .AsStrided => std.fmt.comptimePrint("{s}{{{any},{any}}}", .{ @tagName(op), @TypeOf(output.*).shape, @TypeOf(output.*).strides }),
-                },
-                .out = TensorNode.of(output),
-            } },
-            .InitOp => .{ .InitOp = .{
-                .op = op.InitOp,
-                .value = args,
-                .out = TensorNode.of(output),
-                .op_node_label = std.fmt.comptimePrint("{s}", .{@tagName(op)}),
-            } },
-        };
-        preceding_op_nodes.putNoClobber(TensorNode.of(output), op_node) catch unreachable;
-    }
+pub fn addOp(comptime op: ops.GraphOp, input: anytype, output: anytype, comptime args: anytype) void {
+    _ = OpNode.of(op, input, output, args);
 }
 
 pub const OpNode = union(ops.OpTypes) {
@@ -87,7 +48,9 @@ pub const OpNode = union(ops.OpTypes) {
         node: *TensorNode,
         fused: bool = false,
     };
-    const Output = *TensorNode;
+    const Output = struct {
+        node: *TensorNode,
+    };
     pub const MapOp = struct {
         op: ops.MapOp,
         x: Input,
@@ -125,135 +88,194 @@ pub const OpNode = union(ops.OpTypes) {
     ReduceOp: ReduceOp,
     TypeOp: TypeOp,
     InitOp: InitOp,
-};
 
-var viz_hash_table: std.AutoHashMap(usize, bool) = undefined;
-
-pub const TensorNode = struct {
-    t_edge_label: []const u8,
-    node_id: usize,
-    group_id: ?usize = null,
-    cached: bool = false,
-
-    /// Get the tensor node or create it and add it to the map
-    pub fn of(tensor_ptr: anytype) *TensorNode {
-        const Tensor = @TypeOf(tensor_ptr.*);
-        const key = @intFromPtr(tensor_ptr);
-        if (!tensor_nodes.contains(key)) {
-            const t_node = allocator.create(TensorNode) catch unreachable;
-            t_node.* = .{
-                .node_id = tensor_nodes.count(),
-                .t_edge_label = std.fmt.comptimePrint("{s}{any}", .{ @tagName(Tensor.dtype), Tensor.shape }),
-            };
-            tensor_nodes.putNoClobber(key, t_node) catch unreachable;
-            entry_node = t_node;
-            return t_node;
-        } else {
-            return tensor_nodes.get(key).?;
-        }
-    }
-
-    pub fn nodeId(node: *const TensorNode) usize {
-        return node.node_id;
-    }
-
-    pub fn tensorId(node: *const TensorNode) usize {
-        const preceding_op_node = preceding_op_nodes.get(node).?;
-        return switch (preceding_op_node) {
-            .InitOp => node.nodeId(),
-            .ZipOp => |op_node| if (op_node.a.fused and !op_node.b.fused) op_node.a.node.tensorId() else if (op_node.b.fused and !op_node.a.fused) op_node.b.node.tensorId() else node.nodeId(),
-            inline else => |op_node| if (op_node.x.fused) op_node.x.node.tensorId() else node.nodeId(),
-        };
-    }
-
-    fn tensorNodeViz(self: *const TensorNode, writer: anytype) void {
-        // To avoid printing the same thing multiple times use the hash table to check/mark as already printed
-        if (viz_hash_table.get(self.nodeId()) orelse false) {
-            return;
-        }
-        viz_hash_table.put(self.nodeId(), true) catch unreachable;
-        const preceding_op_node = preceding_op_nodes.get(self).?;
-        switch (preceding_op_node) {
+    fn viz(self: *const OpNode, in: ?OpNode.Input, writer: anytype) void {
+        switch (self.*) {
             inline else => |op_node| {
-                writer.print("T{d}[label=\"T{d}\"shape=box];\n", .{ self.tensorId(), self.tensorId() });
-                if (self.cached) {
-                    writer.print("subgraph cluster{d}{{T{d}_{d}[label=\"T{d}_{d}\"shape=box];}}\n", .{ self.group_id.?, self.tensorId(), self.group_id.?, self.tensorId(), self.group_id.? });
-                    writer.print("T{d}_{d}->T{d}[label=\"{s}\"];\n", .{ self.tensorId(), self.group_id.?, self.tensorId(), self.t_edge_label });
-                    writer.print("{s}{d}->T{d}_{d}[label=\"{s}\"];\n", .{ @tagName(op_node.op), self.nodeId(), self.tensorId(), self.group_id.?, self.t_edge_label });
+                if (op_node.out.node.group_id != null) {
+                    writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ op_node.out.node.group_id.?, @tagName(op_node.op), op_node.out.node.nodeId(), op_node.op_node_label });
                 } else {
-                    writer.print("{s}{d}->T{d}[label=\"{s}\"];\n", .{ @tagName(op_node.op), self.nodeId(), self.tensorId(), self.t_edge_label });
+                    writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(op_node.op), op_node.out.node.nodeId(), op_node.op_node_label });
                 }
             },
         }
-    }
-
-    fn precedingOpNodeViz(self: *const TensorNode, input: OpNode.Input, writer: anytype) void {
-        const preceding_op_node = preceding_op_nodes.get(self).?;
-        switch (preceding_op_node) {
-            inline else => |op_node| {
-                if (self.group_id != null) {
-                    writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ self.group_id.?, @tagName(op_node.op), self.nodeId(), op_node.op_node_label });
-                } else {
-                    writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(op_node.op), self.nodeId(), op_node.op_node_label });
-                }
-            },
-        }
-        switch (preceding_op_node) {
+        switch (self.*) {
             .InitOp => {}, // InitOp will not have a previous tensor node to connect to
             inline else => |op_node| {
-                if (input.fused) {
-                    writer.print("{s}{d}->{s}{d}[label=\"{s}\"];\n", .{ @tagName(op_node.op), input.node.nodeId(), @tagName(op_node.op), self.nodeId(), input.node.t_edge_label });
+                if (in.?.fused) {
+                    writer.print("{s}{d}->{s}{d}[label=\"{s}\"];\n", .{ @tagName(op_node.op), in.?.node.nodeId(), @tagName(op_node.op), op_node.out.node.nodeId(), in.?.node.edge_label });
                 } else {
-                    input.node.tensorNodeViz(writer);
-                    if (op_node.out.group_id != null and input.node.group_id == op_node.out.group_id and input.node.cached) {
-                        writer.print("T{d}_{?}->{s}{d}[label=\"{s}\"];\n", .{ input.node.tensorId(), input.node.group_id, @tagName(op_node.op), self.nodeId(), input.node.t_edge_label });
+                    if (op_node.out.node.group_id != null and in.?.node.group_id == op_node.out.node.group_id and in.?.node.cached) {
+                        writer.print("T{d}_{?}->{s}{d}[label=\"{s}\"];\n", .{ in.?.node.tensorId(), in.?.node.group_id, @tagName(op_node.op), op_node.out.node.nodeId(), in.?.node.edge_label });
                     } else {
-                        writer.print("T{d}->{s}{d}[label=\"{s}\"];\n", .{ input.node.tensorId(), @tagName(op_node.op), self.nodeId(), input.node.t_edge_label });
+                        writer.print("T{d}->{s}{d}[label=\"{s}\"];\n", .{ in.?.node.tensorId(), @tagName(op_node.op), op_node.out.node.nodeId(), in.?.node.edge_label });
                     }
                 }
             },
         }
     }
 
-    fn viz(self: *const TensorNode, writer: anytype) void {
-        if (viz_hash_table.contains(self.nodeId())) {
-            return;
+    fn of(comptime op: ops.GraphOp, input: anytype, output: anytype, comptime args: anytype) OpNode {
+        const Out = @TypeOf(output.*);
+        const out_ptr_val = @intFromPtr(output);
+        if (op_nodes.get(out_ptr_val)) |op_node| {
+            return op_node;
+        } else {
+            const op_node: OpNode = switch (op) {
+                .MapOp => |map_op| blk: {
+                    trace(input.x);
+                    break :blk .{ .MapOp = .{
+                        .op = map_op,
+                        .x = .{ .node = TensorNode.of(input.x) },
+                        .out = .{ .node = TensorNode.of(output) },
+                        .op_node_label = std.fmt.comptimePrint("{s}", .{@tagName(map_op)}),
+                    } };
+                },
+                .ZipOp => |zip_op| blk: {
+                    trace(input.a);
+                    trace(input.b);
+                    break :blk .{ .ZipOp = .{
+                        .op = zip_op,
+                        .a = .{ .node = TensorNode.of(input.a) },
+                        .b = .{ .node = TensorNode.of(input.b) },
+                        .out = .{ .node = TensorNode.of(output) },
+                        .op_node_label = std.fmt.comptimePrint("{s}", .{@tagName(zip_op)}),
+                    } };
+                },
+                .ReduceOp => |reduce_op| blk: {
+                    trace(input.x);
+                    break :blk .{
+                        .ReduceOp = .{
+                            .op = reduce_op,
+                            .x = .{ .node = TensorNode.of(input.x) },
+                            .out = .{ .node = TensorNode.of(output) },
+                            .dims = args.dims,
+                            .op_node_label = std.fmt.comptimePrint("{s}{any}", .{ @tagName(reduce_op), @as([]const bool, args.dims) }),
+                        },
+                    };
+                },
+                .TypeOp => |type_op| blk: {
+                    trace(input.x);
+                    break :blk .{ .TypeOp = .{
+                        .op = type_op,
+                        .x = .{ .node = TensorNode.of(input.x) },
+                        .op_node_label = switch (type_op) {
+                            .AsType => std.fmt.comptimePrint("{s}{any}", .{ @tagName(type_op), Out.dtype }),
+                            .View, .Broadcast => std.fmt.comptimePrint("{s}{any}", .{ @tagName(type_op), Out.shape }),
+                            .AsStrided => std.fmt.comptimePrint("{s}{{{any},{any}}}", .{ @tagName(type_op), Out.shape, Out.strides }),
+                        },
+                        .out = .{ .node = TensorNode.of(output) },
+                    } };
+                },
+                .InitOp => |init_op| .{ .InitOp = .{
+                    .op = init_op,
+                    .value = args,
+                    .out = .{ .node = TensorNode.of(output) },
+                    .op_node_label = std.fmt.comptimePrint("{s}", .{@tagName(init_op)}),
+                } },
+            };
+            const out_node = TensorNode.of(output);
+            op_nodes.putNoClobber(out_node.tensor_ptr_val, op_node) catch unreachable;
+            return op_node;
         }
-        viz_hash_table.putNoClobber(self.nodeId(), false) catch unreachable;
-        const preceding_op_node = preceding_op_nodes.get(self).?;
-        // Recursive calls
-        switch (preceding_op_node) {
-            .InitOp => {},
-            .MapOp => |op_node| op_node.x.node.viz(writer),
-            .ZipOp => |op_node| {
-                op_node.a.node.viz(writer);
-                op_node.b.node.viz(writer);
-            },
-            .ReduceOp => |op_node| op_node.x.node.viz(writer),
-            .TypeOp => |op_node| op_node.x.node.viz(writer),
-        }
-        switch (preceding_op_node) {
-            .InitOp => {},
-            .MapOp => |op_node| self.precedingOpNodeViz(op_node.x, writer),
-            .ZipOp => |op_node| {
-                self.precedingOpNodeViz(op_node.a, writer);
-                self.precedingOpNodeViz(op_node.b, writer);
-            },
-            .ReduceOp => |op_node| self.precedingOpNodeViz(op_node.x, writer),
-            .TypeOp => |op_node| self.precedingOpNodeViz(op_node.x, writer),
-        }
-        tensorNodeViz(self, writer);
     }
 };
 
-pub fn viz(writer: anytype) !void {
-    viz_hash_table = std.AutoHashMap(usize, bool).init(allocator);
-    defer {
-        viz_hash_table.deinit();
-        viz_hash_table = undefined;
+pub const TensorNode = struct {
+    edge_label: []const u8,
+    tensor_ptr_val: usize,
+    node_id: usize,
+    group_id: ?usize = null,
+    cached: bool = false,
+
+    /// Get the tensor node or create it and add it to the map
+    fn of(tensor_ptr: anytype) *TensorNode {
+        const Tensor = @TypeOf(tensor_ptr.*);
+        const tensor_ptr_val = @intFromPtr(tensor_ptr);
+        if (tensor_nodes.get(tensor_ptr_val)) |t_node| {
+            return t_node;
+        } else {
+            const t_node = allocator.create(TensorNode) catch unreachable;
+            t_node.* = .{
+                .tensor_ptr_val = tensor_ptr_val,
+                .node_id = tensor_nodes.count(),
+                .edge_label = std.fmt.comptimePrint("{s}{any}", .{ @tagName(Tensor.dtype), Tensor.shape }),
+            };
+            tensor_nodes.putNoClobber(tensor_ptr_val, t_node) catch unreachable;
+            return t_node;
+        }
     }
-    writer.print("digraph G {{\ncompound=true;\n", .{});
-    entry().viz(writer);
+
+    /// A node id is a unique id for each tensor node
+    pub fn nodeId(self: *const TensorNode) usize {
+        return self.node_id;
+    }
+
+    /// A tensor id is a id for each tensor's underlying buffer, which can be shared
+    pub fn tensorId(self: *const TensorNode) usize {
+        const preceding_op_node = op_nodes.get(self.tensor_ptr_val).?;
+        return switch (preceding_op_node) {
+            .InitOp => self.nodeId(),
+            .ZipOp => |op_node| if (op_node.a.fused and !op_node.b.fused) op_node.a.node.tensorId() else if (op_node.b.fused and !op_node.a.fused) op_node.b.node.tensorId() else self.nodeId(),
+            inline else => |op_node| if (op_node.x.fused) op_node.x.node.tensorId() else self.nodeId(),
+        };
+    }
+
+    fn viz(self: *const TensorNode, writer: anytype, visited: []bool) void {
+        // To avoid printing the same thing multiple times use the hash table to check/mark as already printed
+        if (visited[self.nodeId()]) {
+            return;
+        } else {
+            visited[self.nodeId()] = true;
+        }
+        switch (op_nodes.get(self.tensor_ptr_val).?) {
+            inline else => |op_node| {
+                writer.print("T{d}[label=\"T{d}\"shape=box];\n", .{ self.tensorId(), self.tensorId() });
+                if (self.cached) {
+                    writer.print("subgraph cluster{d}{{T{d}_{d}[label=\"T{d}_{d}\"shape=box];}}\n", .{ self.group_id.?, self.tensorId(), self.group_id.?, self.tensorId(), self.group_id.? });
+                    writer.print("T{d}_{d}->T{d}[label=\"{s}\"];\n", .{ self.tensorId(), self.group_id.?, self.tensorId(), self.edge_label });
+                    writer.print("{s}{d}->T{d}_{d}[label=\"{s}\"];\n", .{ @tagName(op_node.op), self.nodeId(), self.tensorId(), self.group_id.?, self.edge_label });
+                } else {
+                    writer.print("{s}{d}->T{d}[label=\"{s}\"];\n", .{ @tagName(op_node.op), self.nodeId(), self.tensorId(), self.edge_label });
+                }
+            },
+        }
+    }
+};
+
+fn vizHelper(tensor_node: *const TensorNode, writer: anytype, visited: []bool) void {
+    if (visited[tensor_node.nodeId()]) {
+        return;
+    } else {
+        visited[tensor_node.nodeId()] = false;
+    }
+    const op_node = op_nodes.get(tensor_node.tensor_ptr_val).?;
+    // Recursive calls
+    switch (op_node) {
+        .InitOp => op_node.viz(null, writer),
+        .ZipOp => |binary_op_node| {
+            vizHelper(binary_op_node.a.node, writer, visited);
+            op_node.viz(binary_op_node.a, writer);
+            vizHelper(binary_op_node.b.node, writer, visited);
+            op_node.viz(binary_op_node.b, writer);
+        },
+        inline else => |unary_op_node| {
+            vizHelper(unary_op_node.x.node, writer, visited);
+            op_node.viz(unary_op_node.x, writer);
+        },
+    }
+    tensor_node.viz(writer, visited);
+}
+
+pub fn viz(writer: anytype) !void {
+    const visited = try allocator.alloc(bool, tensor_nodes.count());
+    defer allocator.free(visited);
+    writer.print(
+        \\digraph G {{
+        \\compound=true;
+        \\
+    , .{});
+    vizHelper(entry(), writer, visited);
     writer.print("}}\n", .{});
 }
 
@@ -267,7 +289,7 @@ pub const Fusion = struct {
     pub fn verticalFusion(parent: *TensorNode, child: *TensorNode) FusionError!void {
         const parent_group_contains_reduction = if (parent.group_id) |group_id| reduction_groups.get(group_id) orelse false else false;
         switch (child.op_node) {
-            .InitOp => |*op_node| {
+            .InitOp => |op_node| {
                 switch (op_node.op) {
                     // Only fuse an init op if it is a constant value fill
                     // This is trival to inline, but others may not be
@@ -275,7 +297,7 @@ pub const Fusion = struct {
                     else => return FusionError.ParentInit,
                 }
             },
-            .ZipOp => |*op_node| {
+            .ZipOp => |op_node| {
                 if (op_node.a.tensorId() != parent.tensorId() and op_node.b.tensorId() != parent.tensorId()) {
                     return FusionError.NotParentChild;
                 }
@@ -283,7 +305,7 @@ pub const Fusion = struct {
                     if (parent_group_contains_reduction) {
                         return FusionError.ParentReduce;
                     }
-                    op_node.fused_a = true;
+                    op_node.a.fused = true;
                 }
                 if (op_node.b.tensorId() == parent.tensorId()) {
                     if (parent_group_contains_reduction) {

@@ -85,29 +85,23 @@ fn Tensor(
         strides: [ndims + 1]usize = strides,
         is_contiguous: bool = is_contiguous,
 
-        traceFn: *const fn (self: *const Self) void,
+        trace_fn: *const fn (self: *const Self) void,
 
-        pub fn init(comptime traceFn: *const fn (self: *const Self) void) Self {
-            return .{ .traceFn = traceFn };
+        pub fn init(comptime op: ops.GraphOp, op_input: anytype, comptime args: anytype) Self {
+            return .{ .trace_fn = struct {
+                fn trace(out: *const Self) void {
+                    Graph.addOp(op, op_input, out, args);
+                }
+            }.trace };
         }
 
         pub fn input() Self {
-            const traceFn = struct {
-                fn trace(out: *const Self) void {
-                    Graph.operation(.{ .InitOp = .Input }, {}, out, .{ .Input = {} });
-                }
-            }.trace;
-            return init(traceFn);
+            return init(.{ .InitOp = .Input }, {}, .{ .Input = {} });
         }
 
         /// Fill a tensor with a value
         pub fn full(comptime value: anytype) Self {
-            const traceFn = struct {
-                fn trace(out: *const Self) void {
-                    Graph.operation(.{ .InitOp = .Full }, {}, out, .{ .Full = std.fmt.comptimePrint("{any}", .{value}) });
-                }
-            }.trace;
-            return init(traceFn);
+            return init(.{ .InitOp = .Full }, {}, .{ .Full = std.fmt.comptimePrint("{any}", .{value}) });
         }
         pub fn fullLike(_: *const Self, comptime value: anytype) Self {
             return Self.full(value);
@@ -116,24 +110,19 @@ fn Tensor(
         /// Internal function to fill with range, this is not publicly exposed
         /// as shape of range tensor must be constrained
         fn range(comptime start: comptime_int, comptime stop: comptime_int) Self {
-            if (ndims > 1) {
-                @compileError("Cannot use range() on a tensor with > 1 dimensions");
+            if (ndims != 1) {
+                @compileError("Can only use range() on a tensor with exactly 1 dimension");
             }
-            const traceFn = struct {
-                fn trace(out: *const Self) void {
-                    Graph.operation(.{ .InitOp = .Range }, {}, out, .{ .Range = .{ .start = std.fmt.comptimePrint("{d}", .{start}), .stop = std.fmt.comptimePrint("{d}", .{stop}) } });
-                }
-            }.trace;
-            return init(traceFn);
+            return init(.{ .InitOp = .Range }, {}, .{
+                .Range = .{
+                    .start = std.fmt.comptimePrint("{d}", .{start}),
+                    .stop = std.fmt.comptimePrint("{d}", .{stop}),
+                },
+            });
         }
 
         pub fn rand() Self {
-            const traceFn = struct {
-                fn trace(out: *const Self) void {
-                    Graph.operation(.{ .InitOp = .Rand }, {}, out, .{ .Rand = dtype });
-                }
-            }.trace;
-            return init(traceFn);
+            return init(.{ .InitOp = .Rand }, {}, .{ .Rand = dtype });
         }
         pub fn randLike(_: *const Self) Self {
             return Self.rand();
@@ -144,13 +133,7 @@ fn Tensor(
         /// but intermediate tensors can be eliminated through optimization.
         pub fn copy(x: *const Self) InferredStrides(dtype, shape) {
             const Out = InferredStrides(dtype, shape);
-            const traceFn = struct {
-                fn trace(out: *const Out) void {
-                    Graph.trace(x);
-                    Graph.operation(.{ .MapOp = .Copy }, x, out, {});
-                }
-            }.trace;
-            return Out.init(traceFn);
+            return Out.init(.{ .MapOp = .Copy }, .{ .x = x }, {});
         }
 
         fn Permute(comptime perm: [ndims]u8) type {
@@ -194,13 +177,7 @@ fn Tensor(
         /// View the tensor as a different shape.
         pub fn view(x: *const Self, comptime new_shape: anytype) InferredStrides(dtype, new_shape) {
             const Out = InferredStrides(dtype, new_shape);
-            const traceFn = struct {
-                fn trace(out: *const Out) void {
-                    Graph.trace(x);
-                    Graph.operation(.{ .TypeOp = .View }, x, out, {});
-                }
-            }.trace;
-            return Out.init(traceFn);
+            return Out.init(.{ .TypeOp = .View }, .{ .x = x }, {});
         }
 
         fn Unsqueeze(comptime dim: u8) type {
@@ -212,7 +189,7 @@ fn Tensor(
                 utils.arrayInsert(ndims + 1, strides, dim, 0),
             );
         }
-        /// Remove a dim of size 1 from the shape of the tensor.
+        /// Insert a dim of size 1 into the shape of the tensor.
         pub fn unsqueeze(x: *const Self, comptime dim: u8) Unsqueeze(dim) {
             const Out = Unsqueeze(dim);
             return x.asStrided(Out.shape, Out.strides);
@@ -233,7 +210,7 @@ fn Tensor(
                 utils.arrayDelete(ndims + 1, strides, dim),
             );
         }
-        /// Insert a dim of size 1 into the shape of the tensor.
+        /// Remove a dim of size 1 from the shape of the tensor.
         pub fn squeeze(x: *const Self, comptime dim: u8) Squeeze(dim) {
             const Out = Squeeze(dim);
             return x.asStrided(Out.shape, Out.strides);
@@ -261,37 +238,19 @@ fn Tensor(
         /// There are guiderails to prevent out of bounds access into underlying memory.
         pub fn asStrided(comptime x: *const Self, comptime new_shape: anytype, comptime new_strides: anytype) AsStrided(new_shape, new_strides) {
             const Out = AsStrided(new_shape, new_strides);
-            const traceFn = struct {
-                fn trace(out: *const Out) void {
-                    Graph.trace(x);
-                    Graph.operation(.{ .TypeOp = .AsStrided }, x, out, {});
-                }
-            }.trace;
-            return Out.init(traceFn);
+            return Out.init(.{ .TypeOp = .AsStrided }, .{ .x = x }, {});
         }
 
         ///Cast an array of a datatype to another datatype
         pub fn asType(comptime x: *const Self, comptime new_dtype: dtypes.DType) Tensor(new_dtype, ndims, shape, strides) {
-            const Out: type = Tensor(new_dtype, ndims, shape, strides);
-            const traceFn = struct {
-                fn trace(out: *const Out) void {
-                    Graph.trace(x);
-                    Graph.operation(.{ .TypeOp = .AsType }, x, out, {});
-                }
-            }.trace;
-            return Out.init(traceFn);
+            const Out = Tensor(new_dtype, ndims, shape, strides);
+            return Out.init(.{ .TypeOp = .AsType }, .{ .x = x }, {});
         }
 
         ///Apply an elementwise map operation
         pub fn map(comptime x: *const Self, comptime op: ops.MapOp) Self {
-            const Out: type = @TypeOf(x.*);
-            const traceFn = struct {
-                fn trace(out: *const Out) void {
-                    Graph.trace(x);
-                    Graph.operation(.{ .MapOp = op }, x, out, {});
-                }
-            }.trace;
-            return Out.init(traceFn);
+            const Out = @TypeOf(x.*);
+            return Out.init(.{ .MapOp = op }, .{ .x = x }, {});
         }
 
         pub fn Broadcast(comptime new_shape: anytype, comptime new_dtype: dtypes.DType) type {
@@ -314,17 +273,11 @@ fn Tensor(
             return InferredStrides(new_dtype, bc_shape);
         }
         pub fn expand(comptime x: *const Self, comptime new_shape: anytype) Broadcast(new_shape, dtype) {
-            const Out: type = Broadcast(new_shape, dtype);
+            const Out = Broadcast(new_shape, dtype);
             if (Self == Out) {
                 return x.*;
             }
-            const traceFn = struct {
-                fn trace(out: *const Out) void {
-                    Graph.trace(x);
-                    Graph.operation(.{ .TypeOp = .Broadcast }, x, out, .{});
-                }
-            }.trace;
-            return Out.init(traceFn);
+            return Out.init(.{ .TypeOp = .Broadcast }, .{ .x = x }, .{});
         }
 
         /// Apply an elementwise zip (binary) operation on two arrays, with broadcasting
@@ -335,7 +288,7 @@ fn Tensor(
                 else => dtype,
             },
         ) {
-            const Out: type = Broadcast(
+            const Out = Broadcast(
                 b.shape,
                 switch (op) {
                     .Equals, .LessThan => .bool,
@@ -343,16 +296,10 @@ fn Tensor(
                 },
             );
 
+            // Expand a and b to match the output shape
             const a_expand = comptime a.expand(Out.shape);
             const b_expand = comptime b.expand(Out.shape);
-            const traceFn = struct {
-                fn trace(out: *const Out) void {
-                    Graph.trace(&a_expand);
-                    Graph.trace(&b_expand);
-                    Graph.operation(.{ .ZipOp = op }, .{ .a = &a_expand, .b = &b_expand }, out, .{});
-                }
-            }.trace;
-            return Out.init(traceFn);
+            return Out.init(.{ .ZipOp = op }, .{ .a = &a_expand, .b = &b_expand }, .{});
         }
 
         pub fn Reduce(comptime reduce_dims: anytype) type {
@@ -395,7 +342,7 @@ fn Tensor(
         /// Perform a reduction across 1 or more (or all) dimensions of a tensor.
         /// Dimensions to reduce can be passed as a int for 1 dim, tuple for multiple dims, or null/void for all dims
         pub fn reduce(comptime x: *const Self, comptime op: ops.ReduceOp, comptime reduce_dims: anytype) Reduce(reduce_dims) {
-            const Out: type = Reduce(reduce_dims);
+            const Out = Reduce(reduce_dims);
             const reduction_dim_mask: [ndims]bool = switch (@typeInfo(@TypeOf(reduce_dims))) {
                 .ComptimeInt, .Int => blk: {
                     var tmp_mask: [ndims]bool = [_]bool{false} ** ndims;
@@ -411,19 +358,13 @@ fn Tensor(
                     break :blk tmp_mask;
                 },
             };
-            const traceFn = struct {
-                fn trace(out: *const Out) void {
-                    Graph.trace(x);
-                    Graph.operation(.{ .ReduceOp = op }, x, out, .{ .dims = &reduction_dim_mask });
-                }
-            }.trace;
-            return Out.init(traceFn);
+            return Out.init(.{ .ReduceOp = op }, .{ .x = x }, .{ .dims = &reduction_dim_mask });
         }
 
         pub fn MatMul(comptime Other: type) type {
             // Matrix multiplication invariant
-            // (n x m1) matmul (m2 x p) -> (n x p) if m1 = m2
-            // If m1 != m2 then matmul is invalid
+            // (n x m1) matmul (m2 x p) -> (n x p) iff m1 = m2
+            // otherwise matmul is invalid, compile error
             const n = if (ndims == 1) 1 else shape[ndims - 2];
             const m = shape[ndims - 1];
             const other_m = if (Other.ndims == 1) 1 else Other.shape[Other.ndims - 2];
@@ -441,7 +382,7 @@ fn Tensor(
                         @compileError(comptimePrint(
                             \\[TESSERACT COMPILE ERROR]
                             \\Cannot perform matrix multiplication on these two tensors
-                            \\tensor1: {any}"
+                            \\tensor1: {any}
                             \\tensor2: {any}
                         , .{ shape, Other.shape }));
                     }
@@ -453,7 +394,7 @@ fn Tensor(
             @compileError(comptimePrint(
                 \\[TESSERACT COMPILE ERROR]
                 \\Cannot perform matrix multiplication on these two tensors
-                \\tensor1: {any}"
+                \\tensor1: {any}
                 \\tensor2: {any}
             , .{ shape, Other.shape }));
         }
