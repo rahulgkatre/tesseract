@@ -91,7 +91,7 @@ pub const OpNode = union(ops.OpTypes) {
     TypeOp: TypeOp,
     InitOp: InitOp,
 
-    fn viz(self: *const OpNode, in: ?OpNode.Input, writer: anytype) void {
+    fn viz(self: *const OpNode, target: ?OpNode.Input, writer: anytype) void {
         switch (self.*) {
             inline else => |op_node| {
                 if (op_node.out.node.group != null) {
@@ -104,15 +104,15 @@ pub const OpNode = union(ops.OpTypes) {
         switch (self.*) {
             .InitOp => {}, // InitOp will not have a previous tensor node to connect to
             inline else => |op_node| {
-                if (in.?.fused) {
-                    switch (op_nodes.get(in.?.node.tensor.ptr).?.*) {
-                        inline else => |in_op_node| writer.print("{s}{d}->{s}{d}[label=\"{s}\"];\n", .{ @tagName(in_op_node.op), in.?.node.uid, @tagName(op_node.op), op_node.out.node.uid, in.?.node.edge_label }),
+                if (target.?.fused) {
+                    switch (op_nodes.get(target.?.node.tensor.ptr).?.*) {
+                        inline else => |in_op_node| writer.print("{s}{d}->{s}{d}[label=\"{s}\"];\n", .{ @tagName(in_op_node.op), target.?.node.uid, @tagName(op_node.op), op_node.out.node.uid, target.?.node.edge_label }),
                     }
                 } else {
-                    if (op_node.out.node.group != null and in.?.node.group == op_node.out.node.group and in.?.node.cached) {
-                        writer.print("T{d}_{?}->{s}{d}[label=\"{s}\"];\n", .{ in.?.node.tensor.id(), in.?.node.group, @tagName(op_node.op), op_node.out.node.uid, in.?.node.edge_label });
+                    if (op_node.out.node.group != null and target.?.node.group == op_node.out.node.group and target.?.node.cached) {
+                        writer.print("T{d}_{?}->{s}{d}[label=\"{s}\"];\n", .{ target.?.node.tensor.id(), target.?.node.group, @tagName(op_node.op), op_node.out.node.uid, target.?.node.edge_label });
                     } else {
-                        writer.print("T{d}->{s}{d}[label=\"{s}\"];\n", .{ in.?.node.tensor.id(), @tagName(op_node.op), op_node.out.node.uid, in.?.node.edge_label });
+                        writer.print("T{d}->{s}{d}[label=\"{s}\"];\n", .{ target.?.node.tensor.id(), @tagName(op_node.op), op_node.out.node.uid, target.?.node.edge_label });
                     }
                 }
             },

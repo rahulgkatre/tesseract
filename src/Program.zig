@@ -7,7 +7,7 @@ const Program = @This();
 var arena: std.heap.ArenaAllocator = undefined;
 var allocator: std.mem.Allocator = undefined;
 var loop_hash_table: std.AutoArrayHashMap(usize, *Loop) = undefined;
-var statement_hash_table: std.AutoArrayHashMap(*Graph.TensorNode, *Statement) = undefined;
+var statements: std.AutoArrayHashMap(*Graph.TensorNode, *Statement) = undefined;
 var subprograms: std.ArrayList(*Program) = undefined;
 
 // Null group id corresponds to global scope
@@ -18,7 +18,7 @@ pub fn init(backing_allocator: std.mem.Allocator) void {
     arena = std.heap.ArenaAllocator.init(backing_allocator);
     allocator = arena.allocator();
     loop_hash_table = std.AutoArrayHashMap(usize, *Loop).init(allocator);
-    statement_hash_table = std.AutoArrayHashMap(*Graph.TensorNode, *Statement).init(allocator);
+    statements = std.AutoArrayHashMap(*Graph.TensorNode, *Statement).init(allocator);
     subprograms = std.ArrayList(*Program).init(allocator);
 }
 
@@ -55,23 +55,23 @@ pub fn deinit() void {
 }
 
 /// Lower the node to a loop nest representation
-pub fn loops(program: *Program, input: Graph.OpNode.Input) !*Loop {
-    if (loop_hash_table.contains(input.node.tensor.id())) {
-        return loop_hash_table.get(input.node.tensor.id()).?;
+pub fn loops(program: *Program, target: Graph.OpNode.Input) !*Loop {
+    if (loop_hash_table.contains(target.node.tensor.id())) {
+        return loop_hash_table.get(target.node.tensor.id()).?;
     }
 
     var reg_loops = std.ArrayList(*Loop).init(allocator);
     var acc_loops = std.ArrayList(*Loop).init(allocator);
     var curr_loop = try allocator.create(Loop);
-    for (0..input.node.tensor.ndims) |d| {
+    for (0..target.node.tensor.ndims) |d| {
         curr_loop.* = .{
-            .upper_bound = switch (input.node.opNode().*) {
+            .upper_bound = switch (target.node.opNode().*) {
                 .ReduceOp => |op_node| op_node.x.node.tensor.shape[d],
-                else => input.node.tensor.shape[d],
+                else => target.node.tensor.shape[d],
             },
-            .tensor_node = input.node,
+            .tensor_node = target.node,
             .dim = d,
-            .acc = switch (input.node.opNode().*) {
+            .acc = switch (target.node.opNode().*) {
                 // If the op is a reduce, check if current dim is being reduced
                 .ReduceOp => |op_node| op_node.dims[d],
                 else => false,
@@ -88,7 +88,7 @@ pub fn loops(program: *Program, input: Graph.OpNode.Input) !*Loop {
             try reg_loops.append(curr_loop);
         }
         // Move 1 more loop into the nest
-        if (d != input.node.tensor.ndims - 1) {
+        if (d != target.node.tensor.ndims - 1) {
             const inner_loop: *Loop = try allocator.create(Loop);
             curr_loop = inner_loop;
         }
@@ -107,18 +107,18 @@ pub fn loops(program: *Program, input: Graph.OpNode.Input) !*Loop {
         curr_loop = acc_loop;
     }
     // Recursive calls to lower the preceding loop
-    switch (input.node.opNode().*) {
+    switch (target.node.opNode().*) {
         .InitOp => {},
         .ZipOp => |op_node| {
             const a_loop = try program.loops(op_node.a);
             const b_loop = try program.loops(op_node.b);
             // Only add the preceding loop to the program if we know its statements are not fused
             // and the node is associated with the same kernel group
-            if (op_node.a.node.group == input.node.group and !op_node.a.fused) {
+            if (op_node.a.node.group == target.node.group and !op_node.a.fused) {
                 if (!loop_hash_table.contains(a_loop.tensor_node.tensor.id())) {
                     try program.body.contents.append(allocator, .{ .Loop = a_loop });
                 }
-            } else if (op_node.b.node.group == input.node.group and !op_node.b.fused) {
+            } else if (op_node.b.node.group == target.node.group and !op_node.b.fused) {
                 if (!loop_hash_table.contains(b_loop.tensor_node.tensor.id())) {
                     try program.body.contents.append(allocator, .{ .Loop = b_loop });
                 }
@@ -132,7 +132,7 @@ pub fn loops(program: *Program, input: Graph.OpNode.Input) !*Loop {
                 // Only the AsType type op corresponds to a loop action
                 // All other type ops are symbolic / logic happens in the statement itself
                 .AsType => {
-                    if (op_node.x.node.group == input.node.group) {
+                    if (op_node.x.node.group == target.node.group) {
                         if (!loop_hash_table.contains(x_loop.tensor_node.tensor.id())) {
                             try program.body.contents.append(allocator, .{ .Loop = x_loop });
                         }
@@ -140,7 +140,7 @@ pub fn loops(program: *Program, input: Graph.OpNode.Input) !*Loop {
                 },
                 else => {
                     // Don't add the loop to the program because the next loop will automatically
-                    // pass through the statement from this loop.
+                    // pass through the statement from this loop because of fusion
                 },
             }
             try loop_hash_table.put(x_loop.tensor_node.tensor.id(), x_loop);
@@ -148,7 +148,7 @@ pub fn loops(program: *Program, input: Graph.OpNode.Input) !*Loop {
         // Applies to map and reduce ops
         inline else => |op_node| {
             const x_loop = try program.loops(op_node.x);
-            if (op_node.x.node.group == input.node.group and !op_node.x.fused) {
+            if (op_node.x.node.group == target.node.group and !op_node.x.fused) {
                 if (!loop_hash_table.contains(x_loop.tensor_node.tensor.id())) {
                     try program.body.contents.append(allocator, .{ .Loop = x_loop });
                 }
@@ -161,40 +161,50 @@ pub fn loops(program: *Program, input: Graph.OpNode.Input) !*Loop {
     // When fusion is happening, statements are nested inside each other
     // TODO: Create a "Read statement" for reading a tensor rather than using null to indicate end of nesting
     const statement: *Statement = try allocator.create(Statement);
-    statement.* = switch (input.node.opNode().*) {
-        .InitOp => |op_node| .{ .InitOp = .{ .op = op_node.op, .out = input.node, .init = op_node.value } },
-        .ZipOp => |op_node| .{ .ZipOp = .{
-            .op = op_node.op,
-            .a = op_node.a.node,
-            .a_statement = if (op_node.a.fused) statement_hash_table.get(op_node.a.node) else null,
-            .b = op_node.b.node,
-            .b_statement = if (op_node.b.fused) statement_hash_table.get(op_node.b.node) else null,
-            .out = input.node,
-        } },
-        .MapOp => |op_node| .{ .MapOp = .{
-            .op = op_node.op,
-            .x = op_node.x.node,
-            .x_statement = if (op_node.x.fused) statement_hash_table.get(op_node.x.node) else null,
-            .out = input.node,
-        } },
-        .ReduceOp => |op_node| .{ .ReduceOp = .{
-            .op = op_node.op,
-            .x = op_node.x.node,
-            .x_statement = if (op_node.x.fused) statement_hash_table.get(op_node.x.node) else null,
-            .out = input.node,
-        } },
-        .TypeOp => |op_node| .{
-            .TypeOp = .{
+    statement.* = .{
+        .expr = switch (target.node.opNode().*) {
+            .InitOp => |op_node| .{ .InitOp = .{
                 .op = op_node.op,
-                .x = op_node.x.node,
-                .x_statement = statement_hash_table.get(op_node.x.node),
-                .out = input.node,
-            },
+                .init = op_node.value,
+            } },
+            .ZipOp => |op_node| .{ .ZipOp = .{
+                .op = op_node.op,
+                .a = .{
+                    .node = op_node.a.node,
+                    .inner = if (op_node.a.fused) &statements.get(op_node.a.node).?.expr else null,
+                },
+                .b = .{
+                    .node = op_node.b.node,
+                    .inner = if (op_node.b.fused) &statements.get(op_node.b.node).?.expr else null,
+                },
+            } },
+            .MapOp => |op_node| .{ .MapOp = .{
+                .op = op_node.op,
+                .x = .{
+                    .node = op_node.x.node,
+                    .inner = if (op_node.x.fused) &statements.get(op_node.x.node).?.expr else null,
+                },
+            } },
+            .ReduceOp => |op_node| .{ .ReduceOp = .{
+                .op = op_node.op,
+                .x = .{
+                    .node = op_node.x.node,
+                    .inner = if (op_node.x.fused) &statements.get(op_node.x.node).?.expr else null,
+                },
+            } },
+            .TypeOp => |op_node| .{ .TypeOp = .{
+                .op = op_node.op,
+                .x = .{
+                    .node = op_node.x.node,
+                    .inner = &statements.get(op_node.x.node).?.expr,
+                },
+            } },
         },
+        .out = target.node,
     };
-    try statement_hash_table.putNoClobber(input.node, statement);
+    try statements.putNoClobber(target.node, statement);
     try curr_loop.body.contents.append(allocator, .{ .Statement = statement });
-    return switch (input.node.opNode().*) {
+    return switch (target.node.opNode().*) {
         .TypeOp => |op_node| loop_hash_table.get(op_node.x.node.tensor.id()).?,
         inline else => outer_loop,
     };
@@ -203,41 +213,40 @@ pub fn loops(program: *Program, input: Graph.OpNode.Input) !*Loop {
     // TODO: Array declarations need to be pushed into the program body
 }
 
-/// Statement of the form y = f(x)
-/// y can either be a value in an array or a variable
-/// f(x) is an arithmetic operation on a value in an array or a variable
-pub const Statement = union(ops.OpTypes) {
+pub const Expression = union(ops.OpTypes) {
+    const Operand = struct {
+        node: *const Graph.TensorNode,
+        inner: ?*const Expression,
+    };
     MapOp: struct {
         op: ops.MapOp,
-        x: *const Graph.TensorNode,
-        x_statement: ?*const Statement,
-        out: *const Graph.TensorNode,
+        x: Operand,
     },
     ZipOp: struct {
         op: ops.ZipOp,
-        a: *const Graph.TensorNode,
-        a_statement: ?*const Statement,
-        b: *const Graph.TensorNode,
-        b_statement: ?*const Statement,
-        out: *const Graph.TensorNode,
+        a: Operand,
+        b: Operand,
     },
     ReduceOp: struct {
         op: ops.ReduceOp,
-        x: *const Graph.TensorNode,
-        x_statement: ?*const Statement,
-        out: *Graph.TensorNode,
+        x: Operand,
     },
     TypeOp: struct {
         op: ops.TypeOp,
-        x: *const Graph.TensorNode,
-        x_statement: ?*const Statement,
-        out: *const Graph.TensorNode,
+        x: Operand,
     },
     InitOp: struct {
         op: ops.InitOp,
-        out: *const Graph.TensorNode,
         init: ops.InitValue,
     },
+};
+
+/// Statement of the form dst = expr(src)
+/// dst is array location or variable
+/// expr is an Expression with Operand src but depending on the expression may have multiple operands
+pub const Statement = struct {
+    expr: Expression,
+    out: *const Graph.TensorNode,
 };
 
 /// Abstractions for lowering Graph.Node into a loop which can be codegened

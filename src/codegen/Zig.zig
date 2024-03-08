@@ -43,18 +43,7 @@ fn bodyCode(program: *const Program, body: Program.Body, writer: anytype) std.me
     for (slice.items(.tags), slice.items(.data)) |tag, data| {
         switch (tag) {
             .Loop => try loopCode(program, data.Loop, writer),
-            .Statement => {
-                writer.print("{s} = {s};\n", .{
-                    switch (data.Statement.*) {
-                        .ReduceOp => |reduce| try std.fmt.allocPrint(allocator, "acc{d}", .{reduce.out.tensor.id()}),
-                        inline else => |stmt| try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
-                            stmt.out.tensor.id(),
-                            try codegen.unravelCode(allocator, stmt.out),
-                        }),
-                    },
-                    (try statementCode(data.Statement)).?,
-                });
-            },
+            .Statement => try statementCode(data.Statement, writer),
         }
     }
 }
@@ -125,39 +114,52 @@ fn reduceOpCode(op: ops.ReduceOp, x: []const u8, out_id: usize) ![]const u8 {
     );
 }
 
-fn statementCode(statement: ?*const Program.Statement) std.mem.Allocator.Error!?[]const u8 {
-    if (statement == null) {
+fn statementCode(statement: *const Program.Statement, writer: anytype) !void {
+    writer.print("{s} = {s};\n", .{
+        switch (statement.expr) {
+            .ReduceOp => try std.fmt.allocPrint(allocator, "acc{d}", .{statement.out.tensor.id()}),
+            inline else => try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
+                statement.out.tensor.id(),
+                try codegen.unravelCode(allocator, statement.out),
+            }),
+        },
+        (try expressionCode(statement, &statement.expr)).?,
+    });
+}
+
+fn expressionCode(statement: *const Program.Statement, expression: ?*const Program.Expression) std.mem.Allocator.Error!?[]const u8 {
+    if (expression == null) {
         return null;
     }
-    switch (statement.?.*) {
-        .MapOp => |map| {
-            const inner_x = try statementCode(map.x_statement) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
-                map.x.tensor.id(),
-                try codegen.unravelCode(allocator, map.x),
+    switch (expression.?.*) {
+        .MapOp => |expr| {
+            const inner_x = try expressionCode(statement, expr.x.inner) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
+                expr.x.node.tensor.id(),
+                try codegen.unravelCode(allocator, expr.x.node),
             });
-            return try mapOpCode(map.op, map.x.tensor.dtype, inner_x);
+            return try mapOpCode(expr.op, expr.x.node.tensor.dtype, inner_x);
         },
-        .ZipOp => |zip| {
-            const inner_a = try statementCode(zip.a_statement) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
-                zip.a.tensor.id(),
-                try codegen.broadcastedUnravelCode(allocator, zip.a, zip.out),
+        .ZipOp => |expr| {
+            const inner_a = try expressionCode(statement, expr.a.inner) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
+                expr.a.node.tensor.id(),
+                try codegen.broadcastedUnravelCode(allocator, expr.a.node, statement.out),
             });
-            const inner_b = try statementCode(zip.b_statement) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
-                zip.b.tensor.id(),
-                try codegen.broadcastedUnravelCode(allocator, zip.b, zip.out),
+            const inner_b = try expressionCode(statement, expr.b.inner) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
+                expr.b.node.tensor.id(),
+                try codegen.broadcastedUnravelCode(allocator, expr.b.node, statement.out),
             });
-            return try zipOpCode(zip.op, inner_a, inner_b);
+            return try zipOpCode(expr.op, inner_a, inner_b);
         },
-        .ReduceOp => |reduce| {
-            const inner_x = try statementCode(reduce.x_statement) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
-                reduce.x.tensor.id(),
-                try codegen.unravelCode(allocator, reduce.x),
+        .ReduceOp => |expr| {
+            const inner_x = try expressionCode(statement, expr.x.inner) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
+                expr.x.node.tensor.id(),
+                try codegen.unravelCode(allocator, expr.x.node),
             });
-            return try reduceOpCode(reduce.op, inner_x, reduce.out.tensor.id());
+            return try reduceOpCode(expr.op, inner_x, statement.out.tensor.id());
         },
-        .InitOp => |initialize| {
-            if (initialize.op != .Input) {
-                return switch (initialize.init) {
+        .InitOp => |expr| {
+            if (expr.op != .Input) {
+                return switch (expr.init) {
                     .Full => |value| try std.fmt.allocPrint(allocator, "{s}", .{value}),
                     .Range => |range| try std.fmt.allocPrint(allocator, "{s}+d0", .{range.start}),
                     .Rand => |dtype| try std.fmt.allocPrint(allocator, "std.rand.random.floatNorm({s})", .{@tagName(dtype)}),
@@ -167,16 +169,16 @@ fn statementCode(statement: ?*const Program.Statement) std.mem.Allocator.Error!?
                 return null;
             }
         },
-        .TypeOp => |typing| {
-            if (typing.op == .AsType) {
-                const inner_x = try statementCode(typing.x_statement.?) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
-                    typing.x.tensor.id(),
-                    try codegen.unravelCode(allocator, typing.x),
+        .TypeOp => |expr| {
+            if (expr.op == .AsType) {
+                const inner_x = try expressionCode(statement, expr.x.inner.?) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
+                    expr.x.node.tensor.id(),
+                    try codegen.unravelCode(allocator, expr.x.node),
                 });
                 defer allocator.free(inner_x);
                 return "TODO";
             } else {
-                return try statementCode(typing.x_statement.?);
+                return try expressionCode(statement, expr.x.inner.?);
             }
         },
     }
