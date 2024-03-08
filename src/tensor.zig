@@ -37,6 +37,11 @@ pub fn InferredStrides(comptime dtype: dtypes.DType, comptime shape: anytype) ty
     return Tensor(dtype, shape.len, shape, strides);
 }
 
+/// Utility function for defining a scalar (a 1-size tensor)
+pub fn Scalar(comptime dtype: dtypes.DType) type {
+    return InferredStrides(dtype, .{1});
+}
+
 fn Tensor(
     // These generic parameters are private so they will be redeclare as pub conts in the result type
     comptime tensor_dtype: dtypes.DType,
@@ -49,7 +54,7 @@ fn Tensor(
         pub usingnamespace @import("functions.zig");
         const Self = @This();
 
-        // Type level constants for comptime logic (e.g. @TypeOf(x).ndims)
+        // Type level constants for comptime shape logic (e.g. @TypeOf(x).ndims)
         pub const dtype: dtypes.DType = tensor_dtype;
         pub const ndims: u8 = tensor_ndims;
         pub const shape: [ndims]usize = tensor_shape;
@@ -85,6 +90,9 @@ fn Tensor(
         strides: [ndims + 1]usize = strides,
         is_contiguous: bool = is_contiguous,
 
+        // The trace callback only runs during runtime
+        // and is triggered by Graph.trace
+        // Graph also handles the recursive callbacks of the current tensor's dependencies
         trace_fn: *const fn (self: *const Self) void,
 
         pub fn init(comptime op: ops.GraphOp, op_input: anytype, comptime args: anytype) Self {
@@ -95,6 +103,8 @@ fn Tensor(
             }.trace };
         }
 
+        /// Used to mark a tensor as an input to a graph,
+        /// codegen will make this an argument of the function
         pub fn input() Self {
             return init(.{ .InitOp = .Input }, {}, .{ .Input = {} });
         }
@@ -103,6 +113,7 @@ fn Tensor(
         pub fn full(comptime value: anytype) Self {
             return init(.{ .InitOp = .Full }, {}, .{ .Full = std.fmt.comptimePrint("{any}", .{value}) });
         }
+        /// Keeps the same shape as another tensor, but initializes a new tensor
         pub fn fullLike(_: *const Self, comptime value: anytype) Self {
             return Self.full(value);
         }
@@ -122,6 +133,7 @@ fn Tensor(
         }
 
         pub fn rand() Self {
+            std.debug.assert(dtypes.isFloat(tensor_dtype));
             return init(.{ .InitOp = .Rand }, {}, .{ .Rand = dtype });
         }
         pub fn randLike(_: *const Self) Self {
@@ -322,17 +334,17 @@ fn Tensor(
                     if (dims.len > ndims) {
                         @compileError("Length of dimension index array for multi dimension reduce is out of bounds");
                     }
-                    var reduced: [ndims]bool = [_]bool{false} ** ndims;
+                    var reduce_dim_mask: [ndims]bool = [_]bool{false} ** ndims;
                     var reduced_shape: [ndims]usize = undefined;
                     @memcpy(&reduced_shape, &shape);
                     for (0..dims.len) |d| {
                         if (d < 0 or d >= ndims) {
                             @compileError("Dimension index for multi dimension reduce is out of bounds");
                         }
-                        if (reduced[d]) {
+                        if (reduce_dim_mask[d]) {
                             @compileError("Cannot reuse dimension index for multi dimensional reduce");
                         }
-                        reduced[d] = true;
+                        reduce_dim_mask[d] = true;
                         reduced_shape[d] = 1;
                     }
                     return InferredStrides(dtype, reduced_shape);
@@ -399,7 +411,9 @@ fn Tensor(
             , .{ shape, Other.shape }));
         }
 
-        // pub fn Conv2d(comptime Filter: type, _stride: anytype) type {
+        // TODO: Need to implement padding to get conv2d to work
+        // Might want to practice with Conv1d first
+        // pub fn Conv2d(comptime Filter: type, _stride: anytype, _) type {
         //     const stride: [2]usize = switch (@typeInfo(@TypeOf(_stride))) {
         //         .ComptimeInt, .Int => [2]usize{ _stride, _stride },
         //         .Array => blk: {
@@ -412,6 +426,16 @@ fn Tensor(
         //             @compileError("2D convolution stride must be 1 number of a 2 element tuple");
         //         },
         //     };
+
+        //     if (ndims == 4) {
+        //         const batch_size = shape[0];
+        //         const in_channels = shape[1];
+        //         const in_height = shape[2];
+        //         const in_width = shape[3];
+
+        //         const out_height = @divFloor(in_height + 2 * , denominator: T)
+        //     }
+
         // }
     };
 }

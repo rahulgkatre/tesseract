@@ -9,6 +9,7 @@ const tesseract = @This();
 
 // Expose the simple Tensor function rather than the full one
 pub const Tensor = tensor.InferredStrides;
+pub const Scalar = tensor.Scalar;
 
 // Expose some of the utility functions that create tensors of specific sizes
 pub const constant = tensor.constant;
