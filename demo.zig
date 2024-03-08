@@ -29,7 +29,7 @@ pub fn main() !void {
     defer tesseract.deinit();
     tesseract.trace(&out);
     try tesseract.Fusion.greedyFusion();
-    try tesseract.viz(std.debug);
+    tesseract.viz(std.debug);
     std.debug.print("\n", .{});
-    // try tesseract.code(@import("src/codegen/Zig.zig"), std.debug);
+    try tesseract.code(@import("src/codegen/Zig.zig"), std.debug);
 }

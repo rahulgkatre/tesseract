@@ -19,7 +19,7 @@ pub const trace = Graph.trace;
 pub const viz = Graph.viz;
 pub const Fusion = Graph.Fusion;
 
-// pub const code = Program.code;
+pub const code = Program.code;
 
 test "tesseract" {
     _ = tensor;
@@ -29,10 +29,10 @@ test "tesseract" {
 
 pub fn init() void {
     Graph.init(std.heap.page_allocator);
-    // Program.init(std.heap.page_allocator);
+    Program.init(std.heap.page_allocator);
 }
 
 pub fn deinit() void {
     Graph.deinit();
-    // Program.deinit();
+    Program.deinit();
 }

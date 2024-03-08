@@ -7,8 +7,8 @@ const dtypes = @import("dtypes.zig");
 
 var arena: std.heap.ArenaAllocator = undefined;
 var allocator: std.mem.Allocator = undefined;
-var tensor_nodes: std.AutoHashMap(usize, *TensorNode) = undefined;
-var op_nodes: std.AutoHashMap(usize, OpNode) = undefined;
+var tensor_nodes: std.AutoHashMap(*const anyopaque, *TensorNode) = undefined;
+var op_nodes: std.AutoHashMap(*const anyopaque, *OpNode) = undefined;
 var reduction_groups: std.AutoHashMap(usize, bool) = undefined;
 var entry_node: ?*TensorNode = null;
 
@@ -19,8 +19,8 @@ pub fn entry() *TensorNode {
 pub fn init(backing_allocator: std.mem.Allocator) void {
     arena = std.heap.ArenaAllocator.init(backing_allocator);
     allocator = arena.allocator();
-    tensor_nodes = std.AutoHashMap(usize, *TensorNode).init(allocator);
-    op_nodes = std.AutoHashMap(usize, OpNode).init(allocator);
+    tensor_nodes = std.AutoHashMap(*const anyopaque, *TensorNode).init(allocator);
+    op_nodes = std.AutoHashMap(*const anyopaque, *OpNode).init(allocator);
     reduction_groups = std.AutoHashMap(usize, bool).init(allocator);
 }
 
@@ -46,11 +46,11 @@ pub fn addOp(comptime op: ops.GraphOp, input: anytype, output: anytype, comptime
 }
 
 pub const OpNode = union(ops.OpTypes) {
-    const Input = struct {
+    pub const Input = struct {
         node: *TensorNode,
         fused: bool = false,
     };
-    const Output = struct {
+    pub const Output = struct {
         node: *TensorNode,
     };
     pub const MapOp = struct {
@@ -94,10 +94,10 @@ pub const OpNode = union(ops.OpTypes) {
     fn viz(self: *const OpNode, in: ?OpNode.Input, writer: anytype) void {
         switch (self.*) {
             inline else => |op_node| {
-                if (op_node.out.node.group_id != null) {
-                    writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ op_node.out.node.group_id.?, @tagName(op_node.op), op_node.out.node.nodeId(), op_node.op_node_label });
+                if (op_node.out.node.group != null) {
+                    writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ op_node.out.node.group.?, @tagName(op_node.op), op_node.out.node.uid, op_node.op_node_label });
                 } else {
-                    writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(op_node.op), op_node.out.node.nodeId(), op_node.op_node_label });
+                    writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(op_node.op), op_node.out.node.uid, op_node.op_node_label });
                 }
             },
         }
@@ -105,27 +105,28 @@ pub const OpNode = union(ops.OpTypes) {
             .InitOp => {}, // InitOp will not have a previous tensor node to connect to
             inline else => |op_node| {
                 if (in.?.fused) {
-                    switch (op_nodes.get(in.?.node.tensor_addr).?) {
-                        inline else => |in_op_node| writer.print("{s}{d}->{s}{d}[label=\"{s}\"];\n", .{ @tagName(in_op_node.op), in.?.node.nodeUid(), @tagName(op_node.op), op_node.out.node.nodeId(), in.?.node.edge_label }),
+                    switch (op_nodes.get(in.?.node.tensor.ptr).?.*) {
+                        inline else => |in_op_node| writer.print("{s}{d}->{s}{d}[label=\"{s}\"];\n", .{ @tagName(in_op_node.op), in.?.node.uid, @tagName(op_node.op), op_node.out.node.uid, in.?.node.edge_label }),
                     }
                 } else {
-                    if (op_node.out.node.group_id != null and in.?.node.group_id == op_node.out.node.group_id and in.?.node.cached) {
-                        writer.print("T{d}_{?}->{s}{d}[label=\"{s}\"];\n", .{ in.?.node.tensorId(), in.?.node.group_id, @tagName(op_node.op), op_node.out.node.nodeId(), in.?.node.edge_label });
+                    if (op_node.out.node.group != null and in.?.node.group == op_node.out.node.group and in.?.node.cached) {
+                        writer.print("T{d}_{?}->{s}{d}[label=\"{s}\"];\n", .{ in.?.node.tensor.id(), in.?.node.group, @tagName(op_node.op), op_node.out.node.uid, in.?.node.edge_label });
                     } else {
-                        writer.print("T{d}->{s}{d}[label=\"{s}\"];\n", .{ in.?.node.tensorId(), @tagName(op_node.op), op_node.out.node.nodeId(), in.?.node.edge_label });
+                        writer.print("T{d}->{s}{d}[label=\"{s}\"];\n", .{ in.?.node.tensor.id(), @tagName(op_node.op), op_node.out.node.uid, in.?.node.edge_label });
                     }
                 }
             },
         }
     }
 
-    fn getOrInit(comptime op: ops.GraphOp, input: anytype, output: anytype, comptime args: anytype) OpNode {
+    fn getOrInit(comptime op: ops.GraphOp, input: anytype, output: anytype, comptime args: anytype) *OpNode {
         const Out = @TypeOf(output.*);
-        const out_addr = @intFromPtr(output);
-        if (op_nodes.get(out_addr)) |op_node| {
+        const ptr = @as(*const anyopaque, output);
+        if (op_nodes.get(ptr)) |op_node| {
             return op_node;
         } else {
-            const op_node: OpNode = switch (op) {
+            const op_node = allocator.create(OpNode) catch unreachable;
+            op_node.* = switch (op) {
                 .MapOp => |map_op| blk: {
                     trace(input.x);
                     break :blk .{ .MapOp = .{
@@ -178,79 +179,101 @@ pub const OpNode = union(ops.OpTypes) {
                     .op_node_label = std.fmt.comptimePrint("{s}", .{@tagName(init_op)}),
                 } },
             };
-            const out_node = TensorNode.getOrInit(output);
-            op_nodes.putNoClobber(out_node.tensor_addr, op_node) catch unreachable;
+            const out = TensorNode.getOrInit(output);
+            op_nodes.putNoClobber(out.tensor.ptr, op_node) catch unreachable;
             return op_node;
         }
     }
 };
 
 pub const TensorNode = struct {
+    const Tensor = struct {
+        ptr: *const anyopaque,
+        dtype: dtypes.DType,
+        ndims: u8,
+        shape: []const usize,
+        strides: []const usize,
+
+        /// A tensor id is a id for each tensor's underlying buffer, which can be shared
+        pub fn id(field_ptr: *const TensorNode.Tensor) usize {
+            const tensor_node = @fieldParentPtr(TensorNode, "tensor", field_ptr);
+            return switch (tensor_node.opNode().*) {
+                .InitOp => tensor_node.uid,
+                .ZipOp => |op_node| blk: {
+                    if (op_node.a.fused and !op_node.b.fused) {
+                        break :blk op_node.a.node.tensor.id();
+                    } else if (op_node.b.fused and !op_node.a.fused) {
+                        break :blk op_node.b.node.tensor.id();
+                    } else {
+                        break :blk tensor_node.uid;
+                    }
+                },
+                inline else => |op_node| if (op_node.x.fused) op_node.x.node.tensor.id() else tensor_node.uid,
+            };
+        }
+    };
+
+    tensor: Tensor,
     edge_label: []const u8,
-    tensor_addr: usize,
-    node_id: usize,
-    group_id: ?usize = null,
+    uid: usize,
+    group: ?usize = null,
     cached: bool = false,
 
     /// Get the tensor node or create it and add it to the map
     fn getOrInit(tensor_ptr: anytype) *TensorNode {
-        const Tensor = @TypeOf(tensor_ptr.*);
-        const tensor_addr = @intFromPtr(tensor_ptr);
-        if (tensor_nodes.get(tensor_addr)) |t_node| {
-            return t_node;
+        const T = @TypeOf(tensor_ptr.*);
+        const ptr = @as(*const anyopaque, tensor_ptr);
+        if (tensor_nodes.get(ptr)) |tensor_node| {
+            return tensor_node;
         } else {
-            const t_node = allocator.create(TensorNode) catch unreachable;
-            t_node.* = .{
-                .tensor_addr = tensor_addr,
-                .node_id = tensor_nodes.count(),
-                .edge_label = std.fmt.comptimePrint("{s}{any}", .{ @tagName(Tensor.dtype), Tensor.shape }),
+            const node = allocator.create(TensorNode) catch unreachable;
+            node.* = .{
+                .tensor = .{
+                    .ptr = ptr,
+                    .dtype = T.dtype,
+                    .ndims = T.ndims,
+                    .shape = T.shape[0..T.ndims],
+                    .strides = T.strides[0 .. T.ndims + 1],
+                },
+                .uid = tensor_nodes.count(),
+                .edge_label = std.fmt.comptimePrint("{s}{any}", .{ @tagName(T.dtype), T.shape }),
             };
-            tensor_nodes.putNoClobber(tensor_addr, t_node) catch unreachable;
-            return t_node;
+            tensor_nodes.putNoClobber(ptr, node) catch unreachable;
+            return node;
         }
     }
 
-    /// A node id is a unique id for each tensor node
-    pub fn nodeUid(self: *const TensorNode) usize {
-        return self.node_id;
+    /// Retrieve the op node for which the tensor node is the output of
+    pub fn opNode(tensor_node: *const TensorNode) *OpNode {
+        return op_nodes.get(tensor_node.tensor.ptr).?;
     }
 
-    /// A tensor id is a id for each tensor's underlying buffer, which can be shared
-    pub fn tensorId(self: *const TensorNode) usize {
-        const preceding_op_node = op_nodes.get(self.tensor_addr).?;
-        return switch (preceding_op_node) {
-            .InitOp => self.nodeUid(),
-            .ZipOp => |op_node| if (op_node.a.fused and !op_node.b.fused) op_node.a.node.tensorId() else if (op_node.b.fused and !op_node.a.fused) op_node.b.node.tensorId() else self.nodeUid(),
-            inline else => |op_node| if (op_node.x.fused) op_node.x.node.tensorId() else self.nodeUid(),
-        };
-    }
-
-    fn viz(self: *const TensorNode, writer: anytype, visited: []bool) void {
+    fn viz(tensor_node: *const TensorNode, writer: anytype, visited: []bool) void {
         // To avoid printing the same thing multiple times use the table to check/mark as already printed
-        if (visited[self.nodeUid()]) {
+        if (visited[tensor_node.uid]) {
             return;
         }
-        switch (op_nodes.get(self.tensor_addr).?) {
+        switch (tensor_node.opNode().*) {
             inline else => |op_node| {
-                writer.print("T{d}[label=\"T{d}\"shape=box];\n", .{ self.tensorId(), self.tensorId() });
-                if (self.cached) {
-                    writer.print("subgraph cluster{d}{{T{d}_{d}[label=\"T{d}_{d}\"shape=box];}}\n", .{ self.group_id.?, self.tensorId(), self.group_id.?, self.tensorId(), self.group_id.? });
-                    writer.print("T{d}_{d}->T{d}[label=\"{s}\"];\n", .{ self.tensorId(), self.group_id.?, self.tensorId(), self.edge_label });
-                    writer.print("{s}{d}->T{d}_{d}[label=\"{s}\"];\n", .{ @tagName(op_node.op), self.nodeUid(), self.tensorId(), self.group_id.?, self.edge_label });
+                writer.print("T{d}[label=\"T{d}\"shape=box];\n", .{ tensor_node.tensor.id(), tensor_node.tensor.id() });
+                if (tensor_node.cached) {
+                    writer.print("subgraph cluster{d}{{T{d}_{d}[label=\"T{d}_{d}\"shape=box];}}\n", .{ tensor_node.group.?, tensor_node.tensor.id(), tensor_node.group.?, tensor_node.tensor.id(), tensor_node.group.? });
+                    writer.print("T{d}_{d}->T{d}[label=\"{s}\"];\n", .{ tensor_node.tensor.id(), tensor_node.group.?, tensor_node.tensor.id(), tensor_node.edge_label });
+                    writer.print("{s}{d}->T{d}_{d}[label=\"{s}\"];\n", .{ @tagName(op_node.op), tensor_node.uid, tensor_node.tensor.id(), tensor_node.group.?, tensor_node.edge_label });
                 } else {
-                    writer.print("{s}{d}->T{d}[label=\"{s}\"];\n", .{ @tagName(op_node.op), self.nodeUid(), self.tensorId(), self.edge_label });
+                    writer.print("{s}{d}->T{d}[label=\"{s}\"];\n", .{ @tagName(op_node.op), tensor_node.uid, tensor_node.tensor.id(), tensor_node.edge_label });
                 }
             },
         }
-        visited[self.nodeUid()] = true;
+        visited[tensor_node.uid] = true;
     }
 };
 
 fn vizHelper(input: OpNode.Input, writer: anytype, visited: []bool) void {
-    if (visited[input.node.nodeUid()]) {
+    if (visited[input.node.uid]) {
         return;
     }
-    const op_node = op_nodes.get(input.node.tensor_addr).?;
+    const op_node = op_nodes.get(input.node.tensor.ptr).?.*;
     // Recursive calls
     switch (op_node) {
         .InitOp => op_node.viz(null, writer),
@@ -270,8 +293,8 @@ fn vizHelper(input: OpNode.Input, writer: anytype, visited: []bool) void {
     }
 }
 
-pub fn viz(writer: anytype) !void {
-    const visited = try allocator.alloc(bool, tensor_nodes.count());
+pub fn viz(writer: anytype) void {
+    const visited = allocator.alloc(bool, tensor_nodes.count()) catch unreachable;
     defer allocator.free(visited);
     writer.print(
         \\digraph G {{
@@ -290,21 +313,21 @@ pub const Fusion = struct {
     };
 
     pub fn verticalFusion(parent: *TensorNode, child: *TensorNode) FusionError!void {
-        const parent_group_contains_reduction = if (parent.group_id) |group_id| reduction_groups.get(group_id) orelse false else false;
-        var op_node = op_nodes.get(child.tensor_addr).?;
-        switch (op_node) {
+        const parent_group_contains_reduction = if (parent.group) |group| reduction_groups.get(group) orelse false else false;
+        var op_node = op_nodes.get(child.tensor.ptr).?;
+        switch (op_node.*) {
             .InitOp => unreachable, // Impossible as init op will only have a child (output) and no tensor input
             .ZipOp => |zip_op_node| {
-                if (zip_op_node.a.node.tensorId() != parent.tensorId() and zip_op_node.b.node.tensorId() != parent.tensorId()) {
+                if (zip_op_node.a.node.tensor.id() != parent.tensor.id() and zip_op_node.b.node.tensor.id() != parent.tensor.id()) {
                     return FusionError.NotParentChild;
                 }
-                if (zip_op_node.a.node.tensorId() == parent.tensorId()) {
+                if (zip_op_node.a.node.tensor.id() == parent.tensor.id()) {
                     if (parent_group_contains_reduction) {
                         return FusionError.ParentReduce;
                     }
                     op_node.ZipOp.a.fused = true;
                 }
-                if (zip_op_node.b.node.tensorId() == parent.tensorId()) {
+                if (zip_op_node.b.node.tensor.id() == parent.tensor.id()) {
                     if (parent_group_contains_reduction) {
                         return FusionError.ParentReduce;
                     }
@@ -314,13 +337,13 @@ pub const Fusion = struct {
             .TypeOp => |type_op_node| {
                 // Fuse a TypeOp even when the previous op is a reduce op
                 // The only type op that has any loop is a cast, and that is trivial enough to inline
-                if (type_op_node.x.node.tensorId() != parent.tensorId()) {
+                if (type_op_node.x.node.tensor.id() != parent.tensor.id()) {
                     return FusionError.NotParentChild;
                 }
                 op_node.TypeOp.x.fused = true;
             },
             .MapOp => |map_op_node| {
-                if (map_op_node.x.node.tensorId() != parent.tensorId()) {
+                if (map_op_node.x.node.tensor.id() != parent.tensor.id()) {
                     return FusionError.NotParentChild;
                 }
                 if (parent_group_contains_reduction) {
@@ -329,7 +352,7 @@ pub const Fusion = struct {
                 op_node.MapOp.x.fused = true;
             },
             .ReduceOp => |reduce_op_node| {
-                if (reduce_op_node.x.node.tensorId() != parent.tensorId()) {
+                if (reduce_op_node.x.node.tensor.id() != parent.tensor.id()) {
                     return FusionError.NotParentChild;
                 }
                 if (parent_group_contains_reduction) {
@@ -339,14 +362,14 @@ pub const Fusion = struct {
             },
         }
         // Replace op node after marking the input as fused
-        op_nodes.putAssumeCapacity(child.tensor_addr, op_node);
+        op_nodes.putAssumeCapacity(child.tensor.ptr, op_node);
     }
 
     /// Recursive function to fuse every parent child pair when possible.
     /// Keeps track of group ids (i.e. kernels) to prevent multiple thread synchronization requiring operations
     /// (reductions) from being in the same kernel. This might change after further testing.
-    fn greedyFusionHelper(group_id: usize, node: *TensorNode) usize {
-        if (node.group_id == group_id) {
+    fn greedyFusionHelper(group: usize, node: *TensorNode) usize {
+        if (node.group == group) {
             // A node can be cached in the kernel if it is being reused by 1 or more dependents
             // in the same tensor
             // Could also make this a counter to determine the number of times a tensor is reused
@@ -354,74 +377,73 @@ pub const Fusion = struct {
             node.cached = true;
         }
         if (node.cached) {
-            if (node.group_id != group_id) {
+            if (node.group != group) {
                 node.cached = false;
             }
-            return node.group_id.?;
+            return node.group.?;
         }
-
-        switch (op_nodes.get(node.tensor_addr).?) {
+        switch (op_nodes.get(node.tensor.ptr).?.*) {
             .MapOp => |op_node| {
-                node.group_id = greedyFusionHelper(group_id, op_node.x.node);
-                if (op_node.x.node.group_id == node.group_id and !op_node.x.node.cached) {
+                node.group = greedyFusionHelper(group, op_node.x.node);
+                if (op_node.x.node.group == node.group and !op_node.x.node.cached) {
                     verticalFusion(op_node.x.node, node) catch {
                         // If we get a fusion error, move the current node to the next group
-                        node.group_id = node.group_id.? + 1;
+                        node.group = node.group.? + 1;
                     };
                 }
-                while (reduction_groups.get(node.group_id.?) orelse false) {
-                    node.group_id = node.group_id.? + 1;
+                while (reduction_groups.get(node.group.?) orelse false) {
+                    node.group = node.group.? + 1;
                 }
             },
             .ZipOp => |op_node| {
                 // Greedy fusion helper returns the next group id so here it is passed from a -> b -> current
-                node.group_id = greedyFusionHelper(greedyFusionHelper(group_id, op_node.a.node), op_node.b.node);
-                if (op_node.a.node.group_id == node.group_id and !op_node.a.node.cached) {
+                node.group = greedyFusionHelper(greedyFusionHelper(group, op_node.a.node), op_node.b.node);
+                if (op_node.a.node.group == node.group and !op_node.a.node.cached) {
                     verticalFusion(op_node.a.node, node) catch {
-                        node.group_id = node.group_id.? + 1;
+                        node.group = node.group.? + 1;
                     };
                 }
-                if (op_node.b.node.group_id == node.group_id and !op_node.b.node.cached) {
+                if (op_node.b.node.group == node.group and !op_node.b.node.cached) {
                     verticalFusion(op_node.b.node, node) catch {
-                        node.group_id = node.group_id.? + 1;
+                        node.group = node.group.? + 1;
                     };
                 }
-                while (reduction_groups.get(node.group_id.?) orelse false) {
-                    node.group_id = node.group_id.? + 1;
+                while (reduction_groups.get(node.group.?) orelse false) {
+                    node.group = node.group.? + 1;
                 }
             },
             .ReduceOp => |op_node| {
-                node.group_id = greedyFusionHelper(group_id, op_node.x.node);
-                if (op_node.x.node.group_id == node.group_id and !op_node.x.node.cached) {
+                node.group = greedyFusionHelper(group, op_node.x.node);
+                if (op_node.x.node.group == node.group and !op_node.x.node.cached) {
                     verticalFusion(op_node.x.node, node) catch {
-                        node.group_id = node.group_id.? + 1;
+                        node.group = node.group.? + 1;
                     };
                 }
-                while (reduction_groups.get(node.group_id.?) orelse false) {
-                    node.group_id = node.group_id.? + 1;
+                while (reduction_groups.get(node.group.?) orelse false) {
+                    node.group = node.group.? + 1;
                 }
-                reduction_groups.putNoClobber(node.group_id.?, true) catch unreachable;
+                reduction_groups.putNoClobber(node.group.?, true) catch unreachable;
             },
             .TypeOp => |op_node| {
                 // TypeOps can always be fused into the preceding kernel even if the typeop follows a reduce
                 // This is because it is either just index manipulation and does not produce a loop
                 // or it is a cast which can be inlined when assigning the value in the output tensor
-                node.group_id = greedyFusionHelper(group_id, op_node.x.node);
-                if (op_node.x.node.group_id == node.group_id and !op_node.x.node.cached) {
+                node.group = greedyFusionHelper(group, op_node.x.node);
+                if (op_node.x.node.group == node.group and !op_node.x.node.cached) {
                     verticalFusion(op_node.x.node, node) catch {
-                        node.group_id = node.group_id.? + 1;
+                        node.group = node.group.? + 1;
                     };
                 }
             },
             // Init will happen outside a kernel unless it is a full init
             .InitOp => |op_node| {
                 if (op_node.op == .Full) {
-                    node.group_id = group_id;
+                    node.group = group;
                 }
-                return group_id;
+                return group;
             },
         }
-        return node.group_id.?;
+        return node.group.?;
     }
 
     /// Traverse the graph and group nodes into clusters (kernels/functions)
