@@ -57,33 +57,33 @@ pub const OpNode = union(ops.OpTypes) {
         op: ops.MapOp,
         x: Input,
         out: Output,
-        op_node_label: []const u8,
+        node_label: []const u8,
     };
     pub const ZipOp = struct {
         op: ops.ZipOp,
         a: Input,
         b: Input,
         out: Output,
-        op_node_label: []const u8,
+        node_label: []const u8,
     };
     pub const ReduceOp = struct {
         op: ops.ReduceOp,
         x: Input,
         dims: []const bool,
         out: Output,
-        op_node_label: []const u8,
+        node_label: []const u8,
     };
     pub const TypeOp = struct {
         op: ops.TypeOp,
         x: Input,
         out: Output,
-        op_node_label: []const u8,
+        node_label: []const u8,
     };
     pub const InitOp = struct {
         op: ops.InitOp,
         value: ops.InitValue,
         out: Output,
-        op_node_label: []const u8,
+        node_label: []const u8,
     };
     MapOp: MapOp,
     ZipOp: ZipOp,
@@ -95,9 +95,9 @@ pub const OpNode = union(ops.OpTypes) {
         switch (self.*) {
             inline else => |op_node| {
                 if (op_node.out.node.group != null) {
-                    writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ op_node.out.node.group.?, @tagName(op_node.op), op_node.out.node.uid, op_node.op_node_label });
+                    writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ op_node.out.node.group.?, @tagName(op_node.op), op_node.out.node.uid, op_node.node_label });
                 } else {
-                    writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(op_node.op), op_node.out.node.uid, op_node.op_node_label });
+                    writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(op_node.op), op_node.out.node.uid, op_node.node_label });
                 }
             },
         }
@@ -119,65 +119,58 @@ pub const OpNode = union(ops.OpTypes) {
         }
     }
 
-    fn getOrInit(comptime op: ops.GraphOp, input: anytype, output: anytype, comptime args: anytype) *OpNode {
+    fn getOrInit(comptime op: ops.GraphOp, comptime input: anytype, output: anytype, comptime args: anytype) *OpNode {
         const Out = @TypeOf(output.*);
         const ptr = @as(*const anyopaque, output);
         if (op_nodes.get(ptr)) |op_node| {
             return op_node;
         } else {
-            const op_node = allocator.create(OpNode) catch unreachable;
-            op_node.* = switch (op) {
-                .MapOp => |map_op| blk: {
-                    trace(input.x);
-                    break :blk .{ .MapOp = .{
-                        .op = map_op,
-                        .x = .{ .node = TensorNode.getOrInit(input.x) },
-                        .out = .{ .node = TensorNode.getOrInit(output) },
-                        .op_node_label = std.fmt.comptimePrint("{s}", .{@tagName(map_op)}),
-                    } };
-                },
-                .ZipOp => |zip_op| blk: {
+            switch (op) {
+                .MapOp, .TypeOp, .ReduceOp => trace(input.x),
+                .ZipOp => {
                     trace(input.a);
                     trace(input.b);
-                    break :blk .{ .ZipOp = .{
-                        .op = zip_op,
-                        .a = .{ .node = TensorNode.getOrInit(input.a) },
-                        .b = .{ .node = TensorNode.getOrInit(input.b) },
-                        .out = .{ .node = TensorNode.getOrInit(output) },
-                        .op_node_label = std.fmt.comptimePrint("{s}", .{@tagName(zip_op)}),
-                    } };
                 },
-                .ReduceOp => |reduce_op| blk: {
-                    trace(input.x);
-                    break :blk .{
-                        .ReduceOp = .{
-                            .op = reduce_op,
-                            .x = .{ .node = TensorNode.getOrInit(input.x) },
-                            .out = .{ .node = TensorNode.getOrInit(output) },
-                            .dims = args.dims,
-                            .op_node_label = std.fmt.comptimePrint("{s}{any}", .{ @tagName(reduce_op), @as([]const bool, args.dims) }),
-                        },
-                    };
-                },
-                .TypeOp => |type_op| blk: {
-                    trace(input.x);
-                    break :blk .{ .TypeOp = .{
-                        .op = type_op,
-                        .x = .{ .node = TensorNode.getOrInit(input.x) },
-                        .op_node_label = switch (type_op) {
-                            .AsType => std.fmt.comptimePrint("{s}{any}", .{ @tagName(type_op), Out.dtype }),
-                            .View, .Broadcast => std.fmt.comptimePrint("{s}{any}", .{ @tagName(type_op), Out.shape }),
-                            .AsStrided => std.fmt.comptimePrint("{s}{{{any},{any}}}", .{ @tagName(type_op), Out.shape, Out.strides }),
-                        },
-                        .out = .{ .node = TensorNode.getOrInit(output) },
-                    } };
-                },
-                .InitOp => |init_op| .{ .InitOp = .{
+                else => {},
+            }
+            const op_node = allocator.create(OpNode) catch unreachable;
+            op_node.* = switch (op) {
+                .MapOp => |map_op| @unionInit(OpNode, @tagName(op), .{
+                    .op = map_op,
+                    .x = .{ .node = TensorNode.getOrInit(input.x) },
+                    .out = .{ .node = TensorNode.getOrInit(output) },
+                    .node_label = std.fmt.comptimePrint("{s}", .{@tagName(map_op)}),
+                }),
+                .ZipOp => |zip_op| @unionInit(OpNode, @tagName(op), .{
+                    .op = zip_op,
+                    .a = .{ .node = TensorNode.getOrInit(input.a) },
+                    .b = .{ .node = TensorNode.getOrInit(input.b) },
+                    .out = .{ .node = TensorNode.getOrInit(output) },
+                    .node_label = std.fmt.comptimePrint("{s}", .{@tagName(zip_op)}),
+                }),
+                .ReduceOp => |reduce_op| @unionInit(OpNode, @tagName(op), .{
+                    .op = reduce_op,
+                    .x = .{ .node = TensorNode.getOrInit(input.x) },
+                    .out = .{ .node = TensorNode.getOrInit(output) },
+                    .dims = args.dims,
+                    .node_label = std.fmt.comptimePrint("{s}{any}", .{ @tagName(reduce_op), @as([]const bool, args.dims) }),
+                }),
+                .TypeOp => |type_op| @unionInit(OpNode, @tagName(op), .{
+                    .op = type_op,
+                    .x = .{ .node = TensorNode.getOrInit(input.x) },
+                    .node_label = switch (type_op) {
+                        .AsType => std.fmt.comptimePrint("{s}{any}", .{ @tagName(type_op), Out.dtype }),
+                        .View, .Broadcast => std.fmt.comptimePrint("{s}{any}", .{ @tagName(type_op), Out.shape }),
+                        .AsStrided => std.fmt.comptimePrint("{s}{{{any},{any}}}", .{ @tagName(type_op), Out.shape, Out.strides }),
+                    },
+                    .out = .{ .node = TensorNode.getOrInit(output) },
+                }),
+                .InitOp => |init_op| @unionInit(OpNode, @tagName(op), .{
                     .op = init_op,
                     .value = args,
                     .out = .{ .node = TensorNode.getOrInit(output) },
-                    .op_node_label = std.fmt.comptimePrint("{s}", .{@tagName(init_op)}),
-                } },
+                    .node_label = std.fmt.comptimePrint("{s}", .{@tagName(init_op)}),
+                }),
             };
             const out = TensorNode.getOrInit(output);
             op_nodes.putNoClobber(out.tensor.ptr, op_node) catch unreachable;
