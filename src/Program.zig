@@ -7,7 +7,7 @@ const Program = @This();
 var arena: std.heap.ArenaAllocator = undefined;
 var allocator: std.mem.Allocator = undefined;
 var loop_hash_table: std.AutoArrayHashMap(usize, *Loop) = undefined;
-var statements: std.AutoArrayHashMap(*Graph.TensorNode, *Statement) = undefined;
+var statements: std.AutoArrayHashMap(*const anyopaque, *Statement) = undefined;
 var subprograms: std.ArrayList(*Program) = undefined;
 
 // Null group id corresponds to global scope
@@ -18,7 +18,7 @@ pub fn init(backing_allocator: std.mem.Allocator) void {
     arena = std.heap.ArenaAllocator.init(backing_allocator);
     allocator = arena.allocator();
     loop_hash_table = std.AutoArrayHashMap(usize, *Loop).init(allocator);
-    statements = std.AutoArrayHashMap(*Graph.TensorNode, *Statement).init(allocator);
+    statements = std.AutoArrayHashMap(*const anyopaque, *Statement).init(allocator);
     subprograms = std.ArrayList(*Program).init(allocator);
 }
 
@@ -32,7 +32,7 @@ fn new() !*Program {
 
 pub fn code(comptime Generator: type, writer: anytype) !void {
     var program = try new();
-    const last_loop = try program.loops(.{ .node = Graph.entry() });
+    const last_loop = try program.loops(.{ .ptr = Graph.entry().tensor.ptr });
     // Last loop will not get added to the program as it is the caller's responsibility to do so
     // This is because only the caller knows if the Graph node corresponding to the loop is fused
     // with the node corresponding to the caller
@@ -56,21 +56,21 @@ pub fn deinit() void {
 
 /// Lower the node to a loop nest representation
 pub fn loops(program: *Program, target: Graph.OpNode.Input) !*Loop {
-    if (loop_hash_table.get(target.node.tensor.id())) |loop| {
+    if (loop_hash_table.get(target.node().tensor.id())) |loop| {
         return loop;
     } else {
         var reg_loops = std.ArrayList(*Loop).init(allocator);
         var acc_loops = std.ArrayList(*Loop).init(allocator);
         var curr_loop = try allocator.create(Loop);
-        for (0..target.node.tensor.ndims) |d| {
+        for (0..target.node().tensor.ndims) |d| {
             curr_loop.* = .{
-                .upper_bound = switch (target.node.opNode().*) {
-                    .ReduceOp => |op_node| op_node.x.node.tensor.shape[d],
-                    else => target.node.tensor.shape[d],
+                .upper_bound = switch (target.node().opNode().*) {
+                    .ReduceOp => |op_node| op_node.x.node().tensor.shape[d],
+                    else => target.node().tensor.shape[d],
                 },
-                .tensor_node = target.node,
+                .tensor_node = target.node(),
                 .dim = d,
-                .acc = switch (target.node.opNode().*) {
+                .acc = switch (target.node().opNode().*) {
                     // If the op is a reduce, check if current dim is being reduced
                     .ReduceOp => |op_node| op_node.dims[d],
                     else => false,
@@ -93,7 +93,7 @@ pub fn loops(program: *Program, target: Graph.OpNode.Input) !*Loop {
                 try reg_loops.append(curr_loop);
             }
             // Move 1 more loop into the nest
-            if (d != target.node.tensor.ndims - 1) {
+            if (d != target.node().tensor.ndims - 1) {
                 const inner_loop: *Loop = try allocator.create(Loop);
                 curr_loop = inner_loop;
             }
@@ -114,18 +114,18 @@ pub fn loops(program: *Program, target: Graph.OpNode.Input) !*Loop {
             curr_loop = acc_loop;
         }
         // Recursive calls to lower the preceding loop
-        switch (target.node.opNode().*) {
+        switch (target.node().opNode().*) {
             .InitOp => {},
             .ZipOp => |op_node| {
                 const a_loop = try program.loops(op_node.a);
                 const b_loop = try program.loops(op_node.b);
                 // Only add the preceding loop to the program if we know its statements are not fused
                 // and the node is associated with the same kernel group
-                if (op_node.a.node.group == target.node.group and !op_node.a.fused) {
+                if (op_node.a.node().group == target.node().group and !op_node.a.fused) {
                     if (!loop_hash_table.contains(a_loop.tensor_node.tensor.id())) {
                         try program.body.contents.append(allocator, .{ .Loop = a_loop });
                     }
-                } else if (op_node.b.node.group == target.node.group and !op_node.b.fused) {
+                } else if (op_node.b.node().group == target.node().group and !op_node.b.fused) {
                     if (!loop_hash_table.contains(b_loop.tensor_node.tensor.id())) {
                         try program.body.contents.append(allocator, .{ .Loop = b_loop });
                     }
@@ -139,7 +139,7 @@ pub fn loops(program: *Program, target: Graph.OpNode.Input) !*Loop {
                     // Only the AsType type op corresponds to a loop action
                     // All other type ops are symbolic / logic happens in the statement itself
                     .AsType => {
-                        if (op_node.x.node.group == target.node.group) {
+                        if (op_node.x.node().group == target.node().group) {
                             if (!loop_hash_table.contains(x_loop.tensor_node.tensor.id())) {
                                 try program.body.contents.append(allocator, .{ .Loop = x_loop });
                             }
@@ -155,7 +155,7 @@ pub fn loops(program: *Program, target: Graph.OpNode.Input) !*Loop {
             // Applies to map and reduce ops
             inline else => |op_node| {
                 const x_loop = try program.loops(op_node.x);
-                if (op_node.x.node.group == target.node.group and !op_node.x.fused) {
+                if (op_node.x.node().group == target.node().group and !op_node.x.fused) {
                     if (!loop_hash_table.contains(x_loop.tensor_node.tensor.id())) {
                         try program.body.contents.append(allocator, .{ .Loop = x_loop });
                     }
@@ -168,11 +168,11 @@ pub fn loops(program: *Program, target: Graph.OpNode.Input) !*Loop {
         // When fusion is happening, statements are nested inside each other
         // TODO: Create a "Read statement" for reading a tensor rather than using null to indicate end of nesting
         const statement: *Statement = try allocator.create(Statement);
-        statement.* = Statement.init(target.node);
-        try statements.putNoClobber(target.node, statement);
+        statement.* = Statement.init(target.node());
+        try statements.putNoClobber(target.ptr, statement);
         try curr_loop.body.contents.append(allocator, .{ .Statement = statement });
-        return switch (target.node.opNode().*) {
-            .TypeOp => |op_node| loop_hash_table.get(op_node.x.node.tensor.id()).?,
+        return switch (target.node().opNode().*) {
+            .TypeOp => |op_node| loop_hash_table.get(op_node.x.node().tensor.id()).?,
             inline else => outer_loop,
         };
         // TODO: Global statements need to be pushed to the global program
@@ -187,8 +187,8 @@ pub const Expression = union(ops.OpTypes) {
         inner: ?*const Expression,
         fn init(target: Graph.OpNode.Input) Operand {
             return .{
-                .node = target.node,
-                .inner = if (target.fused) &statements.get(target.node).?.expr else null,
+                .node = target.node(),
+                .inner = if (target.fused) &statements.get(target.ptr).?.expr else null,
             };
         }
     };
@@ -229,7 +229,7 @@ pub const Statement = struct {
 
     fn init(tensor_node: *Graph.TensorNode) Statement {
         const out = switch (tensor_node.opNode().*) {
-            inline else => |op_node| op_node.out.node,
+            inline else => |op_node| op_node.out.node(),
         };
         return .{
             .expr = switch (tensor_node.opNode().*) {
