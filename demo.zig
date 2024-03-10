@@ -3,6 +3,8 @@ const Allocator = std.mem.Allocator;
 const tesseract = @import("tesseract.zig");
 const Tensor = tesseract.Tensor;
 
+const Schedule = @import("src/Schedule.zig");
+
 // Example of a softmax
 fn softmax(x: anytype, comptime dim: u8) @TypeOf(x) {
     const max = x.max(null);
@@ -28,8 +30,9 @@ pub fn main() !void {
     tesseract.init();
     defer tesseract.deinit();
     tesseract.trace(&out);
-    try tesseract.Fusion.greedyFusion();
+    // try tesseract.Fusion.greedyFusion();
     tesseract.viz(std.debug);
     std.debug.print("\n", .{});
-    try tesseract.code(@import("src/codegen/Zig.zig"), std.debug);
+    Schedule.create();
+    // try tesseract.code(@import("src/codegen/Zig.zig"), std.debug);
 }

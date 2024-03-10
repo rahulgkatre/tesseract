@@ -20,8 +20,8 @@ pub fn range(
 
 pub fn InferredStrides(comptime dtype: dtypes.DType, comptime shape: anytype) type {
     const ndims = shape.len;
-    var offset: usize = 1;
-    var strides: [ndims + 1]usize = undefined;
+    var offset: u64 = 1;
+    var strides: [ndims + 1]u64 = undefined;
     for (0..ndims - 1) |d| {
         const stride = shape[ndims - d - 1] * offset;
         strides[ndims - d - 2] = stride;
@@ -46,8 +46,8 @@ fn Tensor(
     // These generic parameters are private so they will be redeclare as pub conts in the result type
     comptime tensor_dtype: dtypes.DType,
     comptime tensor_ndims: u8,
-    comptime tensor_shape: [tensor_ndims]usize,
-    comptime tensor_strides: [tensor_ndims + 1]usize,
+    comptime tensor_shape: [tensor_ndims]u64,
+    comptime tensor_strides: [tensor_ndims + 1]u64,
 ) type {
     return struct {
         // All the functions for operations are implemented separately
@@ -57,13 +57,13 @@ fn Tensor(
         // Type level constants for comptime shape logic (e.g. @TypeOf(x).ndims)
         pub const dtype: dtypes.DType = tensor_dtype;
         pub const ndims: u8 = tensor_ndims;
-        pub const shape: [ndims]usize = tensor_shape;
-        pub const strides: [ndims + 1]usize = tensor_strides;
+        pub const shape: [ndims]u64 = tensor_shape;
+        pub const strides: [ndims + 1]u64 = tensor_strides;
         pub const size = get_size: {
             // The storage size is 1 + last index calculated by the strides and shape
             // shape[d] - 1 is the last index in dimension d
             // Also incorporate the storage offset
-            var _size: usize = strides[ndims] + 1;
+            var _size: u64 = strides[ndims] + 1;
             for (0..ndims) |d| {
                 _size += (shape[d] - 1) * strides[d];
             }
@@ -71,7 +71,7 @@ fn Tensor(
             break :get_size _size;
         };
         pub const is_contiguous: bool = is_contiguous: {
-            var prev: usize = (1 << @typeInfo(usize).Int.bits) - 1;
+            var prev: u64 = (1 << @typeInfo(u64).Int.bits) - 1;
             for (strides[0..ndims]) |s| {
                 if (s > prev and s > 0) {
                     break :is_contiguous false;
@@ -85,9 +85,9 @@ fn Tensor(
 
         ndims: u8 = ndims,
         dtype: dtypes.DType = dtype,
-        shape: [ndims]usize = shape,
-        size: usize = size,
-        strides: [ndims + 1]usize = strides,
+        shape: [ndims]u64 = shape,
+        size: u64 = size,
+        strides: [ndims + 1]u64 = strides,
         is_contiguous: bool = is_contiguous,
 
         // The trace callback only runs during runtime
@@ -266,11 +266,11 @@ fn Tensor(
         }
 
         pub fn Broadcast(comptime new_shape: anytype, comptime new_dtype: dtypes.DType) type {
-            if (std.mem.eql(usize, &shape, &new_shape)) {
+            if (std.mem.eql(u64, &shape, &new_shape)) {
                 return Self;
             }
             const bc_ndims = @max(ndims, new_shape.len);
-            var bc_shape: [bc_ndims]usize = undefined;
+            var bc_shape: [bc_ndims]u64 = undefined;
             for (0..bc_ndims) |i| {
                 const dim1 = if (i >= ndims) 1 else shape[ndims - i - 1];
                 const dim2 = if (i >= new_shape.len) 1 else new_shape[new_shape.len - i - 1]; // orelse dim1;
@@ -321,13 +321,13 @@ fn Tensor(
                     if (dim < 0 or dim >= ndims) {
                         @compileError("Dimension index for single dimension reduce is out of bounds");
                     }
-                    var reduced_shape: [ndims]usize = undefined;
+                    var reduced_shape: [ndims]u64 = undefined;
                     @memcpy(&reduced_shape, &shape);
                     reduced_shape[dim] = 1;
                     return InferredStrides(dtype, reduced_shape);
                 },
                 .Null, .Void => {
-                    return InferredStrides(dtype, [_]usize{1} ** ndims);
+                    return InferredStrides(dtype, [_]u64{1} ** ndims);
                 },
                 else => {
                     const dims = reduce_dims;
@@ -335,7 +335,7 @@ fn Tensor(
                         @compileError("Length of dimension index array for multi dimension reduce is out of bounds");
                     }
                     var reduce_dim_mask: [ndims]bool = [_]bool{false} ** ndims;
-                    var reduced_shape: [ndims]usize = undefined;
+                    var reduced_shape: [ndims]u64 = undefined;
                     @memcpy(&reduced_shape, &shape);
                     for (0..dims.len) |d| {
                         if (d < 0 or d >= ndims) {
@@ -384,7 +384,7 @@ fn Tensor(
 
             if (m == other_m) {
                 const mm_ndims = @max(ndims, Other.ndims);
-                var mm_shape: [mm_ndims]usize = undefined;
+                var mm_shape: [mm_ndims]u64 = undefined;
                 // Broadcasting check, look only at batch dimensions (everything before last 2 dimensions)
                 for (0..mm_ndims - 2) |i| {
                     const dim1 = if (i >= ndims - 2) 1 else shape[ndims - i - 3];
@@ -414,8 +414,8 @@ fn Tensor(
         // TODO: Need to implement padding to get conv2d to work
         // Might want to practice with Conv1d first
         // pub fn Conv2d(comptime Filter: type, _stride: anytype, _) type {
-        //     const stride: [2]usize = switch (@typeInfo(@TypeOf(_stride))) {
-        //         .ComptimeInt, .Int => [2]usize{ _stride, _stride },
+        //     const stride: [2]u64 = switch (@typeInfo(@TypeOf(_stride))) {
+        //         .ComptimeInt, .Int => [2]u64{ _stride, _stride },
         //         .Array => blk: {
         //             if (_stride.len != 2) {
         //                 @compileError("2D convolution stride must be a 2 element tuple");
@@ -455,8 +455,8 @@ test "permute" {
     comptime {
         const tensor1 = InferredStrides(.i32, .{ 2, 3, 4 }).full(0);
         const tensor2 = tensor1.permute(.{ 0, 2, 1 });
-        try std.testing.expectEqual([_]usize{ 2, 4, 3 }, tensor2.shape);
-        try std.testing.expectEqual([_]usize{ 12, 1, 4, 0 }, tensor2.strides);
+        try std.testing.expectEqual([_]u64{ 2, 4, 3 }, tensor2.shape);
+        try std.testing.expectEqual([_]u64{ 12, 1, 4, 0 }, tensor2.strides);
     }
 }
 
@@ -465,10 +465,10 @@ test "view" {
         const tensor1 = InferredStrides(.i32, .{ 2, 3, 4 }).full(0);
         const tensor2 = tensor1.view(.{ 12, 2 });
         const tensor3 = tensor2.view(.{24});
-        try std.testing.expectEqual([_]usize{ 12, 2 }, tensor2.shape);
-        try std.testing.expectEqual([_]usize{ 2, 1, 0 }, tensor2.strides);
-        try std.testing.expectEqual([_]usize{24}, tensor3.shape);
-        try std.testing.expectEqual([_]usize{ 1, 0 }, tensor3.strides);
+        try std.testing.expectEqual([_]u64{ 12, 2 }, tensor2.shape);
+        try std.testing.expectEqual([_]u64{ 2, 1, 0 }, tensor2.strides);
+        try std.testing.expectEqual([_]u64{24}, tensor3.shape);
+        try std.testing.expectEqual([_]u64{ 1, 0 }, tensor3.strides);
     }
 }
 
@@ -478,20 +478,20 @@ test "as strided" {
         const tensor1 = InferredStrides(.i32, .{ 3, 3 }).full(0);
         const tensor2 = tensor1.asStrided(.{ 2, 2 }, .{ 1, 2, 0 });
 
-        try std.testing.expectEqual([_]usize{ 2, 2 }, tensor2.shape);
+        try std.testing.expectEqual([_]u64{ 2, 2 }, tensor2.shape);
         try std.testing.expectEqual(false, tensor2.is_contiguous);
 
-        const test_indices = [_][2]usize{ .{ 0, 0 }, .{ 0, 1 }, .{ 1, 0 }, .{ 1, 1 } };
-        const expected_flat_indices1 = [_]usize{ 0, 2, 1, 3 };
+        const test_indices = [_][2]u64{ .{ 0, 0 }, .{ 0, 1 }, .{ 1, 0 }, .{ 1, 1 } };
+        const expected_flat_indices1 = [_]u64{ 0, 2, 1, 3 };
         for (expected_flat_indices1, test_indices) |expected_flat_i, test_i| {
             try std.testing.expectEqual(expected_flat_i, utils.ravelMultiIndex(tensor2.ndims, tensor2.strides, test_i));
         }
 
         const tensor3 = tensor1.asStrided(.{ 2, 2 }, .{ 1, 2, 1 });
-        try std.testing.expectEqual([_]usize{ 2, 2 }, tensor2.shape);
+        try std.testing.expectEqual([_]u64{ 2, 2 }, tensor2.shape);
         try std.testing.expectEqual(false, tensor2.is_contiguous);
 
-        const expected_flat_indices2 = [_]usize{ 1, 3, 2, 4 };
+        const expected_flat_indices2 = [_]u64{ 1, 3, 2, 4 };
         for (expected_flat_indices2, test_indices) |expected_flat_i, test_i| {
             try std.testing.expectEqual(expected_flat_i, utils.ravelMultiIndex(tensor3.ndims, tensor3.strides, test_i));
         }
@@ -501,7 +501,7 @@ test "as strided" {
 test "map" {
     const tensor1 = comptime InferredStrides(.i32, .{ 2, 3, 4 }).full(3);
     const tensor2 = comptime tensor1.neg();
-    try std.testing.expectEqual([_]usize{ 2, 3, 4 }, tensor2.shape);
+    try std.testing.expectEqual([_]u64{ 2, 3, 4 }, tensor2.shape);
     Graph.init(std.testing.allocator);
     defer Graph.deinit();
     Graph.trace(&tensor2);
@@ -513,7 +513,7 @@ test "zip" {
     const tensor1 = comptime InferredStrides(.i32, .{ 2, 1, 4 }).full(2);
     const tensor2 = comptime InferredStrides(.i32, .{ 3, 1 }).full(3);
     const tensor3 = comptime tensor1.add(tensor2);
-    try std.testing.expectEqual([_]usize{ 2, 3, 4 }, tensor3.shape);
+    try std.testing.expectEqual([_]u64{ 2, 3, 4 }, tensor3.shape);
     Graph.init(std.testing.allocator);
     defer Graph.deinit();
     Graph.trace(&tensor3);
@@ -525,7 +525,7 @@ test "zip" {
 test "reduce" {
     const tensor1 = comptime InferredStrides(.i32, .{ 2, 3, 4 }).full(5);
     const tensor2 = comptime tensor1.sum(1);
-    try std.testing.expectEqual([_]usize{ 2, 1, 4 }, tensor2.shape);
+    try std.testing.expectEqual([_]u64{ 2, 1, 4 }, tensor2.shape);
     Graph.init(std.testing.allocator);
     defer Graph.deinit();
     Graph.trace(&tensor2);
@@ -537,7 +537,7 @@ test "reduce" {
 test "multiple dim reduce" {
     const tensor1 = comptime InferredStrides(.i32, .{ 2, 3, 4 }).full(5);
     const tensor2 = comptime tensor1.sum(.{ 0, 1 });
-    try std.testing.expectEqual([_]usize{ 1, 1, 4 }, tensor2.shape);
+    try std.testing.expectEqual([_]u64{ 1, 1, 4 }, tensor2.shape);
     Graph.init(std.testing.allocator);
     defer Graph.deinit();
     Graph.trace(&tensor2);
@@ -550,7 +550,7 @@ test "zip reduce" {
     const tensor1 = comptime InferredStrides(.i32, .{ 2, 1, 4 }).full(2);
     const tensor2 = comptime InferredStrides(.i32, .{ 2, 3, 1 }).full(3);
     const tensor3 = comptime tensor1.add(tensor2).sum(1);
-    try std.testing.expectEqual([_]usize{ 2, 1, 4 }, tensor3.shape);
+    try std.testing.expectEqual([_]u64{ 2, 1, 4 }, tensor3.shape);
     Graph.init(std.testing.allocator);
     defer Graph.deinit();
     Graph.trace(&tensor3);

@@ -171,14 +171,17 @@ fn expressionCode(statement: *const Program.Statement, expression: ?*const Progr
         },
         .TypeOp => |expr| {
             if (expr.op == .AsType) {
-                const inner_x = try expressionCode(statement, expr.x.inner.?) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
+                const inner_x = try expressionCode(statement, expr.x.inner) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
                     expr.x.node.tensor.id(),
                     try codegen.unravelCode(allocator, expr.x.node),
                 });
                 defer allocator.free(inner_x);
                 return "TODO";
             } else {
-                return try expressionCode(statement, expr.x.inner.?);
+                return try expressionCode(statement, expr.x.inner) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
+                    expr.x.node.tensor.id(),
+                    try codegen.unravelCode(allocator, expr.x.node),
+                });
             }
         },
     }

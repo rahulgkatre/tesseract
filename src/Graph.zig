@@ -7,8 +7,8 @@ const dtypes = @import("dtypes.zig");
 
 var arena: std.heap.ArenaAllocator = undefined;
 var allocator: std.mem.Allocator = undefined;
-var tensor_nodes: std.AutoHashMap(*const anyopaque, *TensorNode) = undefined;
-var op_nodes: std.AutoHashMap(*const anyopaque, *OpNode) = undefined;
+var tensor_nodes: std.AutoHashMap(usize, *TensorNode) = undefined;
+var op_nodes: std.AutoHashMap(usize, *OpNode) = undefined;
 var reduction_groups: std.AutoHashMap(usize, bool) = undefined;
 var entry_node: ?*TensorNode = null;
 
@@ -19,8 +19,8 @@ pub fn entry() *TensorNode {
 pub fn init(backing_allocator: std.mem.Allocator) void {
     arena = std.heap.ArenaAllocator.init(backing_allocator);
     allocator = arena.allocator();
-    tensor_nodes = std.AutoHashMap(*const anyopaque, *TensorNode).init(allocator);
-    op_nodes = std.AutoHashMap(*const anyopaque, *OpNode).init(allocator);
+    tensor_nodes = std.AutoHashMap(usize, *TensorNode).init(allocator);
+    op_nodes = std.AutoHashMap(usize, *OpNode).init(allocator);
     reduction_groups = std.AutoHashMap(usize, bool).init(allocator);
 }
 
@@ -47,7 +47,7 @@ pub fn addOp(comptime op: ops.GraphOp, input: anytype, output: anytype, comptime
 
 pub const OpNode = union(ops.OpTypes) {
     pub const Input = struct {
-        ptr: *const anyopaque,
+        ptr: usize,
         fused: bool = false,
 
         pub fn node(self: *const Input) *TensorNode {
@@ -55,7 +55,7 @@ pub const OpNode = union(ops.OpTypes) {
         }
     };
     pub const Output = struct {
-        ptr: *const anyopaque,
+        ptr: usize,
 
         pub fn node(self: *const Output) *TensorNode {
             return tensor_nodes.get(self.ptr).?;
@@ -129,7 +129,7 @@ pub const OpNode = union(ops.OpTypes) {
 
     fn getOrInit(comptime op: ops.GraphOp, comptime input: anytype, output: anytype, comptime args: anytype) *OpNode {
         const Out = @TypeOf(output.*);
-        const ptr = @as(*const anyopaque, output);
+        const ptr = @intFromPtr(output);
         if (op_nodes.get(ptr)) |op_node| {
             return op_node;
         } else {
@@ -145,38 +145,38 @@ pub const OpNode = union(ops.OpTypes) {
             op_node.* = switch (op) {
                 .MapOp => |map_op| @unionInit(OpNode, @tagName(op), .{
                     .op = map_op,
-                    .x = .{ .ptr = (input.x) },
-                    .out = .{ .ptr = (output) },
+                    .x = .{ .ptr = @intFromPtr(input.x) },
+                    .out = .{ .ptr = @intFromPtr(output) },
                     .node_label = std.fmt.comptimePrint("{s}", .{@tagName(map_op)}),
                 }),
                 .ZipOp => |zip_op| @unionInit(OpNode, @tagName(op), .{
                     .op = zip_op,
-                    .a = .{ .ptr = (input.a) },
-                    .b = .{ .ptr = (input.b) },
-                    .out = .{ .ptr = (output) },
+                    .a = .{ .ptr = @intFromPtr(input.a) },
+                    .b = .{ .ptr = @intFromPtr(input.b) },
+                    .out = .{ .ptr = @intFromPtr(output) },
                     .node_label = std.fmt.comptimePrint("{s}", .{@tagName(zip_op)}),
                 }),
                 .ReduceOp => |reduce_op| @unionInit(OpNode, @tagName(op), .{
                     .op = reduce_op,
-                    .x = .{ .ptr = (input.x) },
-                    .out = .{ .ptr = (output) },
+                    .x = .{ .ptr = @intFromPtr(input.x) },
+                    .out = .{ .ptr = @intFromPtr(output) },
                     .dims = args.dims,
                     .node_label = std.fmt.comptimePrint("{s}{any}", .{ @tagName(reduce_op), @as([]const bool, args.dims) }),
                 }),
                 .TypeOp => |type_op| @unionInit(OpNode, @tagName(op), .{
                     .op = type_op,
-                    .x = .{ .ptr = (input.x) },
+                    .x = .{ .ptr = @intFromPtr(input.x) },
                     .node_label = switch (type_op) {
                         .AsType => std.fmt.comptimePrint("{s}{any}", .{ @tagName(type_op), Out.dtype }),
                         .View, .Broadcast => std.fmt.comptimePrint("{s}{any}", .{ @tagName(type_op), Out.shape }),
                         .AsStrided => std.fmt.comptimePrint("{s}{{{any},{any}}}", .{ @tagName(type_op), Out.shape, Out.strides }),
                     },
-                    .out = .{ .ptr = (output) },
+                    .out = .{ .ptr = @intFromPtr(output) },
                 }),
                 .InitOp => |init_op| @unionInit(OpNode, @tagName(op), .{
                     .op = init_op,
                     .value = args,
-                    .out = .{ .ptr = (output) },
+                    .out = .{ .ptr = @intFromPtr(output) },
                     .node_label = std.fmt.comptimePrint("{s}", .{@tagName(init_op)}),
                 }),
             };
@@ -189,11 +189,11 @@ pub const OpNode = union(ops.OpTypes) {
 
 pub const TensorNode = struct {
     const Tensor = struct {
-        ptr: *const anyopaque,
+        ptr: usize,
         dtype: dtypes.DType,
         ndims: u8,
-        shape: []const usize,
-        strides: []const usize,
+        shape: []const u64,
+        strides: []const u64,
 
         /// A tensor id is a id for each tensor's underlying buffer, which can be shared
         pub fn id(field_ptr: *const TensorNode.Tensor) usize {
@@ -220,10 +220,14 @@ pub const TensorNode = struct {
     group: ?usize = null,
     cached: bool = false,
 
+    pub fn get(tensor_ptr: usize) *TensorNode {
+        return tensor_nodes.get(tensor_ptr).?;
+    }
+
     /// Get the tensor node or create it and add it to the map
     fn getOrInit(tensor_ptr: anytype) *TensorNode {
         const T = @TypeOf(tensor_ptr.*);
-        const ptr = @as(*const anyopaque, tensor_ptr);
+        const ptr = @intFromPtr(tensor_ptr);
         if (tensor_nodes.get(ptr)) |tensor_node| {
             return tensor_node;
         } else {
@@ -270,11 +274,11 @@ pub const TensorNode = struct {
     }
 };
 
-fn vizHelper(input: OpNode.Input, writer: anytype, visited: []bool) void {
-    if (visited[input.node().uid]) {
+fn vizHelper(target: OpNode.Input, writer: anytype, visited: []bool) void {
+    if (visited[target.node().uid]) {
         return;
     }
-    const op_node = op_nodes.get(input.node().tensor.ptr).?.*;
+    const op_node = op_nodes.get(target.node().tensor.ptr).?.*;
     // Recursive calls
     switch (op_node) {
         .InitOp => op_node.viz(null, writer),
@@ -289,8 +293,8 @@ fn vizHelper(input: OpNode.Input, writer: anytype, visited: []bool) void {
             op_node.viz(unary_op_node.x, writer);
         },
     }
-    if (!input.fused) {
-        input.node().viz(writer, visited);
+    if (!target.fused) {
+        target.node().viz(writer, visited);
     }
 }
 
@@ -302,6 +306,7 @@ pub fn viz(writer: anytype) void {
         \\compound=true;
         \\
     , .{});
+    // TODO: Support for multiple entrypoints in the case of a DAG with multiple sinks
     vizHelper(.{ .ptr = entry().tensor.ptr }, writer, visited);
     writer.print("}}\n", .{});
 }
@@ -378,9 +383,6 @@ pub const Fusion = struct {
             node.cached = true;
         }
         if (node.cached) {
-            if (node.group != group) {
-                node.cached = false;
-            }
             return node.group.?;
         }
         switch (op_nodes.get(node.tensor.ptr).?.*) {
