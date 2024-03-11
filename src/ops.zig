@@ -4,16 +4,21 @@ pub const MapOp = enum { Copy, Neg, Log, Exp, Sqrt, Recip, Sin };
 pub const ZipOp = enum { Add, Mul, Maximum, Mod, LessThan, Equals, Xor };
 pub const ReduceOp = enum { Sum, Max };
 pub const TypeOp = enum { AsStrided, AsType, View, Broadcast };
-pub const InitOp = enum { Input, Full, Rand, Range };
+pub const InitOp = enum {
+    pub const Config = union(InitOp) {
+        Input: void,
+        Full: []const u8,
+        Rand: @import("dtypes.zig").DType,
+        Range: struct {
+            start: []const u8,
+            stop: []const u8,
+        },
+    };
 
-pub const InitValue = union(InitOp) {
-    Input: void,
-    Full: []const u8,
-    Rand: @import("dtypes.zig").DType,
-    Range: struct {
-        start: []const u8,
-        stop: []const u8,
-    },
+    Input,
+    Full,
+    Rand,
+    Range,
 };
 
 pub const MemOps = enum {

@@ -24,15 +24,16 @@ pub fn main() !void {
     const out = comptime blk: {
         const a = Tensor(.f32, .{ 2, 3 }).full(2);
         const b = Tensor(.f32, .{ 3, 16 }).input();
+        // break :blk a.matmul(b);
         break :blk softmax(a.matmul(b), 1);
     };
 
     tesseract.init();
     defer tesseract.deinit();
     tesseract.trace(&out);
-    // try tesseract.Fusion.greedyFusion();
+    try tesseract.Fusion.greedyFusion();
     tesseract.viz(std.debug);
     std.debug.print("\n", .{});
-    Schedule.create();
+    try Schedule.create();
     // try tesseract.code(@import("src/codegen/Zig.zig"), std.debug);
 }

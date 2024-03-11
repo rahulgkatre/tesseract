@@ -502,11 +502,11 @@ test "map" {
     const tensor1 = comptime InferredStrides(.i32, .{ 2, 3, 4 }).full(3);
     const tensor2 = comptime tensor1.neg();
     try std.testing.expectEqual([_]u64{ 2, 3, 4 }, tensor2.shape);
-    Graph.init(std.testing.allocator);
+    Graph.init();
     defer Graph.deinit();
-    Graph.trace(&tensor2);
-    try std.testing.expect(Graph.vertexOf(&tensor2).edge.MapOp.op == .Neg);
-    try std.testing.expect(Graph.vertexOf(&tensor2).edge.MapOp.x == Graph.vertexOf(&tensor1));
+    Graph.trace((&tensor2));
+    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor2)).opNode().MapOp.op == .Neg);
+    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor2)).opNode().MapOp.x.node() == Graph.TensorNode.get(@intFromPtr(&tensor1)));
 }
 
 test "zip" {
@@ -514,36 +514,36 @@ test "zip" {
     const tensor2 = comptime InferredStrides(.i32, .{ 3, 1 }).full(3);
     const tensor3 = comptime tensor1.add(tensor2);
     try std.testing.expectEqual([_]u64{ 2, 3, 4 }, tensor3.shape);
-    Graph.init(std.testing.allocator);
+    Graph.init();
     defer Graph.deinit();
-    Graph.trace(&tensor3);
-    try std.testing.expect(Graph.vertexOf(&tensor3).edge.ZipOp.op == .Add);
-    try std.testing.expect(Graph.vertexOf(&tensor3).edge.ZipOp.a.edge.TypeOp.x == Graph.vertexOf(&tensor1));
-    try std.testing.expect(Graph.vertexOf(&tensor3).edge.ZipOp.b.edge.TypeOp.x == Graph.vertexOf(&tensor2));
+    Graph.trace((&tensor3));
+    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor3)).opNode().ZipOp.op == .Add);
+    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor3)).opNode().ZipOp.a.node().opNode().TypeOp.x.node() == Graph.TensorNode.get(@intFromPtr(&tensor1)));
+    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor3)).opNode().ZipOp.b.node().opNode().TypeOp.x.node() == Graph.TensorNode.get(@intFromPtr(&tensor2)));
 }
 
 test "reduce" {
     const tensor1 = comptime InferredStrides(.i32, .{ 2, 3, 4 }).full(5);
     const tensor2 = comptime tensor1.sum(1);
     try std.testing.expectEqual([_]u64{ 2, 1, 4 }, tensor2.shape);
-    Graph.init(std.testing.allocator);
+    Graph.init();
     defer Graph.deinit();
-    Graph.trace(&tensor2);
-    try std.testing.expect(Graph.vertexOf(&tensor2).edge.ReduceOp.op == .Sum);
-    try std.testing.expect(Graph.vertexOf(&tensor2).edge.ReduceOp.x == Graph.vertexOf(&tensor1));
-    try std.testing.expectEqual(Graph.vertexOf(&tensor2).edge.ReduceOp.dims[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
+    Graph.trace((&tensor2));
+    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor2)).opNode().ReduceOp.op == .Sum);
+    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor2)).opNode().ReduceOp.x.node() == Graph.TensorNode.get(@intFromPtr(&tensor1)));
+    try std.testing.expectEqual(Graph.TensorNode.get(@intFromPtr(&tensor2)).opNode().ReduceOp.dims[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
 }
 
 test "multiple dim reduce" {
     const tensor1 = comptime InferredStrides(.i32, .{ 2, 3, 4 }).full(5);
     const tensor2 = comptime tensor1.sum(.{ 0, 1 });
     try std.testing.expectEqual([_]u64{ 1, 1, 4 }, tensor2.shape);
-    Graph.init(std.testing.allocator);
+    Graph.init();
     defer Graph.deinit();
-    Graph.trace(&tensor2);
-    try std.testing.expect(Graph.vertexOf(&tensor2).edge.ReduceOp.op == .Sum);
-    try std.testing.expect(Graph.vertexOf(&tensor2).edge.ReduceOp.x == Graph.vertexOf(&tensor1));
-    try std.testing.expectEqual(Graph.vertexOf(&tensor2).edge.ReduceOp.dims[0..tensor2.ndims].*, [_]bool{ true, true, false });
+    Graph.trace((&tensor2));
+    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor2)).opNode().ReduceOp.op == .Sum);
+    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor2)).opNode().ReduceOp.x.node() == Graph.TensorNode.get(@intFromPtr(&tensor1)));
+    try std.testing.expectEqual(Graph.TensorNode.get(@intFromPtr(&tensor2)).opNode().ReduceOp.dims[0..tensor2.ndims].*, [_]bool{ true, true, false });
 }
 
 test "zip reduce" {
@@ -551,14 +551,14 @@ test "zip reduce" {
     const tensor2 = comptime InferredStrides(.i32, .{ 2, 3, 1 }).full(3);
     const tensor3 = comptime tensor1.add(tensor2).sum(1);
     try std.testing.expectEqual([_]u64{ 2, 1, 4 }, tensor3.shape);
-    Graph.init(std.testing.allocator);
+    Graph.init();
     defer Graph.deinit();
     Graph.trace(&tensor3);
-    try std.testing.expect(Graph.vertexOf(&tensor3).edge.ReduceOp.op == .Sum);
+    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor3)).opNode().ReduceOp.op == .Sum);
     // Anonymous intermediate tensor that stores tensor1 + tensor2
-    const anon = Graph.vertexOf(&tensor3).edge.ReduceOp.x;
-    try std.testing.expect(anon.edge.ZipOp.a.edge.TypeOp.x == Graph.vertexOf(&tensor1));
-    try std.testing.expect(anon.edge.ZipOp.b.edge.TypeOp.x == Graph.vertexOf(&tensor2));
+    const anon = Graph.TensorNode.get(@intFromPtr(&tensor3)).opNode().ReduceOp.x;
+    try std.testing.expect(anon.node().opNode().ZipOp.a.node().opNode().TypeOp.x.node() == Graph.TensorNode.get(@intFromPtr(&tensor1)));
+    try std.testing.expect(anon.node().opNode().ZipOp.b.node().opNode().TypeOp.x.node() == Graph.TensorNode.get(@intFromPtr(&tensor2)));
 }
 
 test "as_type" {
@@ -597,7 +597,7 @@ test "tensors from functions" {
         break :blk tensor6;
     };
 
-    Graph.init(std.testing.allocator);
+    Graph.init();
     defer Graph.deinit();
     Graph.trace(&out);
     // Graph.viz();

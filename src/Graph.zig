@@ -5,8 +5,8 @@ const utils = @import("utils.zig");
 const Graph = @This();
 const dtypes = @import("dtypes.zig");
 
+var gpa: std.heap.GeneralPurposeAllocator(.{}) = undefined;
 var arena: std.heap.ArenaAllocator = undefined;
-var allocator: std.mem.Allocator = undefined;
 var tensor_nodes: std.AutoHashMap(usize, *TensorNode) = undefined;
 var op_nodes: std.AutoHashMap(usize, *OpNode) = undefined;
 var reduction_groups: std.AutoHashMap(usize, bool) = undefined;
@@ -16,12 +16,12 @@ pub fn entry() *TensorNode {
     return entry_node orelse @panic("Graph has no entrypoint. Remember to call trace() on an output tensor pointer");
 }
 
-pub fn init(backing_allocator: std.mem.Allocator) void {
-    arena = std.heap.ArenaAllocator.init(backing_allocator);
-    allocator = arena.allocator();
-    tensor_nodes = std.AutoHashMap(usize, *TensorNode).init(allocator);
-    op_nodes = std.AutoHashMap(usize, *OpNode).init(allocator);
-    reduction_groups = std.AutoHashMap(usize, bool).init(allocator);
+pub fn init() void {
+    gpa = .{};
+    arena = std.heap.ArenaAllocator.init(gpa.allocator());
+    tensor_nodes = std.AutoHashMap(usize, *TensorNode).init(arena.allocator());
+    op_nodes = std.AutoHashMap(usize, *OpNode).init(arena.allocator());
+    reduction_groups = std.AutoHashMap(usize, bool).init(arena.allocator());
 }
 
 pub fn deinit() void {
@@ -89,7 +89,7 @@ pub const OpNode = union(ops.OpTypes) {
     };
     pub const InitOp = struct {
         op: ops.InitOp,
-        value: ops.InitValue,
+        config: ops.InitOp.Config,
         out: Output,
         node_label: []const u8,
     };
@@ -103,9 +103,9 @@ pub const OpNode = union(ops.OpTypes) {
         switch (self.*) {
             inline else => |op_node| {
                 if (op_node.out.node().group != null) {
-                    writer.print("subgraph cluster{d}{{{s}{d}[label=\"{s}\"];}}\n", .{ op_node.out.node().group.?, @tagName(op_node.op), op_node.out.node().uid, op_node.node_label });
+                    writer.print("subgraph cluster{d}{{{s}{d}[label=\"{d}: {s}\"];}}\n", .{ op_node.out.node().group.?, @tagName(op_node.op), op_node.out.node().uid, op_node.out.node().uid, op_node.node_label });
                 } else {
-                    writer.print("{s}{d}[label=\"{s}\"];\n", .{ @tagName(op_node.op), op_node.out.node().uid, op_node.node_label });
+                    writer.print("{s}{d}[label=\"{d}: {s}\"];\n", .{ @tagName(op_node.op), op_node.out.node().uid, op_node.out.node().uid, op_node.node_label });
                 }
             },
         }
@@ -141,7 +141,7 @@ pub const OpNode = union(ops.OpTypes) {
                 },
                 else => {},
             }
-            const op_node = allocator.create(OpNode) catch unreachable;
+            const op_node = arena.allocator().create(OpNode) catch unreachable;
             op_node.* = switch (op) {
                 .MapOp => |map_op| @unionInit(OpNode, @tagName(op), .{
                     .op = map_op,
@@ -175,7 +175,7 @@ pub const OpNode = union(ops.OpTypes) {
                 }),
                 .InitOp => |init_op| @unionInit(OpNode, @tagName(op), .{
                     .op = init_op,
-                    .value = args,
+                    .config = args,
                     .out = .{ .ptr = @intFromPtr(output) },
                     .node_label = std.fmt.comptimePrint("{s}", .{@tagName(init_op)}),
                 }),
@@ -188,7 +188,7 @@ pub const OpNode = union(ops.OpTypes) {
 };
 
 pub const TensorNode = struct {
-    const Tensor = struct {
+    pub const Tensor = struct {
         ptr: usize,
         dtype: dtypes.DType,
         ndims: u8,
@@ -231,7 +231,7 @@ pub const TensorNode = struct {
         if (tensor_nodes.get(ptr)) |tensor_node| {
             return tensor_node;
         } else {
-            const node = allocator.create(TensorNode) catch unreachable;
+            const node = arena.allocator().create(TensorNode) catch unreachable;
             node.* = .{
                 .tensor = .{
                     .ptr = ptr,
@@ -299,8 +299,8 @@ fn vizHelper(target: OpNode.Input, writer: anytype, visited: []bool) void {
 }
 
 pub fn viz(writer: anytype) void {
-    const visited = allocator.alloc(bool, tensor_nodes.count()) catch unreachable;
-    defer allocator.free(visited);
+    const visited = arena.allocator().alloc(bool, tensor_nodes.count()) catch unreachable;
+    defer arena.allocator().free(visited);
     writer.print(
         \\digraph G {{
         \\compound=true;
@@ -470,7 +470,7 @@ test "manual vertical fusion" {
     // const x = comptime tensor.InferredStrides(.f32, .{ 2, 16 }).full(0);
     // const sm = comptime softmax(x, 1);
 
-    // Graph.init(std.testing.allocator);
+    // Graph.init(std.testing.arena.allocator());
     // defer Graph.deinit();
     // Graph.trace(&sm);
 
@@ -500,7 +500,7 @@ test "greedy fusion" {
         const b = tensor.InferredStrides(.f32, .{ 2048, 4096 }).full(3);
         break :blk a.matmul(b);
     };
-    Graph.init(std.testing.allocator);
+    Graph.init();
     defer Graph.deinit();
     Graph.trace(&out);
     // Graph.Fusion.applyGreedyFusion();
