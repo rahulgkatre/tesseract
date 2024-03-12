@@ -5,7 +5,7 @@ pub const ZipOp = enum { Add, Mul, Maximum, Mod, LessThan, Equals, Xor };
 pub const ReduceOp = enum { Sum, Max };
 pub const TypeOp = enum { AsStrided, AsType, View, Broadcast };
 pub const InitOp = enum {
-    pub const Config = union(InitOp) {
+    pub const Options = union(InitOp) {
         Input: void,
         Full: []const u8,
         Rand: @import("dtypes.zig").DType,

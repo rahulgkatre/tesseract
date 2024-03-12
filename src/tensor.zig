@@ -70,7 +70,7 @@ fn Tensor(
             // The result is the size of the storage needed to visit all indices of the tensor
             break :get_size _size;
         };
-        pub const is_contiguous: bool = is_contiguous: {
+        pub const contiguous: bool = is_contiguous: {
             var prev: u64 = (1 << @typeInfo(u64).Int.bits) - 1;
             for (strides[0..ndims]) |s| {
                 if (s > prev and s > 0) {
@@ -88,17 +88,17 @@ fn Tensor(
         shape: [ndims]u64 = shape,
         size: u64 = size,
         strides: [ndims + 1]u64 = strides,
-        is_contiguous: bool = is_contiguous,
+        contiguous: bool = contiguous,
 
         // The trace callback only runs during runtime
         // and is triggered by Graph.trace
         // Graph also handles the recursive callbacks of the current tensor's dependencies
         trace_fn: *const fn (self: *const Self) void,
 
-        pub fn init(comptime op: ops.GraphOp, op_input: anytype, comptime args: anytype) Self {
+        pub fn init(comptime op: ops.GraphOp, op_input: anytype, comptime op_options: anytype) Self {
             return .{ .trace_fn = struct {
                 fn trace(out: *const Self) void {
-                    Graph.addOp(op, op_input, out, args);
+                    Graph.addOp(op, op_input, out, op_options);
                 }
             }.trace };
         }
@@ -479,7 +479,7 @@ test "as strided" {
         const tensor2 = tensor1.asStrided(.{ 2, 2 }, .{ 1, 2, 0 });
 
         try std.testing.expectEqual([_]u64{ 2, 2 }, tensor2.shape);
-        try std.testing.expectEqual(false, tensor2.is_contiguous);
+        try std.testing.expectEqual(false, tensor2.contiguous);
 
         const test_indices = [_][2]u64{ .{ 0, 0 }, .{ 0, 1 }, .{ 1, 0 }, .{ 1, 1 } };
         const expected_flat_indices1 = [_]u64{ 0, 2, 1, 3 };
@@ -489,7 +489,7 @@ test "as strided" {
 
         const tensor3 = tensor1.asStrided(.{ 2, 2 }, .{ 1, 2, 1 });
         try std.testing.expectEqual([_]u64{ 2, 2 }, tensor2.shape);
-        try std.testing.expectEqual(false, tensor2.is_contiguous);
+        try std.testing.expectEqual(false, tensor2.contiguous);
 
         const expected_flat_indices2 = [_]u64{ 1, 3, 2, 4 };
         for (expected_flat_indices2, test_indices) |expected_flat_i, test_i| {
@@ -505,8 +505,8 @@ test "map" {
     Graph.init();
     defer Graph.deinit();
     Graph.trace((&tensor2));
-    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor2)).opNode().MapOp.op == .Neg);
-    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor2)).opNode().MapOp.x.node() == Graph.TensorNode.get(@intFromPtr(&tensor1)));
+    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor2)).op_node.MapOp.op == .Neg);
+    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor2)).op_node.MapOp.x.tensor == Graph.TensorNode.get(@intFromPtr(&tensor1)));
 }
 
 test "zip" {
@@ -517,9 +517,9 @@ test "zip" {
     Graph.init();
     defer Graph.deinit();
     Graph.trace((&tensor3));
-    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor3)).opNode().ZipOp.op == .Add);
-    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor3)).opNode().ZipOp.a.node().opNode().TypeOp.x.node() == Graph.TensorNode.get(@intFromPtr(&tensor1)));
-    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor3)).opNode().ZipOp.b.node().opNode().TypeOp.x.node() == Graph.TensorNode.get(@intFromPtr(&tensor2)));
+    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor3)).op_node.ZipOp.op == .Add);
+    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor3)).op_node.ZipOp.a.tensor.op_node.TypeOp.x.tensor == Graph.TensorNode.get(@intFromPtr(&tensor1)));
+    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor3)).op_node.ZipOp.b.tensor.op_node.TypeOp.x.tensor == Graph.TensorNode.get(@intFromPtr(&tensor2)));
 }
 
 test "reduce" {
@@ -529,9 +529,9 @@ test "reduce" {
     Graph.init();
     defer Graph.deinit();
     Graph.trace((&tensor2));
-    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor2)).opNode().ReduceOp.op == .Sum);
-    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor2)).opNode().ReduceOp.x.node() == Graph.TensorNode.get(@intFromPtr(&tensor1)));
-    try std.testing.expectEqual(Graph.TensorNode.get(@intFromPtr(&tensor2)).opNode().ReduceOp.dims[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
+    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor2)).op_node.ReduceOp.op == .Sum);
+    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor2)).op_node.ReduceOp.x.tensor == Graph.TensorNode.get(@intFromPtr(&tensor1)));
+    try std.testing.expectEqual(Graph.TensorNode.get(@intFromPtr(&tensor2)).op_node.ReduceOp.dims[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
 }
 
 test "multiple dim reduce" {
@@ -541,9 +541,9 @@ test "multiple dim reduce" {
     Graph.init();
     defer Graph.deinit();
     Graph.trace((&tensor2));
-    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor2)).opNode().ReduceOp.op == .Sum);
-    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor2)).opNode().ReduceOp.x.node() == Graph.TensorNode.get(@intFromPtr(&tensor1)));
-    try std.testing.expectEqual(Graph.TensorNode.get(@intFromPtr(&tensor2)).opNode().ReduceOp.dims[0..tensor2.ndims].*, [_]bool{ true, true, false });
+    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor2)).op_node.ReduceOp.op == .Sum);
+    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor2)).op_node.ReduceOp.x.tensor == Graph.TensorNode.get(@intFromPtr(&tensor1)));
+    try std.testing.expectEqual(Graph.TensorNode.get(@intFromPtr(&tensor2)).op_node.ReduceOp.dims[0..tensor2.ndims].*, [_]bool{ true, true, false });
 }
 
 test "zip reduce" {
@@ -554,11 +554,11 @@ test "zip reduce" {
     Graph.init();
     defer Graph.deinit();
     Graph.trace(&tensor3);
-    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor3)).opNode().ReduceOp.op == .Sum);
+    try std.testing.expect(Graph.TensorNode.get(@intFromPtr(&tensor3)).op_node.ReduceOp.op == .Sum);
     // Anonymous intermediate tensor that stores tensor1 + tensor2
-    const anon = Graph.TensorNode.get(@intFromPtr(&tensor3)).opNode().ReduceOp.x;
-    try std.testing.expect(anon.node().opNode().ZipOp.a.node().opNode().TypeOp.x.node() == Graph.TensorNode.get(@intFromPtr(&tensor1)));
-    try std.testing.expect(anon.node().opNode().ZipOp.b.node().opNode().TypeOp.x.node() == Graph.TensorNode.get(@intFromPtr(&tensor2)));
+    const anon = Graph.TensorNode.get(@intFromPtr(&tensor3)).op_node.ReduceOp.x;
+    try std.testing.expect(anon.tensor.op_node.ZipOp.a.tensor.op_node.TypeOp.x.tensor == Graph.TensorNode.get(@intFromPtr(&tensor1)));
+    try std.testing.expect(anon.tensor.op_node.ZipOp.b.tensor.op_node.TypeOp.x.tensor == Graph.TensorNode.get(@intFromPtr(&tensor2)));
 }
 
 test "as_type" {

@@ -44,11 +44,11 @@ pub fn xor(comptime a: anytype, comptime b: anytype) @TypeOf(a.zip(.Xor, b)) {
 }
 
 // ReduceOps
-pub fn sum(comptime x: anytype, comptime reduce_dims: anytype) @TypeOf(x.*).Reduce(reduce_dims) {
-    return x.reduce(.Sum, reduce_dims);
+pub fn sum(comptime x: anytype, comptime dims: anytype) @TypeOf(x.*).Reduce(dims) {
+    return x.reduce(.Sum, dims);
 }
-pub fn max(comptime x: anytype, comptime reduce_dims: anytype) @TypeOf(x.*).Reduce(reduce_dims) {
-    return x.reduce(.Max, reduce_dims);
+pub fn max(comptime x: anytype, comptime dims: anytype) @TypeOf(x.*).Reduce(dims) {
+    return x.reduce(.Max, dims);
 }
 
 // Compounded

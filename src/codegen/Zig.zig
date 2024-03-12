@@ -33,7 +33,7 @@ const reg_loop_header_fmt =
 fn headerCode(loop: *Program.Loop, writer: anytype) std.mem.Allocator.Error!void {
     const loop_var_code = try codegen.loopVarCode(allocator, loop);
     if (loop.acc) {
-        return writer.print(acc_loop_header_fmt, .{ loop.tensor_node.tensor.id(), "0", loop.upper_bound, loop_var_code });
+        return writer.print(acc_loop_header_fmt, .{ loop.tensor_node.memId(), "0", loop.upper_bound, loop_var_code });
     } else {
         return writer.print(reg_loop_header_fmt, .{ loop.upper_bound, loop_var_code });
     }
@@ -59,7 +59,7 @@ const reg_loop_footer_fmt =
 fn footerCode(loop: *Program.Loop, writer: anytype) !void {
     if (loop.acc) {
         const unravel_code = try codegen.unravelCode(allocator, loop.tensor_node);
-        return writer.print(acc_loop_footer_fmt, .{ loop.tensor_node.tensor.id(), unravel_code, loop.tensor_node.tensor.id() });
+        return writer.print(acc_loop_footer_fmt, .{ loop.tensor_node.memId(), unravel_code, loop.tensor_node.memId() });
     } else {
         return writer.print(reg_loop_footer_fmt, .{});
     }
@@ -117,9 +117,9 @@ fn reduceOpCode(op: ops.ReduceOp, x: []const u8, out_id: usize) ![]const u8 {
 fn statementCode(statement: *const Program.Statement, writer: anytype) !void {
     writer.print("{s} = {s};\n", .{
         switch (statement.expr) {
-            .ReduceOp => try std.fmt.allocPrint(allocator, "acc{d}", .{statement.out.tensor.id()}),
+            .ReduceOp => try std.fmt.allocPrint(allocator, "acc{d}", .{statement.out.memId()}),
             inline else => try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
-                statement.out.tensor.id(),
+                statement.out.memId(),
                 try codegen.unravelCode(allocator, statement.out),
             }),
         },
@@ -134,28 +134,28 @@ fn expressionCode(statement: *const Program.Statement, expression: ?*const Progr
     switch (expression.?.*) {
         .MapOp => |expr| {
             const inner_x = try expressionCode(statement, expr.x.inner) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
-                expr.x.node.tensor.id(),
+                expr.x.tensor.memId(),
                 try codegen.unravelCode(allocator, expr.x.node),
             });
-            return try mapOpCode(expr.op, expr.x.node.tensor.dtype, inner_x);
+            return try mapOpCode(expr.op, expr.x.tensor.tensor.dtype, inner_x);
         },
         .ZipOp => |expr| {
             const inner_a = try expressionCode(statement, expr.a.inner) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
-                expr.a.node.tensor.id(),
+                expr.a.tensor.memId(),
                 try codegen.broadcastedUnravelCode(allocator, expr.a.node, statement.out),
             });
             const inner_b = try expressionCode(statement, expr.b.inner) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
-                expr.b.node.tensor.id(),
+                expr.b.tensor.memId(),
                 try codegen.broadcastedUnravelCode(allocator, expr.b.node, statement.out),
             });
             return try zipOpCode(expr.op, inner_a, inner_b);
         },
         .ReduceOp => |expr| {
             const inner_x = try expressionCode(statement, expr.x.inner) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
-                expr.x.node.tensor.id(),
+                expr.x.tensor.memId(),
                 try codegen.unravelCode(allocator, expr.x.node),
             });
-            return try reduceOpCode(expr.op, inner_x, statement.out.tensor.id());
+            return try reduceOpCode(expr.op, inner_x, statement.out.memId());
         },
         .InitOp => |expr| {
             if (expr.op != .Input) {
@@ -172,14 +172,14 @@ fn expressionCode(statement: *const Program.Statement, expression: ?*const Progr
         .TypeOp => |expr| {
             if (expr.op == .AsType) {
                 const inner_x = try expressionCode(statement, expr.x.inner) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
-                    expr.x.node.tensor.id(),
+                    expr.x.tensor.memId(),
                     try codegen.unravelCode(allocator, expr.x.node),
                 });
                 defer allocator.free(inner_x);
                 return "TODO";
             } else {
                 return try expressionCode(statement, expr.x.inner) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
-                    expr.x.node.tensor.id(),
+                    expr.x.tensor.memId(),
                     try codegen.unravelCode(allocator, expr.x.node),
                 });
             }
