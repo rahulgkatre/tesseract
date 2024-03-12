@@ -145,7 +145,7 @@ fn Tensor(
         /// but intermediate tensors can be eliminated through optimization.
         pub fn copy(x: *const Self) InferredStrides(dtype, shape) {
             const Out = InferredStrides(dtype, shape);
-            return Out.init(.{ .MapOp = .Copy }, .{ .x = x }, {});
+            return Out.init(.{ .MapOp = .Id }, .{ .x = x }, {});
         }
 
         fn Permute(comptime perm: [ndims]u8) type {

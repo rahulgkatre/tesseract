@@ -75,7 +75,7 @@ fn loopCode(program: *const Program, loop: *Program.Loop, writer: anytype) std.m
 
 fn mapOpCode(op: ops.MapOp, dtype: dtypes.DType, x: []const u8) ![]const u8 {
     return try switch (op) {
-        .Copy => std.fmt.allocPrint(allocator, "{s}", .{x}),
+        .Id => std.fmt.allocPrint(allocator, "{s}", .{x}),
         .Neg => if (dtypes.isBool(dtype)) std.fmt.allocPrint(allocator, "!({s})", .{x}) else std.fmt.allocPrint(allocator, "-({s})", .{x}),
         .Log => std.fmt.allocPrint(allocator, "@log({s})", .{x}),
         .Exp => std.fmt.allocPrint(allocator, "@exp({s})", .{x}),

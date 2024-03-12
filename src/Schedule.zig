@@ -152,7 +152,7 @@ pub const Loop = struct {
             else => {},
         }
 
-        const statement = if (try Statement.getOrInit(target)) |stmt| stmt else return;
+        const statement = try Statement.getOrInit(target);
 
         switch (target.tensor.op_node) {
             .InitOp => {},
@@ -185,7 +185,7 @@ pub const Loop = struct {
                 .tensor = target.tensor,
             };
         }
-        // Sort the loops such that all
+        // Sort the loops such that all reduced dims correspond to innermost loops
         std.sort.block(*const Loop, loop_nest, {}, loopCompare);
         // Nest the loops
         const outermost_loop = loop_nest[0];
@@ -196,7 +196,6 @@ pub const Loop = struct {
         try loop_nest[ndims - 1].body.append(arena.allocator(), .{ .statement = statement });
         try global_body.append(arena.allocator(), .{ .loop = outermost_loop });
         try loops.putNoClobber(target.tensor.uniqueId(), outermost_loop);
-        std.debug.print("created loop for {d}\n", .{target.tensor.uniqueId()});
     }
 
     /// Custom jsonStringify implementation that internally converts a Loop to a JsonCompatibleLoop and stringifies that
@@ -223,35 +222,37 @@ pub const Statement = struct {
             tensor: *Graph.TensorNode,
             expression: *const Expression,
             fn get(target: Graph.OpNode.Input) std.mem.Allocator.Error!Operand {
-                if (operands.get(target.tensor.uniqueId())) |operand| {
-                    return operand;
-                }
+                // if (operands.get(target.tensor.uniqueId())) |operand| {
+                //     return operand;
+                // }
 
-                // TODO: Fix this and Statement so that statement is never null
-                // Statement is only null when InitOp == Input
-                const operand: Statement.Expression.Operand = if (target.fused) make_operand: {
-                    const expr = switch (target.tensor.op_node) {
-                        .InitOp => |op_node| make_init_expression: {
+                if (target.fused) {
+                    switch (target.tensor.op_node) {
+                        .InitOp => |op_node| {
                             if (op_node.op == .Input) {
-                                break :make_operand .{ .tensor = target.tensor };
-                            } else if (try Statement.getOrInit(target)) |stmt| {
-                                break :make_init_expression &stmt.expr;
+                                return .{ .tensor = target.tensor };
+                            } else {
+                                return .{ .expression = &(try Statement.getOrInit(target)).expression };
                             }
-                            break :make_init_expression null;
                         },
-                        .TypeOp => if (try Statement.getOrInit(target)) |stmt| &stmt.expr else null,
-                        else => blk: {
-                            break :blk if (try Statement.getOrInit(target)) |stmt| &stmt.expr else null;
+                        .TypeOp => |op_node| {
+                            if (op_node.op == .AsType) {
+                                return .{ .expression = &(try Statement.getOrInit(target)).expression };
+                            } else {
+                                switch (op_node.x.tensor.op_node) {
+                                    .InitOp => |x_op_node| if (x_op_node.op == .Input) {
+                                        return .{ .tensor = x_op_node.out.tensor };
+                                    },
+                                    else => {},
+                                }
+                                return .{ .expression = &(try Statement.getOrInit(op_node.x)).expression };
+                            }
                         },
-                    };
-                    if (expr) |expression| {
-                        break :make_operand .{ .expression = expression };
-                    } else {
-                        break :make_operand .{ .tensor = target.tensor };
+                        else => return .{ .expression = &(try Statement.getOrInit(target)).expression },
                     }
-                } else .{ .tensor = target.tensor };
-                try operands.put(target.tensor.uniqueId(), operand);
-                return operand;
+                } else {
+                    return .{ .tensor = target.tensor };
+                }
             }
         };
         const MapOp = struct {
@@ -273,7 +274,7 @@ pub const Statement = struct {
         };
         const InitOp = struct {
             op: ops.InitOp,
-            options: ops.InitOp.Options,
+            args: ops.InitOp.Args,
         };
         MapOp: MapOp,
         ZipOp: ZipOp,
@@ -285,20 +286,28 @@ pub const Statement = struct {
         tensor: *Graph.TensorNode,
     };
     group: ?usize,
-    expr: Expression,
+    expression: Expression,
     out: Output,
 
-    fn getOrInit(target: Graph.OpNode.Input) std.mem.Allocator.Error!?*Statement {
+    fn getOrInit(target: Graph.OpNode.Input) std.mem.Allocator.Error!*Statement {
         if (statements.get(target.tensor.uniqueId())) |stmt| {
             return stmt;
         } else {
             const tmp_statement: Statement = .{
                 .group = target.tensor.group,
-                .expr = switch (target.tensor.op_node) {
-                    .InitOp => |op_node| if (op_node.op != .Input) .{ .InitOp = .{
-                        .op = op_node.op,
-                        .options = op_node.options,
-                    } } else return null,
+                .expression = switch (target.tensor.op_node) {
+                    .InitOp => |op_node| if (op_node.op != .Input) .{
+                        .InitOp = .{
+                            .op = op_node.op,
+                            .args = op_node.args,
+                            // Workaround: since we don't know what the statement is being used for
+                            // just put an identity mapping to the input
+                            // TODO: Fix this
+                        },
+                    } else .{ .MapOp = .{
+                        .op = .Id,
+                        .x = .{ .tensor = op_node.out.tensor },
+                    } },
                     .ZipOp => |op_node| .{ .ZipOp = .{
                         .op = op_node.op,
                         .a = try Expression.Operand.get(op_node.a),
@@ -316,12 +325,12 @@ pub const Statement = struct {
                         .op = op_node.op,
                         .x = try Expression.Operand.get(op_node.x),
                     } } else {
-                        std.debug.print("{any}\n", .{op_node.x.tensor.uniqueId()});
+                        // Get the statement for the input to the view-changing operation
                         const statement = try Statement.getOrInit(op_node.x);
-                        if (statement) |stmt| {
-                            stmt.out.tensor = target.tensor;
-                            return stmt;
-                        }
+                        // The statement tensor needs to reflect the target's view of the memory
+                        statement.out.tensor.ndims = target.tensor.ndims;
+                        statement.out.tensor.shape = target.tensor.shape;
+                        statement.out.tensor.strides = target.tensor.strides;
                         return statement;
                     },
                 },
@@ -338,7 +347,9 @@ pub const Statement = struct {
 pub fn create() !void {
     init();
     defer deinit();
-    Loop.create(.{ .tensor = Graph.entry() }) catch unreachable;
+    for (Graph.dagSinks()) |entry| {
+        Loop.create(.{ .tensor = entry }) catch unreachable;
+    }
 
     const slice = try Json.toJsonCompatibleSlice(global_body);
     defer Json.deinitJsonCompatibleSlice(slice);
