@@ -27,8 +27,6 @@ pub fn deinit() void {
     _ = gpa.deinit();
 }
 
-// TODO: When parsing a JSON, either recreate the nodes too
-
 const ScheduleItemEnum = enum {
     loop,
     statement,
@@ -38,6 +36,7 @@ const ScheduleItem = union(ScheduleItemEnum) {
     statement: *Statement,
 };
 
+// TODO: When parsing a JSON, either recreate the nodes too
 const Json = struct {
     /// MultiArrayList does not automatically stringify so the default jsonStringify function
     /// does not work. To make loops JSON compatible, the body is replaced with a slice of unions.
@@ -104,7 +103,6 @@ const Json = struct {
         loop.dim = parsed_loop.dim;
         loop.reduce = parsed_loop.reduce;
         loop.bound = parsed_loop.bound;
-        loop.from_json = true;
         loop.body = .{};
         try loop.body.ensureTotalCapacity(arena.allocator(), parsed_loop.body.len);
         for (parsed_loop.body) |item| {
@@ -124,7 +122,6 @@ pub const Loop = struct {
     bound: u64,
     tensor: *Graph.TensorNode,
     body: std.MultiArrayList(ScheduleItem),
-    from_json: bool = false,
 
     /// Calculate an ordinal value used for sorting a loop nest
     /// Reduce loops are given a larger number so that they are the innermost loops
@@ -149,13 +146,6 @@ pub const Loop = struct {
         }
         switch (target.tensor.op_node) {
             .InitOp => if (target.tensor.op_node.InitOp.op == .Input) return,
-            else => {},
-        }
-
-        const statement = try Statement.getOrInit(target);
-
-        switch (target.tensor.op_node) {
-            .InitOp => {},
             .ZipOp => |op_node| {
                 try Loop.create(op_node.a);
                 try Loop.create(op_node.b);
@@ -164,7 +154,7 @@ pub const Loop = struct {
                 try Loop.create(op_node.x);
             },
         }
-
+        // Don't generate loops or statements for a fused output
         if (target.fused) {
             return;
         }
@@ -193,7 +183,7 @@ pub const Loop = struct {
             try outer.body.append(arena.allocator(), .{ .loop = inner });
         }
 
-        try loop_nest[ndims - 1].body.append(arena.allocator(), .{ .statement = statement });
+        try loop_nest[ndims - 1].body.append(arena.allocator(), .{ .statement = try Statement.getOrInit(target) });
         try global_body.append(arena.allocator(), .{ .loop = outermost_loop });
         try loops.putNoClobber(target.tensor.uniqueId(), outermost_loop);
     }
@@ -217,20 +207,19 @@ pub const Loop = struct {
 
 pub const Statement = struct {
     pub const Expression = union(ops.OpTypes) {
-        const OperandEnum = enum { tensor, expression };
-        const Operand = union(OperandEnum) {
-            tensor: *Graph.TensorNode,
+        const Operand = union(enum) {
+            global: *Graph.TensorNode,
             expression: *const Expression,
-            fn get(target: Graph.OpNode.Input) std.mem.Allocator.Error!Operand {
-                // if (operands.get(target.tensor.uniqueId())) |operand| {
-                //     return operand;
-                // }
+            accumulator: *Graph.TensorNode,
+            local: *Graph.TensorNode,
 
+            fn init(target: Graph.OpNode.Input) std.mem.Allocator.Error!Operand {
                 if (target.fused) {
                     switch (target.tensor.op_node) {
                         .InitOp => |op_node| {
                             if (op_node.op == .Input) {
-                                return .{ .tensor = target.tensor };
+                                // Input is always global
+                                return .{ .global = target.tensor };
                             } else {
                                 return .{ .expression = &(try Statement.getOrInit(target)).expression };
                             }
@@ -241,7 +230,8 @@ pub const Statement = struct {
                             } else {
                                 switch (op_node.x.tensor.op_node) {
                                     .InitOp => |x_op_node| if (x_op_node.op == .Input) {
-                                        return .{ .tensor = x_op_node.out.tensor };
+                                        // Input is always global
+                                        return .{ .global = x_op_node.out.tensor };
                                     },
                                     else => {},
                                 }
@@ -251,7 +241,13 @@ pub const Statement = struct {
                         else => return .{ .expression = &(try Statement.getOrInit(target)).expression },
                     }
                 } else {
-                    return .{ .tensor = target.tensor };
+                    if (target.tensor.cached) {
+                        // If the tensor is cached, the operand tensor is local
+                        return .{ .local = target.tensor };
+                    } else {
+                        // Otherwise the operand tensor is a global access
+                        return .{ .global = target.tensor };
+                    }
                 }
             }
         };
@@ -282,8 +278,10 @@ pub const Statement = struct {
         TypeOp: TypeOp,
         InitOp: InitOp,
     };
-    const Output = struct {
-        tensor: *Graph.TensorNode,
+    const Output = union(enum) {
+        global: *Graph.TensorNode,
+        accumulator: *Graph.TensorNode,
+        local: *Graph.TensorNode,
     };
     group: ?usize,
     expression: Expression,
@@ -296,45 +294,57 @@ pub const Statement = struct {
             const tmp_statement: Statement = .{
                 .group = target.tensor.group,
                 .expression = switch (target.tensor.op_node) {
-                    .InitOp => |op_node| if (op_node.op != .Input) .{
-                        .InitOp = .{
-                            .op = op_node.op,
-                            .args = op_node.args,
-                            // Workaround: since we don't know what the statement is being used for
-                            // just put an identity mapping to the input
-                            // TODO: Fix this
-                        },
-                    } else .{ .MapOp = .{
+                    // Workaround: since we don't know what the statement is being used for
+                    // just put an identity mapping to the input
+                    // TODO: Fix this so that it can be replaced with unreachable
+                    .InitOp => |op_node| if (op_node.op != .Input) .{ .InitOp = .{
+                        .op = op_node.op,
+                        .args = op_node.args,
+                    } } else .{ .MapOp = .{
                         .op = .Id,
-                        .x = .{ .tensor = op_node.out.tensor },
+                        .x = .{ .global = op_node.out.tensor },
                     } },
                     .ZipOp => |op_node| .{ .ZipOp = .{
                         .op = op_node.op,
-                        .a = try Expression.Operand.get(op_node.a),
-                        .b = try Expression.Operand.get(op_node.b),
+                        .a = try Expression.Operand.init(op_node.a),
+                        .b = try Expression.Operand.init(op_node.b),
                     } },
                     .MapOp => |op_node| .{ .MapOp = .{
                         .op = op_node.op,
-                        .x = try Expression.Operand.get(op_node.x),
+                        .x = try Expression.Operand.init(op_node.x),
                     } },
-                    .ReduceOp => |op_node| .{ .ReduceOp = .{
-                        .op = op_node.op,
-                        .x = try Expression.Operand.get(op_node.x),
-                    } },
+                    .ReduceOp => |op_node| .{
+                        .ReduceOp = .{
+                            // TODO: Return the associated zip op for the reduce op
+                            // with one operand being the accumulator for the output and the other being x itself
+                            .op = op_node.op,
+                            .x = try Expression.Operand.init(op_node.x),
+                        },
+                    },
                     .TypeOp => |op_node| if (op_node.op == .AsType) .{ .TypeOp = .{
                         .op = op_node.op,
-                        .x = try Expression.Operand.get(op_node.x),
+                        .x = try Expression.Operand.init(op_node.x),
                     } } else {
                         // Get the statement for the input to the view-changing operation
                         const statement = try Statement.getOrInit(op_node.x);
                         // The statement tensor needs to reflect the target's view of the memory
-                        statement.out.tensor.ndims = target.tensor.ndims;
-                        statement.out.tensor.shape = target.tensor.shape;
-                        statement.out.tensor.strides = target.tensor.strides;
+                        switch (statement.out) {
+                            inline else => |out| {
+                                out.ndims = target.tensor.ndims;
+                                out.shape = target.tensor.shape;
+                                out.strides = target.tensor.strides;
+                            },
+                        }
+
                         return statement;
                     },
                 },
-                .out = .{ .tensor = target.tensor },
+                .out = switch (target.tensor.op_node) {
+                    // The output of a reduce op is always an accumulator
+                    // A map op will be pushed in after the reduce loop to assign the accumulator to the global tensor
+                    .ReduceOp => .{ .accumulator = target.tensor },
+                    else => if (target.tensor.cached) .{ .local = target.tensor } else .{ .global = target.tensor },
+                },
             };
             const statement = try arena.allocator().create(Statement);
             statement.* = tmp_statement;
