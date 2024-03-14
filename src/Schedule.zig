@@ -22,6 +22,22 @@ pub fn init() void {
     global_body = .{};
 }
 
+pub fn create() !void {
+    init();
+    defer deinit();
+    for (Graph.dagSinks()) |entry| {
+        Loop.create(.{ .tensor = entry }) catch unreachable;
+    }
+
+    const slice = try Json.toJsonCompatibleSlice(global_body);
+    defer Json.deinitJsonCompatibleSlice(slice);
+    const str = try std.json.stringifyAlloc(gpa.allocator(), slice, .{
+        .whitespace = .indent_2,
+    });
+    defer gpa.allocator().free(str);
+    std.debug.print("\n{s}\n", .{str});
+}
+
 pub fn deinit() void {
     arena.deinit();
     _ = gpa.deinit();
@@ -353,22 +369,6 @@ pub const Statement = struct {
         }
     }
 };
-
-pub fn create() !void {
-    init();
-    defer deinit();
-    for (Graph.dagSinks()) |entry| {
-        Loop.create(.{ .tensor = entry }) catch unreachable;
-    }
-
-    const slice = try Json.toJsonCompatibleSlice(global_body);
-    defer Json.deinitJsonCompatibleSlice(slice);
-    const str = try std.json.stringifyAlloc(gpa.allocator(), slice, .{
-        .whitespace = .indent_2,
-    });
-    defer gpa.allocator().free(str);
-    std.debug.print("\n{s}\n", .{str});
-}
 
 test "single loop deserialization" {
     init();
