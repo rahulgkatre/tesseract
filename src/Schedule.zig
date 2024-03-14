@@ -273,7 +273,7 @@ pub const Statement = struct {
                         else => return .{ .expression = &(try Statement.getOrInit(target)).expression },
                     }
                 } else {
-                    if (target.tensor.cached) {
+                    if (target.tensor.isCached()) {
                         return .{ .local = target.tensor };
                     }
                     // Otherwise the operand tensor is a global access
@@ -375,7 +375,7 @@ pub const Statement = struct {
                     // The output of a reduce op is always an accumulator
                     // A map op will be pushed in after the reduce loop to assign the accumulator to the global tensor
                     .ReduceOp => .{ .local = target.tensor },
-                    else => if (target.tensor.cached) .{ .local = target.tensor } else .{ .global = target.tensor },
+                    else => if (target.tensor.isCached()) .{ .local = target.tensor } else .{ .global = target.tensor },
                 },
             };
             const statement = try arena.allocator().create(Statement);

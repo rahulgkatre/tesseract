@@ -54,10 +54,6 @@ pub const OpNode = union(ops.OpTypes) {
         fn init(ptr: anytype) Input {
             const tensor = TensorNode.get(ptr);
             tensor.consumer_count += 1;
-            if (tensor.consumer_count > 1) {
-                tensor.cached = true;
-            }
-            // tensors.put(ptr, tensor);
             return .{
                 .tensor = TensorNode.get(ptr),
             };
@@ -191,7 +187,6 @@ pub const TensorNode = struct {
     uid: u64,
     group: ?u64 = null,
     consumer_count: u16 = 0,
-    cached: bool = false,
     global: bool = false,
     op_node: OpNode = undefined,
 
@@ -216,10 +211,14 @@ pub const TensorNode = struct {
             .uid = self.uid,
             .mem_id = self.memoryView(),
             .group = self.group,
-            .cached = self.cached,
+            .cached = self.isCached(),
             .global = self.global,
         };
         try write_stream.write(compatible);
+    }
+
+    pub fn isCached(tensor: *const TensorNode) bool {
+        return (tensor.consumer_count > 1 and tensor.group != tensor.uid);
     }
 
     pub fn uniqueId(self: *const TensorNode) u64 {
@@ -324,10 +323,10 @@ pub fn viz(writer: anytype) void {
             }
             switch (tensor.op_node) {
                 inline else => |op_node| {
-                    if (tensor.global) {
+                    if (tensor.global or !tensor.isCached()) {
                         writer.print("T{d}[label=\"T{d}\"shape=box];\n", .{ tensor.memoryView(), tensor.memoryView() });
                     }
-                    if (tensor.cached and tensor.group != null) {
+                    if (tensor.isCached() and tensor.group != null) {
                         writer.print("subgraph cluster{d}{{t{d}[label=\"t{d}\"shape=box];}}\n", .{ tensor.group.?, tensor.uid, tensor.uid });
                         if (tensor.global) {
                             writer.print("t{d}->T{d}[label=\"{s}\"];\n", .{ tensor.uid, tensor.memoryView(), tensor.label });
@@ -368,7 +367,7 @@ pub fn viz(writer: anytype) void {
                             inline else => |in_op_node| writer.print("{s}{d}->{s}{d}[label=\"{s}\"];\n", .{ @tagName(in_op_node.op), target.tensor.uid, @tagName(node.op), node.out.tensor.uid, target.tensor.label }),
                         }
                     } else {
-                        if (node.out.tensor.group != null and target.tensor.group == node.out.tensor.group and target.tensor.cached) {
+                        if (node.out.tensor.group != null and target.tensor.group == node.out.tensor.group and target.tensor.isCached()) {
                             writer.print("t{d}->{s}{d}[label=\"{s}\"];\n", .{ target.tensor.uid, @tagName(node.op), node.out.tensor.uid, target.tensor.label });
                         } else {
                             writer.print("T{d}->{s}{d}[label=\"{s}\"];\n", .{ target.tensor.memoryView(), @tagName(node.op), node.out.tensor.uid, target.tensor.label });
@@ -418,39 +417,31 @@ pub const Fusion = struct {
 
         switch (child.op_node) {
             .InitOp => unreachable, // Impossible as init op will only have a child (output) and no tensor input
-            .ZipOp => |op_node| {
+            .ZipOp => |*op_node| {
                 if (op_node.a.tensor.uid != parent.uid and op_node.b.tensor.uid != parent.uid) {
                     return FusionError.NotParentChild;
                 }
                 if (op_node.a.tensor.uid == parent.uid) {
-                    if (!parent.cached) child.op_node.ZipOp.a.fused = true;
+                    if (!parent.isCached()) op_node.a.fused = true;
                 } else if (op_node.b.tensor.uid == parent.uid) {
-                    if (!parent.cached) child.op_node.ZipOp.b.fused = true;
+                    if (!parent.isCached()) op_node.b.fused = true;
                 }
             },
-            .TypeOp => |op_node| {
-                // Fuse a TypeOp even when the previous op is a reduce op
-                // The only type op that has any loop is a cast, and that is trivial enough to inline
-                if (op_node.x.tensor.uid != parent.uid) {
-                    return FusionError.NotParentChild;
-                }
-                if (!parent.cached) child.op_node.TypeOp.x.fused = true;
-            },
-            .MapOp => |op_node| {
-                if (op_node.x.tensor.uid != parent.uid) {
-                    return FusionError.NotParentChild;
-                }
-                if (!parent.cached) child.op_node.MapOp.x.fused = true;
-            },
-            .ReduceOp => |op_node| {
+            .ReduceOp => |*op_node| {
                 if (op_node.x.tensor.uid != parent.uid) {
                     return FusionError.NotParentChild;
                 }
 
-                if (!parent.cached) {
-                    child.op_node.ReduceOp.x.fused = true;
+                if (!parent.isCached()) {
+                    op_node.x.fused = true;
                 }
                 reduction_groups.put(child.group.?, true) catch unreachable;
+            },
+            inline else => |*op_node| {
+                if (op_node.x.tensor.uid != parent.uid) {
+                    return FusionError.NotParentChild;
+                }
+                if (!parent.isCached()) op_node.x.fused = true;
             },
         }
         switch (parent.op_node) {
