@@ -31,7 +31,7 @@ pub fn main() !void {
     tesseract.init();
     defer tesseract.deinit();
     tesseract.trace(&out);
-    try tesseract.Fusion.greedyFusion();
+    tesseract.Fusion.greedyFusion();
     tesseract.viz(std.debug);
     std.debug.print("\n", .{});
     try Schedule.create();

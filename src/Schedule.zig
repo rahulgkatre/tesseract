@@ -70,6 +70,7 @@ const Json = struct {
     };
     const JsonCompatibleLoop = struct {
         dim: u8,
+        group: u64,
         bound: u64,
         reduce: bool,
         body: []JsonCompatibleItem,
@@ -106,6 +107,7 @@ const Json = struct {
         const compatible_loop = try gpa.allocator().create(JsonCompatibleLoop);
         compatible_loop.* = .{
             .dim = loop.dim,
+            .group = loop.group,
             .bound = loop.bound,
             .reduce = loop.reduce,
             .body = try toJsonCompatibleSlice(loop.body),
@@ -117,6 +119,7 @@ const Json = struct {
         // Use the arena allocator because the parsed loop will join the other loops of the schedule
         var loop: *Loop = try arena.allocator().create(Loop);
         loop.dim = parsed_loop.dim;
+        loop.group = parsed_loop.group;
         loop.reduce = parsed_loop.reduce;
         loop.bound = parsed_loop.bound;
         loop.body = .{};
@@ -134,6 +137,7 @@ const Json = struct {
 
 pub const Loop = struct {
     dim: u8,
+    group: u64,
     reduce: bool,
     bound: u64,
     tensor: *Graph.TensorNode,
@@ -157,7 +161,7 @@ pub const Loop = struct {
     }
 
     fn create(target: Graph.OpNode.Input) !void {
-        if (loops.contains(target.tensor.uniqueId())) {
+        if (loops.contains(target.tensor.uid)) {
             return;
         }
         switch (target.tensor.op_node) {
@@ -165,16 +169,22 @@ pub const Loop = struct {
             .ZipOp => |op_node| {
                 try Loop.create(op_node.a);
                 try Loop.create(op_node.b);
+                if (target.fused) {
+                    return;
+                }
+            },
+            .ReduceOp => |op_node| {
+                // Reductions happen in a separate loop that may be fused in a later step
+                // Keep making the current loop even if the op is fused
+                try Loop.create(op_node.x);
             },
             inline else => |op_node| {
                 try Loop.create(op_node.x);
+                if (target.fused) {
+                    return;
+                }
             },
         }
-        // Don't generate loops or statements for a fused output
-        if (target.fused) {
-            return;
-        }
-
         const ndims = target.tensor.ndims;
         var loop_nest: []*Loop = try gpa.allocator().alloc(*Loop, ndims);
         defer gpa.allocator().free(loop_nest);
@@ -182,6 +192,7 @@ pub const Loop = struct {
             loop.* = try arena.allocator().create(Loop);
             loop.*.* = .{
                 .dim = @intCast(dim),
+                .group = target.tensor.group.?,
                 .bound = target.tensor.shape[dim],
                 .reduce = switch (target.tensor.op_node) {
                     .ReduceOp => |op_node| op_node.dims[dim],
@@ -201,7 +212,8 @@ pub const Loop = struct {
 
         try loop_nest[ndims - 1].body.append(arena.allocator(), .{ .statement = try Statement.getOrInit(target) });
         try global_body.append(arena.allocator(), .{ .loop = outermost_loop });
-        try loops.putNoClobber(target.tensor.uniqueId(), outermost_loop);
+        // TODO: For a reduce op, fuse this loop with the preceding loop
+        try loops.putNoClobber(target.tensor.uid, outermost_loop);
     }
 
     /// Custom jsonStringify implementation that internally converts a Loop to a JsonCompatibleLoop and stringifies that
@@ -226,7 +238,8 @@ pub const Statement = struct {
         const Operand = union(enum) {
             global: *Graph.TensorNode,
             expression: *const Expression,
-            accumulator: *Graph.TensorNode,
+            // TODO: Local will need to be a different type, similar to TensorNode
+            // but not part of the global graph
             local: *Graph.TensorNode,
 
             fn init(target: Graph.OpNode.Input) std.mem.Allocator.Error!Operand {
@@ -239,6 +252,9 @@ pub const Statement = struct {
                             } else {
                                 return .{ .expression = &(try Statement.getOrInit(target)).expression };
                             }
+                        },
+                        .ReduceOp => {
+                            return .{ .local = target.tensor };
                         },
                         .TypeOp => |op_node| {
                             if (op_node.op == .AsType) {
@@ -258,12 +274,10 @@ pub const Statement = struct {
                     }
                 } else {
                     if (target.tensor.cached) {
-                        // If the tensor is cached, the operand tensor is local
                         return .{ .local = target.tensor };
-                    } else {
-                        // Otherwise the operand tensor is a global access
-                        return .{ .global = target.tensor };
                     }
+                    // Otherwise the operand tensor is a global access
+                    return .{ .global = target.tensor };
                 }
             }
         };
@@ -304,7 +318,7 @@ pub const Statement = struct {
     out: Output,
 
     fn getOrInit(target: Graph.OpNode.Input) std.mem.Allocator.Error!*Statement {
-        if (statements.get(target.tensor.uniqueId())) |stmt| {
+        if (statements.get(target.tensor.uid)) |stmt| {
             return stmt;
         } else {
             const tmp_statement: Statement = .{
@@ -330,11 +344,13 @@ pub const Statement = struct {
                         .x = try Expression.Operand.init(op_node.x),
                     } },
                     .ReduceOp => |op_node| .{
-                        .ReduceOp = .{
-                            // TODO: Return the associated zip op for the reduce op
-                            // with one operand being the accumulator for the output and the other being x itself
-                            .op = op_node.op,
-                            .x = try Expression.Operand.init(op_node.x),
+                        .ZipOp = .{
+                            .op = switch (op_node.op) {
+                                .Sum => .Add,
+                                .Max => .Maximum,
+                            },
+                            .a = try Expression.Operand.init(op_node.x),
+                            .b = .{ .local = target.tensor },
                         },
                     },
                     .TypeOp => |op_node| if (op_node.op == .AsType) .{ .TypeOp = .{
@@ -358,13 +374,13 @@ pub const Statement = struct {
                 .out = switch (target.tensor.op_node) {
                     // The output of a reduce op is always an accumulator
                     // A map op will be pushed in after the reduce loop to assign the accumulator to the global tensor
-                    .ReduceOp => .{ .accumulator = target.tensor },
+                    .ReduceOp => .{ .local = target.tensor },
                     else => if (target.tensor.cached) .{ .local = target.tensor } else .{ .global = target.tensor },
                 },
             };
             const statement = try arena.allocator().create(Statement);
             statement.* = tmp_statement;
-            try statements.putNoClobber(target.tensor.uniqueId(), statement);
+            try statements.putNoClobber(target.tensor.uid, statement);
             return statement;
         }
     }
