@@ -167,8 +167,14 @@ pub const Loop = struct {
         switch (target.tensor.op_node) {
             .InitOp => if (target.tensor.op_node.InitOp.op == .Input) return,
             .ZipOp => |op_node| {
-                try Loop.create(op_node.a);
-                try Loop.create(op_node.b);
+                // Generate the loop that is temporally closer first
+                if (op_node.a.tensor.uid < op_node.b.tensor.uid) {
+                    try Loop.create(op_node.a);
+                    try Loop.create(op_node.b);
+                } else {
+                    try Loop.create(op_node.b);
+                    try Loop.create(op_node.a);
+                }
                 if (target.fused) {
                     return;
                 }
@@ -236,14 +242,15 @@ pub const Loop = struct {
 pub const Statement = struct {
     pub const Expression = union(ops.OpTypes) {
         const Operand = union(enum) {
-            global: *Graph.TensorNode,
+            global: *const Graph.TensorNode,
             expression: *const Expression,
-            // TODO: Local will need to be a different type, similar to TensorNode
-            // but not part of the global graph
-            local: *Graph.TensorNode,
+            // TODO: Local will need to be a separate from the tensor node it is caching
+            // as it will have a different size and may not be a scalar
+            // Its size will be determine by depth it is used in a loop nest
+            local: *const Graph.TensorNode,
 
-            fn init(target: Graph.OpNode.Input) std.mem.Allocator.Error!Operand {
-                if (target.fused) {
+            fn init(target: Graph.OpNode.Input, consumer_group: ?u64) std.mem.Allocator.Error!Operand {
+                if (target.fused and !target.tensor.isCached()) {
                     switch (target.tensor.op_node) {
                         .InitOp => |op_node| {
                             if (op_node.op == .Input) {
@@ -273,40 +280,37 @@ pub const Statement = struct {
                         else => return .{ .expression = &(try Statement.getOrInit(target)).expression },
                     }
                 } else {
-                    if (target.tensor.isCached()) {
-                        return .{ .local = target.tensor };
+                    if (consumer_group) |group| {
+                        if (target.tensor.isCached() and target.tensor.group == group) {
+                            return .{ .local = target.tensor };
+                        }
                     }
                     // Otherwise the operand tensor is a global access
                     return .{ .global = target.tensor };
                 }
             }
         };
-        const MapOp = struct {
+        MapOp: struct {
             op: ops.MapOp,
             x: Operand,
-        };
-        const ZipOp = struct {
+        },
+        ZipOp: struct {
             op: ops.ZipOp,
             a: Operand,
             b: Operand,
-        };
-        const ReduceOp = struct {
+        },
+        ReduceOp: struct {
             op: ops.ReduceOp,
             x: Operand,
-        };
-        const TypeOp = struct {
+        },
+        TypeOp: struct {
             op: ops.TypeOp,
             x: Operand,
-        };
-        const InitOp = struct {
+        },
+        InitOp: struct {
             op: ops.InitOp,
             args: ops.InitOp.Args,
-        };
-        MapOp: MapOp,
-        ZipOp: ZipOp,
-        ReduceOp: ReduceOp,
-        TypeOp: TypeOp,
-        InitOp: InitOp,
+        },
     };
     const Output = union(enum) {
         global: *Graph.TensorNode,
@@ -336,12 +340,12 @@ pub const Statement = struct {
                     } },
                     .ZipOp => |op_node| .{ .ZipOp = .{
                         .op = op_node.op,
-                        .a = try Expression.Operand.init(op_node.a),
-                        .b = try Expression.Operand.init(op_node.b),
+                        .a = try Expression.Operand.init(op_node.a, target.tensor.group),
+                        .b = try Expression.Operand.init(op_node.b, target.tensor.group),
                     } },
                     .MapOp => |op_node| .{ .MapOp = .{
                         .op = op_node.op,
-                        .x = try Expression.Operand.init(op_node.x),
+                        .x = try Expression.Operand.init(op_node.x, target.tensor.group),
                     } },
                     .ReduceOp => |op_node| .{
                         .ZipOp = .{
@@ -349,13 +353,13 @@ pub const Statement = struct {
                                 .Sum => .Add,
                                 .Max => .Maximum,
                             },
-                            .a = try Expression.Operand.init(op_node.x),
+                            .a = try Expression.Operand.init(op_node.x, target.tensor.group),
                             .b = .{ .local = target.tensor },
                         },
                     },
                     .TypeOp => |op_node| if (op_node.op == .AsType) .{ .TypeOp = .{
                         .op = op_node.op,
-                        .x = try Expression.Operand.init(op_node.x),
+                        .x = try Expression.Operand.init(op_node.x, target.tensor.group),
                     } } else {
                         // Get the statement for the input to the view-changing operation
                         const statement = try Statement.getOrInit(op_node.x);

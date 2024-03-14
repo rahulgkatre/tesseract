@@ -221,42 +221,27 @@ pub const TensorNode = struct {
         return (tensor.consumer_count > 1 and tensor.group != tensor.uid);
     }
 
-    pub fn uniqueId(self: *const TensorNode) u64 {
-        return self.uid;
-    }
-
-    const MemoryViewError = error{Immutable};
-
-    fn memoryViewHelper(self: *const TensorNode) MemoryViewError!u64 {
-        return switch (self.op_node) {
-            .InitOp => self.uid,
-            .ZipOp => |op_node| blk: {
+    pub fn memoryView(self: *const TensorNode) u64 {
+        switch (self.op_node) {
+            .InitOp => return self.uid,
+            .ZipOp => |op_node| {
                 if (!op_node.a.fused and !op_node.b.fused) {
                     return self.uid;
                 }
-
-                const a_mv = op_node.a.tensor.memoryViewHelper() catch {
-                    break :blk op_node.b.tensor.memoryViewHelper() catch self.uid;
-                };
-
-                const b_mv = op_node.b.tensor.memoryViewHelper() catch {
-                    break :blk op_node.a.tensor.memoryViewHelper() catch self.uid;
-                };
-
-                if (op_node.a.fused and !op_node.b.fused) {
-                    break :blk a_mv;
-                } else if (op_node.b.fused and !op_node.a.fused) {
-                    break :blk b_mv;
+                const a_mv = op_node.a.tensor.memoryView();
+                const b_mv = op_node.b.tensor.memoryView();
+                if (op_node.a.fused and !op_node.b.fused and !op_node.a.tensor.isCached()) {
+                    return a_mv;
+                } else if (op_node.b.fused and !op_node.a.fused and !op_node.b.tensor.isCached()) {
+                    return b_mv;
+                } else if (!op_node.a.tensor.isCached() and !op_node.b.tensor.isCached()) {
+                    return @min(a_mv, b_mv);
                 } else {
-                    break :blk @min(a_mv, b_mv);
+                    return self.uid;
                 }
             },
-            inline else => |op_node| if (op_node.x.fused) op_node.x.tensor.memoryViewHelper() catch self.uid else self.uid,
-        };
-    }
-
-    pub fn memoryView(self: *const TensorNode) u64 {
-        return self.memoryViewHelper() catch self.uid;
+            inline else => |op_node| return if (op_node.x.fused and !op_node.x.tensor.isCached()) op_node.x.tensor.memoryView() else self.uid,
+        }
     }
 
     pub fn get(ptr: anytype) *TensorNode {
@@ -323,13 +308,13 @@ pub fn viz(writer: anytype) void {
             }
             switch (tensor.op_node) {
                 inline else => |op_node| {
-                    if (tensor.global or !tensor.isCached()) {
+                    if (tensor.global) {
                         writer.print("T{d}[label=\"T{d}\"shape=box];\n", .{ tensor.memoryView(), tensor.memoryView() });
                     }
                     if (tensor.isCached() and tensor.group != null) {
                         writer.print("subgraph cluster{d}{{t{d}[label=\"t{d}\"shape=box];}}\n", .{ tensor.group.?, tensor.uid, tensor.uid });
                         if (tensor.global) {
-                            writer.print("t{d}->T{d}[label=\"{s}\"];\n", .{ tensor.uid, tensor.memoryView(), tensor.label });
+                            writer.print("t{d}->T{d}[label=\"{s}\"];\n", .{ tensor.uid, tensor.uid, tensor.label });
                         }
                         writer.print("{s}{d}->t{d}[label=\"{s}\"];\n", .{ @tagName(op_node.op), tensor.uid, tensor.uid, tensor.label });
                     } else {
@@ -362,7 +347,7 @@ pub fn viz(writer: anytype) void {
                         return;
                     }
 
-                    if (target.fused) {
+                    if (target.fused and !target.tensor.isCached()) {
                         switch (target.tensor.op_node) {
                             inline else => |in_op_node| writer.print("{s}{d}->{s}{d}[label=\"{s}\"];\n", .{ @tagName(in_op_node.op), target.tensor.uid, @tagName(node.op), node.out.tensor.uid, target.tensor.label }),
                         }
