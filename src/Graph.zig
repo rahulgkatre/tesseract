@@ -407,26 +407,27 @@ pub const Fusion = struct {
                     return FusionError.NotParentChild;
                 }
                 if (op_node.a.tensor.uid == parent.uid) {
-                    if (!parent.isCached()) op_node.a.fused = true;
+                    if (op_node.a.fused) return FusionError.DoubleFuse;
+                    if (parent.isCached()) return FusionError.ParentCached;
+                    op_node.a.fused = true;
                 } else if (op_node.b.tensor.uid == parent.uid) {
-                    if (!parent.isCached()) op_node.b.fused = true;
+                    if (op_node.b.fused) return FusionError.DoubleFuse;
+                    if (parent.isCached()) return FusionError.ParentCached;
+                    op_node.b.fused = true;
                 }
             },
             .ReduceOp => |*op_node| {
-                if (op_node.x.tensor.uid != parent.uid) {
-                    return FusionError.NotParentChild;
-                }
-
-                if (!parent.isCached()) {
-                    op_node.x.fused = true;
-                }
+                if (op_node.x.tensor.uid != parent.uid) return FusionError.NotParentChild;
+                if (op_node.x.fused) return FusionError.DoubleFuse;
+                if (parent.isCached()) return FusionError.ParentCached;
+                op_node.x.fused = true;
                 reduction_groups.put(child.group.?, true) catch unreachable;
             },
             inline else => |*op_node| {
-                if (op_node.x.tensor.uid != parent.uid) {
-                    return FusionError.NotParentChild;
-                }
-                if (!parent.isCached()) op_node.x.fused = true;
+                if (op_node.x.tensor.uid != parent.uid) return FusionError.NotParentChild;
+                if (op_node.x.fused) return FusionError.DoubleFuse;
+                if (parent.isCached()) return FusionError.ParentCached;
+                op_node.x.fused = true;
             },
         }
         switch (parent.op_node) {
@@ -452,46 +453,31 @@ pub const Fusion = struct {
             .MapOp => |*op_node| {
                 verticalFusion(op_node.x.tensor, node) catch {};
                 greedyFusionHelper(op_node.x.tensor);
-                if (op_node.x.tensor.group != node.group) {
-                    op_node.x.tensor.global = true;
-                }
+                if (op_node.x.tensor.group != node.group) op_node.x.tensor.global = true;
             },
             .ZipOp => |*op_node| {
-                // Process the closer input first for better locality
+                // Process the temporally closer input first
                 const inputs: std.meta.Tuple(&[_]type{OpNode.Input} ** 2) = if (op_node.a.tensor.uid > op_node.b.tensor.uid) .{ op_node.a, op_node.b } else .{ op_node.b, op_node.a };
                 verticalFusion(inputs[0].tensor, node) catch {};
                 greedyFusionHelper(inputs[0].tensor);
-                if (op_node.a.tensor.group != node.group) {
-                    op_node.a.tensor.global = true;
-                }
+                if (op_node.a.tensor.group != node.group) op_node.a.tensor.global = true;
                 verticalFusion(inputs[1].tensor, node) catch {};
                 greedyFusionHelper(inputs[1].tensor);
-                if (op_node.b.tensor.group != node.group) {
-                    op_node.b.tensor.global = true;
-                }
+                if (op_node.b.tensor.group != node.group) op_node.b.tensor.global = true;
             },
             .ReduceOp => |*op_node| {
                 verticalFusion(op_node.x.tensor, node) catch {};
                 greedyFusionHelper(op_node.x.tensor);
-                if (op_node.x.tensor.group != node.group) {
-                    op_node.x.tensor.global = true;
-                }
+                if (op_node.x.tensor.group != node.group) op_node.x.tensor.global = true;
             },
             .TypeOp => |*op_node| {
-                // TypeOps can always be fused into the preceding kernel even if the typeop follows a reduce
-                // This is because it is either just index manipulation and does not produce a loop
-                // or it is a cast which can be inlined when assigning the value in the output tensor
                 verticalFusion(op_node.x.tensor, node) catch {};
                 greedyFusionHelper(op_node.x.tensor);
-                if (op_node.x.tensor.group != node.group) {
-                    op_node.x.tensor.global = true;
-                }
+                if (op_node.x.tensor.group != node.group) op_node.x.tensor.global = true;
             },
             // Init will happen outside a kernel unless it is a full init
             .InitOp => |op_node| {
-                if (op_node.op != .Full) {
-                    node.group = null;
-                }
+                if (op_node.op != .Full) node.group = null;
             },
         }
     }
@@ -500,9 +486,7 @@ pub const Fusion = struct {
     /// Each cluster can have at most one reduce op, but any amount of other ops
     /// The reduce op will be the last op unless it is followed by a type op
     pub fn greedyFusion() void {
-        for (dagSinks()) |entry| {
-            greedyFusionHelper(entry);
-        }
+        for (dagSinks()) |entry| greedyFusionHelper(entry);
     }
 };
 
