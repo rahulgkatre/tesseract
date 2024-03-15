@@ -15,8 +15,8 @@ pub const constant = tensor.constant;
 pub const range = tensor.range;
 
 pub const trace = Graph.trace;
-pub const viz = Graph.viz;
-pub const Fusion = Graph.Fusion;
+// pub const viz = Graph.viz;
+// pub const Fusion = Graph.Fusion;
 
 test "tesseract" {
     _ = tensor;
