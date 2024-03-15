@@ -1,11 +1,11 @@
 const tensor = @import("tensor.zig");
 
 // MapOps
-pub fn exp2(comptime x: anytype) @TypeOf(x.*) {
-    return x.map(.Exp2);
+pub fn exp(comptime x: anytype) @TypeOf(x.*) {
+    return x.map(.Exp);
 }
-pub fn log2(comptime x: anytype) @TypeOf(x.*) {
-    return x.map(.Log2);
+pub fn log(comptime x: anytype) @TypeOf(x.*) {
+    return x.map(.Log);
 }
 pub fn neg(comptime x: anytype) @TypeOf(x.*) {
     return x.map(.Neg);
@@ -44,26 +44,14 @@ pub fn xor(comptime a: anytype, comptime b: anytype) @TypeOf(a.zip(.Xor, b)) {
 }
 
 // ReduceOps
-pub fn sum(comptime x: anytype, comptime reduce_dims: anytype) @TypeOf(x.*).Reduce(reduce_dims) {
-    return x.reduce(.Sum, reduce_dims);
+pub fn sum(comptime x: anytype, comptime dims: anytype) @TypeOf(x.*).Reduce(dims) {
+    return x.reduce(.Sum, dims);
 }
-pub fn max(comptime x: anytype, comptime reduce_dims: anytype) @TypeOf(x.*).Reduce(reduce_dims) {
-    return x.reduce(.Max, reduce_dims);
+pub fn max(comptime x: anytype, comptime dims: anytype) @TypeOf(x.*).Reduce(dims) {
+    return x.reduce(.Max, dims);
 }
 
-// Compound functions that use the ops
-pub fn exp(comptime x: anytype) @TypeOf(x.*) {
-    // 1 / ln(2) = 1.44269504089
-    // e^x = 2^(x / ln(2))
-    const recip_ln2 = tensor.constant(@TypeOf(x.*).dtype, 1.44269504089);
-    return x.mul(recip_ln2).exp2();
-}
-pub fn log(comptime x: anytype) @TypeOf(x.*) {
-    // ln(2) = 0.69314718056
-    // ln(x) = log2(x)ln(2)
-    const ln2 = tensor.constant(@TypeOf(x.*).dtype, 0.69314718056);
-    return x.log2().mul(ln2);
-}
+// Compounded
 pub fn div(comptime a: anytype, comptime b: anytype) @TypeOf(a.mul(b.recip())) {
     return a.mul(b.recip());
 }
@@ -75,8 +63,7 @@ pub fn matmul(comptime a: anytype, comptime b: anytype) @TypeOf(a.*).MatMul(@Typ
     const a_mul_b = a
         .unsqueeze(a.ndims - 1)
         .mul(b.transpose(b.ndims - 2, b.ndims - 1).copy().unsqueeze(b.ndims - 2));
-    const acc = a_mul_b
+    return a_mul_b
         .sum(a_mul_b.ndims - 1)
         .squeeze(a_mul_b.ndims - 1);
-    return acc;
 }

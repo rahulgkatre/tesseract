@@ -10,7 +10,7 @@ const Program = @import("Program.zig");
 /// Based on implementation of unravel_index from numpy
 /// https://chromium.googlesource.com/external/github.com/numpy/numpy/+/maintenance/1.3.x/numpy/lib/index_tricks.py
 /// This is actually inlineable as opposed to the modulo method
-pub fn unravelCode(allocator: std.mem.Allocator, node: *const Graph.Vertex) std.mem.Allocator.Error![]const u8 {
+pub fn unravelCode(allocator: std.mem.Allocator, node: *const Graph.TensorNode) std.mem.Allocator.Error![]const u8 {
     const ndims = node.tensor.ndims;
     const strides = node.tensor.strides;
 
@@ -46,8 +46,8 @@ pub fn unravelCode(allocator: std.mem.Allocator, node: *const Graph.Vertex) std.
 // Similar to above but with added logic for broadcasting the position between two tensors
 pub fn broadcastedUnravelCode(
     allocator: std.mem.Allocator,
-    node: *const Graph.Vertex,
-    bc_node: *const Graph.Vertex,
+    node: *const Graph.TensorNode,
+    bc_node: *const Graph.TensorNode,
 ) ![]const u8 {
     const strides = node.tensor.strides;
     const shape = node.tensor.shape;
