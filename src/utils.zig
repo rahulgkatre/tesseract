@@ -1,7 +1,7 @@
 const std = @import("std");
 const comptimePrint = std.fmt.comptimePrint;
 
-pub fn arrayPermute(comptime len: u8, array: [len]usize, perm: [len]u8) [len]usize {
+pub fn arrayPermute(comptime T: type, comptime len: u8, array: [len]T, perm: [len]u8) [len]T {
     var used: [len]bool = [_]bool{false} ** len;
     for (perm) |p| {
         if (p < len and !used[p]) {
@@ -25,15 +25,15 @@ pub fn arrayPermute(comptime len: u8, array: [len]usize, perm: [len]u8) [len]usi
             }
         }
     }
-    var new_array: [len]usize = undefined;
+    var new_array: [len]T = undefined;
     for (0..len) |dim| {
         new_array[dim] = array[perm[dim]];
     }
     return new_array;
 }
 
-pub fn arrayInsert(comptime len: u8, array: [len]usize, index: usize, val: usize) [len + 1]usize {
-    var new_array: [len + 1]usize = undefined;
+pub fn arrayInsert(comptime T: type, comptime len: u8, array: [len]T, index: usize, val: T) [len + 1]T {
+    var new_array: [len + 1]T = undefined;
     for (0..index) |i| {
         new_array[i] = array[i];
     }
@@ -44,8 +44,8 @@ pub fn arrayInsert(comptime len: u8, array: [len]usize, index: usize, val: usize
     return new_array;
 }
 
-pub fn arrayDelete(comptime len: u8, array: [len]usize, index: usize) [len - 1]usize {
-    var new_array: [len - 1]usize = undefined;
+pub fn arrayDelete(comptime T: type, comptime len: u8, array: [len]T, index: usize) [len - 1]T {
+    var new_array: [len - 1]T = undefined;
     for (0..index) |i| {
         new_array[i] = array[i];
     }

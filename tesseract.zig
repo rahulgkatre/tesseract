@@ -7,7 +7,7 @@ const Graph = @import("src/Graph.zig");
 const tesseract = @This();
 
 // Expose the simple Tensor function rather than the full one
-pub const Tensor = tensor.InferredStrides;
+pub const Tensor = tensor.UserTensor;
 pub const Scalar = tensor.Scalar;
 
 // Expose some of the utility functions that create tensors of specific sizes

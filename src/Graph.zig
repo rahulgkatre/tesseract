@@ -3,6 +3,7 @@ const ops = @import("ops.zig");
 const utils = @import("utils.zig");
 const Graph = @This();
 const dtypes = @import("dtypes.zig");
+const Dim = @import("symbolic.zig").Dim;
 
 var gpa: std.heap.GeneralPurposeAllocator(.{}) = undefined;
 var arena: std.heap.ArenaAllocator = undefined;
@@ -183,10 +184,10 @@ pub const TensorNode = struct {
     ptr: usize,
     dtype: dtypes.DType,
     ndims: u8,
-    shape: []const u64,
-    strides: []const u64,
+    shape: []const Dim,
+    strides: []const Dim,
 
-    label: []const u8,
+    // label: []const u8,
     uid: u64,
     group: ?u64 = null,
     consumer_count: u16 = 0,
@@ -197,8 +198,8 @@ pub const TensorNode = struct {
         ptr: usize,
         dtype: dtypes.DType,
         ndims: u8,
-        shape: []const u64,
-        strides: []const u64,
+        shape: []const Dim,
+        strides: []const Dim,
     };
 
     pub fn jsonStringify(self: *const TensorNode, write_stream: anytype) !void {
@@ -248,19 +249,20 @@ pub const TensorNode = struct {
     }
 
     fn create(tensor: anytype) void {
-        const Tensor = @TypeOf(tensor.*);
+        // const Tensor = @TypeOf(tensor.*);
+        // const fields = @typeInfo
         const ptr = @intFromPtr(tensor);
         if (!tensors.contains(ptr)) {
             const tensor_node = arena.allocator().create(TensorNode) catch unreachable;
             tensor_node.* = .{
                 .ptr = ptr,
-                .dtype = Tensor.dtype,
-                .ndims = Tensor.ndims,
-                .shape = Tensor.shape[0..Tensor.ndims],
-                .strides = Tensor.strides[0 .. Tensor.ndims + 1],
+                .dtype = tensor.dtype,
+                .ndims = tensor.ndims,
+                .shape = tensor.shape[0..tensor.ndims],
+                .strides = tensor.strides[0 .. tensor.ndims + 1],
                 .group = tensors.count(),
                 .uid = tensors.count(),
-                .label = std.fmt.comptimePrint("{s}{any}", .{ @tagName(Tensor.dtype), Tensor.shape }),
+                // .label = std.fmt.comptimePrint("{s}{any}", .{ @tagName(tensor.dtype), tensor.shape }),
             };
             tensors.putNoClobber(ptr, tensor_node) catch unreachable;
         }
