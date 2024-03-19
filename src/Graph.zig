@@ -21,6 +21,7 @@ pub fn deinit() void {
 
 /// Strips away comptime / generic information to make it easier to work with pointers to tensors
 pub const AnyTensor = struct {
+    ptr: *const anyopaque = undefined,
     dtype: dtypes.DType,
     ndims: u8,
     shape: []const u64,
@@ -39,6 +40,7 @@ pub const AnyTensor = struct {
             inline else => |unary_op| unary_op.x.trace(),
         }
         var out: *AnyTensor = @constCast(self);
+        out.ptr = out;
         const key = @intFromPtr(self);
         switch (out.last_op) {
             inline else => |*last_op| last_op.out = out,
@@ -50,7 +52,7 @@ pub const AnyTensor = struct {
 
     pub fn jsonStringify(self: *const AnyTensor, write_stream: anytype) !void {
         try write_stream.write(.{
-            .ptr = @intFromPtr(self),
+            .ptr = @intFromPtr(self.ptr),
             .dtype = self.dtype,
             .ndims = self.ndims,
             .shape = self.shape,
