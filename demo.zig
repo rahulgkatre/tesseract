@@ -21,9 +21,8 @@ pub fn main() !void {
 
     // All tensor code should must be in comptime
     const out = comptime blk: {
-        const a = Tensor(.f32, .{ "B", "M", "K" })
-            .full(2);
-        const b = Tensor(.f32, .{ "B", "K", "N" }).input();
+        const a = Tensor(.f32, .{ 2, 3, 4 }).full(2);
+        const b = Tensor(.f32, .{ 2, 4, 3 }).input();
         // break :blk a.matmul(b);
         break :blk softmax(a.matmul(b), 1);
     };

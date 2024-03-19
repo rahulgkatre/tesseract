@@ -1,5 +1,53 @@
 const std = @import("std");
 
+fn isSymbolic(comptime ndims: comptime_int, comptime dims: [ndims]Dim) bool {
+    for (dims) |dim| {
+        switch (dim) {
+            .constant => {},
+            else => return true,
+        }
+    }
+    return false;
+}
+
+fn symbolicDims(comptime shape: anytype) [shape.len]Dim {
+    var symbolic_shape: [shape.len]Dim = undefined;
+    for (shape, 0..) |shape_d, d| {
+        symbolic_shape[d] = switch (@typeInfo(@TypeOf(shape_d))) {
+            .Struct => {
+                //TODO: Support for named dimensions
+                @compileError("Named dimensions are not supported yet");
+            },
+            // Strings will get converted to an enum field for eventual named dimension support
+            // Enum field value is the dim number, so it can be passed into any function that requires a dim by index
+            .Pointer => .{ .variable = shape_d },
+            .ComptimeInt, .Int => .{
+                .constant = shape_d,
+            },
+            else => .{ .variable = std.fmt.comptimePrint("{any}", .{shape_d}) },
+        };
+    }
+    return symbolic_shape;
+}
+
+fn symbolicStrides(comptime ndims: u8, comptime symbolic_shape: [ndims]Dim) [ndims + 1]Dim {
+    var strides: [ndims + 1]Dim = undefined;
+    var offset: Dim = .{ .constant = 1 };
+    for (0..ndims - 1) |d| {
+        const stride = Dim.mul(symbolic_shape[ndims - d - 1], offset);
+        strides[ndims - d - 2] = stride;
+        offset = stride;
+    }
+    strides[ndims - 1] = .{ .constant = 1 };
+    strides[ndims] = .{ .constant = 0 };
+    for (0..ndims) |d| {
+        if (symbolic_shape[d].equalsConstant(0) or symbolic_shape[d].equalsConstant(1)) {
+            strides[d] = .{ .constant = 0 };
+        }
+    }
+    return strides;
+}
+
 pub const Dim = union(enum) {
     // Plan for symbolic:
     // val represents a constant dimension size

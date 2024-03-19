@@ -58,12 +58,3 @@ pub fn div(comptime a: anytype, comptime b: anytype) @TypeOf(a.mul(b.recip())) {
 pub fn sub(comptime a: anytype, comptime b: anytype) @TypeOf(a.add(b.neg())) {
     return a.add(b.neg());
 }
-
-pub fn matmul(comptime a: anytype, comptime b: anytype) @TypeOf(a.*).MatMul(@TypeOf(b)) {
-    const a_mul_b = a
-        .unsqueeze(a.ref.ndims - 1)
-        .mul(b.transpose(b.ref.ndims - 2, b.ref.ndims - 1).copy().unsqueeze(b.ref.ndims - 2));
-    return a_mul_b
-        .sum(a_mul_b.ref.ndims - 1)
-        .squeeze(a_mul_b.ref.ndims - 1);
-}

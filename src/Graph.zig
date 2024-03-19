@@ -3,16 +3,15 @@ const ops = @import("ops.zig");
 const utils = @import("utils.zig");
 const Graph = @This();
 const dtypes = @import("dtypes.zig");
-const Dim = @import("symbolic.zig").Dim;
 
 var gpa: std.heap.GeneralPurposeAllocator(.{}) = undefined;
 var arena: std.heap.ArenaAllocator = undefined;
-var tensors: std.AutoArrayHashMap(usize, *const AnyTensor) = undefined;
+var tensors: std.AutoArrayHashMap(usize, *AnyTensor) = undefined;
 
 pub fn init() void {
     gpa = .{};
     arena = std.heap.ArenaAllocator.init(gpa.allocator());
-    tensors = std.AutoArrayHashMap(usize, *const AnyTensor).init(arena.allocator());
+    tensors = std.AutoArrayHashMap(usize, *AnyTensor).init(arena.allocator());
 }
 
 pub fn deinit() void {
@@ -22,14 +21,13 @@ pub fn deinit() void {
 
 /// Strips away comptime / generic information to make it easier to work with pointers to tensors
 pub const AnyTensor = struct {
-    ptr: *const anyopaque = undefined,
     dtype: dtypes.DType,
     ndims: u8,
-    shape: []const Dim,
-    strides: []const Dim,
-    size: Dim,
-    contiguous: ?bool,
-    last_op: TensorOp = undefined,
+    shape: []const u64,
+    strides: []const u64,
+    size: u64,
+    contiguous: bool,
+    last_op: AnyOp,
 
     pub fn trace(self: *const AnyTensor) void {
         switch (self.last_op) {
@@ -41,35 +39,33 @@ pub const AnyTensor = struct {
             inline else => |unary_op| unary_op.x.trace(),
         }
         var out: *AnyTensor = @constCast(self);
-        out.ptr = out;
         const key = @intFromPtr(self);
         switch (out.last_op) {
             inline else => |*last_op| last_op.out = out,
         }
-
         if (!tensors.contains(key)) {
-            tensors.put(key, self) catch unreachable;
+            tensors.put(key, out) catch unreachable;
         }
     }
 
     pub fn jsonStringify(self: *const AnyTensor, write_stream: anytype) !void {
         try write_stream.write(.{
-            .ptr = @intFromPtr(self.ptr),
+            .ptr = @intFromPtr(self),
             .dtype = self.dtype,
             .ndims = self.ndims,
             .shape = self.shape,
             .strides = self.strides,
-            // .size = self.size,
-            // .contiguous = self.contiguous,
+            .size = self.size,
+            .contiguous = self.contiguous,
         });
     }
 
     pub fn get(tensor: anytype) *const AnyTensor {
-        return tensors.get(@intFromPtr(&tensor.ref)).?;
+        return tensors.get(@intFromPtr(&tensor.any_tensor)).?;
     }
 };
 
-pub const TensorOp = union(ops.OpTypes) {
+pub const AnyOp = union(ops.OpTypes) {
     MapOp: struct {
         op: ops.MapOp,
         x: *const AnyTensor,
@@ -98,7 +94,7 @@ pub const TensorOp = union(ops.OpTypes) {
         out: *const AnyTensor = undefined,
     },
 
-    pub fn jsonStringify(self: TensorOp, write_stream: anytype) !void {
+    pub fn jsonStringify(self: AnyOp, write_stream: anytype) !void {
         switch (self) {
             .ZipOp => |zip_op| try write_stream.write(.{
                 .op = zip_op.op,
@@ -121,7 +117,7 @@ pub const TensorOp = union(ops.OpTypes) {
 };
 
 pub fn jsonStringify(_: Graph, write_stream: anytype) !void {
-    const operations: []TensorOp = gpa.allocator().alloc(TensorOp, tensors.count()) catch unreachable;
+    const operations: []AnyOp = gpa.allocator().alloc(AnyOp, tensors.count()) catch unreachable;
     defer gpa.allocator().free(operations);
     for (tensors.values(), operations) |t, *operation| {
         operation.* = t.last_op;
