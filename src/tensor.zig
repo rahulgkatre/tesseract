@@ -100,7 +100,6 @@ fn Tensor(
         pub const ndims = tensor_ndims;
         pub const shape = tensor_shape;
         pub const strides = tensor_strides;
-
         pub const size = get_size: {
             // The storage size is 1 + last index calculated by the strides and shape
             // shape[d] - 1 is the last index in dimension d
@@ -129,35 +128,41 @@ fn Tensor(
             }
         };
 
-        ndims: u8 = tensor_ndims,
-        dtype: dtypes.DType = tensor_dtype,
-        shape: [tensor_ndims]Dim = tensor_shape,
+        ref: Graph.AnyTensor = .{
+            .dtype = dtype,
+            .ndims = ndims,
+            .shape = shape[0..],
+            .strides = strides[0..],
+            .size = size,
+            .contiguous = contiguous,
+        },
+
+        dtype: dtypes.DType = dtype,
+        ndims: u8 = ndims,
+        shape: [ndims]Dim = shape,
+        strides: [ndims + 1]Dim = strides,
         size: Dim = size,
-        strides: [tensor_ndims + 1]Dim = tensor_strides,
         contiguous: ?bool = contiguous,
 
-        // The trace callback only runs during runtime
-        // and is triggered by Graph.trace
-        // Graph also handles the recursive callbacks of the current tensor's dependencies
-        trace_fn: *const fn (self: *const Self) void,
+        pub fn trace(self: *const Self) void {
+            self.ref.trace();
+        }
 
-        pub fn init(comptime op: ops.GraphOp, op_input: anytype, comptime op_options: anytype) Self {
-            return .{ .trace_fn = struct {
-                fn trace(out: *const Self) void {
-                    Graph.addOp(op, op_input, out, op_options);
-                }
-            }.trace };
+        pub fn init(comptime last_op: Graph.TensorOp) Self {
+            var self = Self{};
+            self.ref.last_op = last_op;
+            return self;
         }
 
         /// Used to mark a tensor as an input to a graph,
         /// codegen will make this an argument of the function
         pub fn input() Self {
-            return init(.{ .InitOp = .Input }, {}, .{ .Input = {} });
+            return init(.{ .InitOp = .{ .op = .Input, .args = .{ .Input = {} } } });
         }
 
         /// Fill a tensor with a value
         pub fn full(comptime value: anytype) Self {
-            return init(.{ .InitOp = .Full }, {}, .{ .Full = std.fmt.comptimePrint("{any}", .{value}) });
+            return init(.{ .InitOp = .{ .op = .Full, .args = .{ .Full = std.fmt.comptimePrint("{}", .{value}) } } });
         }
         /// Keeps the same shape as another tensor, but initializes a new tensor
         pub fn fullLike(_: *const Self, comptime value: anytype) Self {
@@ -170,17 +175,17 @@ fn Tensor(
             if (tensor_ndims != 1) {
                 @compileError("Can only use range() on a tensor with exactly 1 dimension");
             }
-            return init(.{ .InitOp = .Range }, {}, .{
+            return init(.{ .InitOp = .{ .op = .Range, .args = .{
                 .Range = .{
                     .start = std.fmt.comptimePrint("{d}", .{start}),
                     .stop = std.fmt.comptimePrint("{d}", .{stop}),
                 },
-            });
+            } } });
         }
 
         pub fn rand() Self {
             std.debug.assert(dtypes.isFloat(tensor_dtype));
-            return init(.{ .InitOp = .Rand }, {}, .{ .Rand = tensor_dtype });
+            return init(.{ .InitOp = .{ .op = .Rand, .args = .{ .Rand = tensor_dtype } } });
         }
         pub fn randLike(_: *const Self) Self {
             return Self.rand();
@@ -191,7 +196,7 @@ fn Tensor(
         /// but intermediate tensors can be eliminated through optimization.
         pub fn copy(x: *const Self) InferredStrides(tensor_dtype, tensor_ndims, tensor_shape) {
             const Out = InferredStrides(tensor_dtype, tensor_ndims, tensor_shape);
-            return Out.init(.{ .MapOp = .Id }, .{ .x = x }, {});
+            return Out.init(.{ .MapOp = .{ .op = .Id, .x = &x.ref } });
         }
 
         fn Permute(comptime perm: [tensor_ndims]u8) type {
@@ -236,7 +241,7 @@ fn Tensor(
         /// View the tensor as a different shape.
         pub fn view(x: *const Self, comptime new_shape: anytype) UserTensor(tensor_dtype, new_shape) {
             const Out = UserTensor(tensor_dtype, new_shape);
-            return Out.init(.{ .TypeOp = .View }, .{ .x = x }, {});
+            return Out.init(.{ .TypeOp = .{ .op = .AsStrided, .x = &x.ref } });
         }
 
         fn Unsqueeze(comptime dim: u8) type {
@@ -322,24 +327,24 @@ fn Tensor(
         /// There are guiderails to prevent out of bounds access into underlying memory.
         pub fn asStrided(comptime x: *const Self, comptime new_shape: anytype, comptime new_strides: anytype) AsStrided(new_shape, new_strides) {
             const Out = AsStrided(new_shape, new_strides);
-            return Out.init(.{ .TypeOp = .AsStrided }, .{ .x = x }, {});
+            return Out.init(.{ .TypeOp = .{ .op = .AsStrided, .x = &x.ref } });
         }
 
         fn asStridedSymbolic(comptime x: *const Self, comptime new_ndims: u8, comptime new_shape: [new_ndims]Dim, comptime new_strides: [new_ndims + 1]Dim) AsStridedSymbolic(new_ndims, new_shape, new_strides) {
             const Out = AsStridedSymbolic(new_ndims, new_shape, new_strides);
-            return Out.init(.{ .TypeOp = .AsStrided }, .{ .x = x }, {});
+            return Out.init(.{ .TypeOp = .{ .op = .AsStrided, .x = &x.ref } });
         }
 
         ///Cast an array of a datatype to another datatype
         pub fn asType(comptime x: *const Self, comptime new_dtype: dtypes.DType) Tensor(new_dtype, tensor_ndims, tensor_shape, tensor_strides) {
             const Out = Tensor(new_dtype, tensor_ndims, tensor_shape, tensor_strides);
-            return Out.init(.{ .TypeOp = .AsType }, .{ .x = x }, {});
+            return Out.init(.{ .TypeOp = .{ .op = .AsType, .x = &x.ref } });
         }
 
         ///Apply an elementwise map operation
         pub fn map(comptime x: *const Self, comptime op: ops.MapOp) Self {
             const Out = @TypeOf(x.*);
-            return Out.init(.{ .MapOp = op }, .{ .x = x }, {});
+            return Out.init(.{ .MapOp = .{ .op = op, .x = &x.ref } });
         }
 
         pub fn Broadcast(comptime new_ndims: u8, comptime new_shape: [new_ndims]Dim) type {
@@ -367,15 +372,16 @@ fn Tensor(
             if (Self == Out) {
                 return x.*;
             }
-            return Out.init(.{ .TypeOp = .Broadcast }, .{ .x = x }, .{});
+            return Out.init(.{ .TypeOp = .{ .op = .AsStrided, .x = &x.ref } });
         }
 
         fn Zip(comptime op: ops.ZipOp, comptime other: anytype) type {
+            const Other = @TypeOf(other);
             const new_dtype = switch (op) {
                 .Equals, .LessThan => .bool,
                 else => tensor_dtype,
             };
-            const new_layout = Broadcast(other.ndims, other.shape);
+            const new_layout = Broadcast(Other.ndims, Other.shape);
             return Tensor(new_dtype, new_layout.ndims, new_layout.shape, new_layout.strides);
         }
 
@@ -385,7 +391,7 @@ fn Tensor(
             // Expand a and b to match the output shape
             const a_expand = comptime a.expand(Out.shape);
             const b_expand = comptime b.expand(Out.shape);
-            return Out.init(.{ .ZipOp = op }, .{ .a = &a_expand, .b = &b_expand }, .{});
+            return Out.init(.{ .ZipOp = .{ .op = op, .a = &a_expand.ref, .b = &b_expand.ref } });
         }
 
         pub fn Reduce(comptime reduce_dims: anytype) type {
@@ -444,7 +450,7 @@ fn Tensor(
                     break :blk tmp_mask;
                 },
             };
-            return Out.init(.{ .ReduceOp = op }, .{ .x = x }, .{ .dims = &reduction_dim_mask });
+            return Out.init(.{ .ReduceOp = .{ .op = op, .x = &x.ref, .dims = &reduction_dim_mask } });
         }
 
         pub fn MatMul(comptime other: anytype) type {
@@ -580,9 +586,9 @@ test "map" {
     try std.testing.expectEqual([_]Dim{ .{ .constant = 2 }, .{ .constant = 3 }, .{ .constant = 4 } }, tensor2.shape);
     Graph.init();
     defer Graph.deinit();
-    Graph.trace((&tensor2));
-    try std.testing.expect(Graph.TensorNode.get((&tensor2)).op_node.MapOp.op == .Neg);
-    try std.testing.expect(Graph.TensorNode.get((&tensor2)).op_node.MapOp.x.tensor == Graph.TensorNode.get((&tensor1)));
+    tensor2.trace();
+    try std.testing.expect(Graph.AnyTensor.get((&tensor2)).last_op.MapOp.op == .Neg);
+    try std.testing.expect(Graph.AnyTensor.get((&tensor2)).last_op.MapOp.x == Graph.AnyTensor.get((&tensor1)));
 }
 
 test "zip" {
@@ -592,10 +598,10 @@ test "zip" {
     try std.testing.expectEqual([_]Dim{ .{ .constant = 2 }, .{ .constant = 3 }, .{ .constant = 4 } }, tensor3.shape);
     Graph.init();
     defer Graph.deinit();
-    Graph.trace((&tensor3));
-    try std.testing.expect(Graph.TensorNode.get((&tensor3)).op_node.ZipOp.op == .Add);
-    try std.testing.expect(Graph.TensorNode.get((&tensor3)).op_node.ZipOp.a.tensor.op_node.TypeOp.x.tensor == Graph.TensorNode.get((&tensor1)));
-    try std.testing.expect(Graph.TensorNode.get((&tensor3)).op_node.ZipOp.b.tensor.op_node.TypeOp.x.tensor == Graph.TensorNode.get((&tensor2)));
+    tensor3.trace();
+    try std.testing.expect(Graph.AnyTensor.get((&tensor3)).last_op.ZipOp.op == .Add);
+    try std.testing.expect(Graph.AnyTensor.get((&tensor3)).last_op.ZipOp.a.last_op.TypeOp.x == Graph.AnyTensor.get((&tensor1)));
+    try std.testing.expect(Graph.AnyTensor.get((&tensor3)).last_op.ZipOp.b.last_op.TypeOp.x == Graph.AnyTensor.get((&tensor2)));
 }
 
 test "reduce" {
@@ -604,10 +610,10 @@ test "reduce" {
     try std.testing.expectEqual([_]Dim{ .{ .constant = 2 }, .{ .constant = 1 }, .{ .constant = 4 } }, tensor2.shape);
     Graph.init();
     defer Graph.deinit();
-    Graph.trace((&tensor2));
-    try std.testing.expect(Graph.TensorNode.get(&tensor2).op_node.ReduceOp.op == .Sum);
-    try std.testing.expect(Graph.TensorNode.get((&tensor2)).op_node.ReduceOp.x.tensor == Graph.TensorNode.get((&tensor1)));
-    try std.testing.expectEqual(Graph.TensorNode.get((&tensor2)).op_node.ReduceOp.dims[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
+    tensor2.trace();
+    try std.testing.expect(Graph.AnyTensor.get(&tensor2).last_op.ReduceOp.op == .Sum);
+    try std.testing.expect(Graph.AnyTensor.get((&tensor2)).last_op.ReduceOp.x == Graph.AnyTensor.get((&tensor1)));
+    try std.testing.expectEqual(Graph.AnyTensor.get((&tensor2)).last_op.ReduceOp.dims[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
 }
 
 test "multiple dim reduce" {
@@ -616,10 +622,10 @@ test "multiple dim reduce" {
     try std.testing.expectEqual([_]Dim{ .{ .constant = 1 }, .{ .constant = 1 }, .{ .constant = 4 } }, tensor2.shape);
     Graph.init();
     defer Graph.deinit();
-    Graph.trace((&tensor2));
-    try std.testing.expect(Graph.TensorNode.get((&tensor2)).op_node.ReduceOp.op == .Sum);
-    try std.testing.expect(Graph.TensorNode.get((&tensor2)).op_node.ReduceOp.x.tensor == Graph.TensorNode.get((&tensor1)));
-    try std.testing.expectEqual(Graph.TensorNode.get((&tensor2)).op_node.ReduceOp.dims[0..tensor2.ndims].*, [_]bool{ true, true, false });
+    tensor2.trace();
+    try std.testing.expect(Graph.AnyTensor.get((&tensor2)).last_op.ReduceOp.op == .Sum);
+    try std.testing.expect(Graph.AnyTensor.get((&tensor2)).last_op.ReduceOp.x == Graph.AnyTensor.get((&tensor1)));
+    try std.testing.expectEqual(Graph.AnyTensor.get((&tensor2)).last_op.ReduceOp.dims[0..tensor2.ndims].*, [_]bool{ true, true, false });
 }
 
 test "zip reduce" {
@@ -629,12 +635,12 @@ test "zip reduce" {
     try std.testing.expectEqual([_]Dim{ .{ .constant = 2 }, .{ .constant = 1 }, .{ .constant = 4 } }, tensor3.shape);
     Graph.init();
     defer Graph.deinit();
-    Graph.trace(&tensor3);
-    try std.testing.expect(Graph.TensorNode.get((&tensor3)).op_node.ReduceOp.op == .Sum);
+    tensor3.trace();
+    try std.testing.expect(Graph.AnyTensor.get((&tensor3)).last_op.ReduceOp.op == .Sum);
     // Anonymous intermediate tensor that stores tensor1 + tensor2
-    const anon = Graph.TensorNode.get((&tensor3)).op_node.ReduceOp.x;
-    try std.testing.expect(anon.tensor.op_node.ZipOp.a.tensor.op_node.TypeOp.x.tensor == Graph.TensorNode.get((&tensor1)));
-    try std.testing.expect(anon.tensor.op_node.ZipOp.b.tensor.op_node.TypeOp.x.tensor == Graph.TensorNode.get((&tensor2)));
+    const anon = Graph.AnyTensor.get((&tensor3)).last_op.ReduceOp.x;
+    try std.testing.expect(anon.last_op.ZipOp.a.last_op.TypeOp.x == Graph.AnyTensor.get((&tensor1)));
+    try std.testing.expect(anon.last_op.ZipOp.b.last_op.TypeOp.x == Graph.AnyTensor.get((&tensor2)));
 }
 
 test "as_type" {
@@ -675,6 +681,6 @@ test "tensors from functions" {
 
     Graph.init();
     defer Graph.deinit();
-    Graph.trace(&out);
+    out.trace();
     // Graph.viz();
 }

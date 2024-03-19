@@ -7,8 +7,6 @@ pub const ReduceOp = enum { Sum, Max };
 pub const TypeOp = enum {
     AsStrided,
     AsType,
-    View,
-    Broadcast,
 };
 pub const InitOp = enum {
     pub const Args = union(InitOp) {
@@ -34,11 +32,3 @@ pub const MemOps = enum {
 };
 
 pub const OpTypes = enum { MapOp, ZipOp, ReduceOp, TypeOp, InitOp };
-
-pub const GraphOp = union(OpTypes) {
-    MapOp: MapOp,
-    ZipOp: ZipOp,
-    ReduceOp: ReduceOp,
-    TypeOp: TypeOp,
-    InitOp: InitOp,
-};

@@ -18,18 +18,18 @@ pub const Dim = union(enum) {
         };
     }
 
-    pub fn equals(self: Dim, other: Dim) bool {
-        return switch (self) {
-            .constant => switch (other) {
-                .constant => self.constant == other.constant,
+    pub fn equals(a: Dim, b: Dim) bool {
+        return switch (a) {
+            .constant => |lhs| switch (b) {
+                .constant => |rhs| lhs == rhs,
                 else => false,
             },
-            .variable => switch (other) {
-                .variable => std.mem.eql(u8, self.variable, other.variable),
+            .variable => |lhs| switch (b) {
+                .variable => |rhs| std.mem.eql(u8, lhs, rhs),
                 else => false,
             },
-            .symbolic => switch (other) {
-                .symbolic => self.symbolic.dim1.equals(other.symbolic.dim1) and self.symbolic.dim2.equals(other.symbolic.dim2),
+            .symbolic => |lhs| switch (b) {
+                .symbolic => |rhs| (lhs.op == rhs.op) and ((lhs.a.equals(rhs.a) and lhs.b.equals(rhs.b)) or (lhs.a.equals(rhs.b) and lhs.b.equals(rhs.a))),
                 else => false,
             },
         };
@@ -44,72 +44,97 @@ pub const Dim = union(enum) {
     }
 
     const Symbolic = struct {
-        dim1: *const Dim,
-        dim2: *const Dim,
+        a: *const Dim,
+        b: *const Dim,
         op: enum {
-            sum,
-            product,
+            add,
+            mul,
         },
 
         fn variables(self: Symbolic) [][]const u8 {
-            const dim1_vars: [][]const u8 = @constCast(self.dim1.variables());
-            std.sort.block(u8, dim1_vars, {}, std.ascii.lessThanIgnoreCase);
-            const dim2_vars: [][]const u8 = @constCast(self.dim2.variables());
-            std.sort.block(u8, dim2_vars, {}, std.ascii.lessThanIgnoreCase);
-            var self_vars: [dim1_vars.len + dim2_vars.len]std.builtin.Type.StructField = undefined;
-            var src1_i: usize = 0;
-            var src2_i: usize = 0;
-            var dst_i: usize = 0;
-            while (src1_i < dim1_vars.len and src2_i < dim2_vars.len) {
-                const sf1 = dim1_vars[src1_i];
-                const sf2 = dim2_vars[src2_i];
+            const a_vars: [][]const u8 = @constCast(self.a.variables());
+            std.sort.block(u8, a_vars, {}, std.ascii.lessThanIgnoreCase);
+            const b_vars: [][]const u8 = @constCast(self.b.variables());
+            std.sort.block(u8, b_vars, {}, std.ascii.lessThanIgnoreCase);
+            var c_vars: [a_vars.len + b_vars.len]std.builtin.Type.StructField = undefined;
+            var a_i: usize = 0;
+            var b_i: usize = 0;
+            var c_i: usize = 0;
+            while (a_i < a_vars.len and b_i < b_vars.len) {
+                const sf1 = a_vars[a_i];
+                const sf2 = b_vars[b_i];
                 if (sf1.name.len != sf2.name.len or !std.comptime_string_map.eqlAsciiIgnoreCase(sf1.name, sf2.name)) {
-                    self_vars[dst_i] = sf1;
-                    self_vars[dst_i + 1] = sf2;
-                    dst_i += 2;
+                    c_vars[c_i] = sf1;
+                    c_vars[c_i + 1] = sf2;
+                    c_i += 2;
                 } else {
-                    self_vars[dst_i] = sf1;
-                    dst_i += 1;
+                    c_vars[c_i] = sf1;
+                    c_i += 1;
                 }
-                src1_i += 1;
-                src2_i += 1;
+                a_i += 1;
+                b_i += 1;
             }
-            return self_vars[0..dst_i][0..];
+            return c_vars[0..c_i][0..];
         }
     };
 
-    pub fn add(comptime dim1: Dim, comptime dim2: Dim) Dim {
-        switch (dim1) {
-            .constant => |d1| switch (dim2) {
+    pub fn add(comptime a: Dim, comptime b: Dim) Dim {
+        switch (a) {
+            .constant => |d1| switch (b) {
                 .constant => |d2| {
                     std.debug.assert(d1 + d2 >= 0);
                     return .{ .constant = d1 + d2 };
                 },
-                else => if (d1 == 0) return dim2,
+                else => if (d1 == 0) return b,
             },
-            else => switch (dim2) {
-                .constant => |d2| if (d2 == 0) return dim1,
+            else => switch (b) {
+                .constant => |d2| if (d2 == 0) return a,
                 else => {},
             },
         }
-        return .{ .symbolic = .{ .dim1 = &dim1, .dim2 = &dim2, .op = .product } };
+        return .{ .symbolic = .{ .a = &a, .b = &b, .op = .add } };
     }
 
-    pub fn mul(comptime dim1: Dim, comptime dim2: Dim) Dim {
-        switch (dim1) {
+    pub fn mul(comptime a: Dim, comptime b: Dim) Dim {
+        // If possible, distribute the multiplication which makes it easier to check symbolic equality later
+        switch (a) {
             .constant => |d1| {
-                switch (dim2) {
+                switch (b) {
                     .constant => |d2| return .{ .constant = d1 * d2 },
-                    else => if (d1 == 0) return .{ .constant = 0 } else if (d1 == 1) return dim2,
+                    .variable => if (d1 == 0) return .{ .constant = 0 } else if (d1 == 1) return b,
+                    .symbolic => |d2| switch (d2.op) {
+                        .add => return add(a.mul(d2.a), a.mul(d2.b)),
+                        else => {},
+                    },
                 }
             },
-            else => {
-                switch (dim2) {
-                    .constant => |d2| if (d2 == 0) return .{ .constant = 0 } else if (d2 == 1) return dim1,
+            .variable => {
+                switch (b) {
+                    .constant => |d2| if (d2 == 0) return .{ .constant = 0 } else if (d2 == 1) return a,
                     else => {},
                 }
             },
+            .symbolic => |d1| {
+                switch (b) {
+                    .constant => |d2| if (d2 == 0) return .{ .constant = 0 } else if (d2 == 1) return a,
+                    .variable => switch (d1.op) {
+                        .add => return add(d1.a.mul(b), d1.b.mul(b)),
+                        else => {},
+                    },
+                    .symbolic => |d2| switch (d1.op) {
+                        .add => switch (d2.op) {
+                            .add => return add(add(d1.a.mul(d2.a), d1.a.mul(d2.b)), add(d1.b.mul(d2.a), d1.b.mul(d2.b))),
+                            .mul => return add(d1.a.mul(b), d1.b.mul(b)),
+                        },
+                        .mul => switch (d2.op) {
+                            .add => return add(a.mul(d2.a), a.mul(d2.b)),
+                            .mul => {},
+                        },
+                    },
+                }
+            },
         }
-        return .{ .symbolic = .{ .dim1 = &dim1, .dim2 = &dim2, .op = .product } };
+        // Base case: the simple way
+        return .{ .symbolic = .{ .a = &a, .b = &b, .op = .mul } };
     }
 };

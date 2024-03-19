@@ -1,3 +1,73 @@
+pub const TensorNode = struct {
+    ptr: usize,
+    dtype: dtypes.DType,
+    ndims: u8,
+    shape: []const Dim,
+    strides: []const Dim,
+
+    // label: []const u8,
+    uid: u64,
+    group: ?u64 = null,
+    consumer_count: u16 = 0,
+    global: bool = false,
+    op_node: OpNode = undefined,
+
+    pub fn isCached(tensor: *const TensorNode) bool {
+        return (tensor.consumer_count > 1 and tensor.group != tensor.uid);
+    }
+
+    pub fn memoryView(self: *const TensorNode) u64 {
+        switch (self.op_node) {
+            .InitOp => return self.uid,
+            .ZipOp => |op_node| {
+                if (!op_node.a.fused and !op_node.b.fused) {
+                    return self.uid;
+                }
+                const a_mv = op_node.a.tensor.memoryView();
+                const b_mv = op_node.b.tensor.memoryView();
+                if (op_node.a.fused and !op_node.b.fused and !op_node.a.tensor.isCached()) {
+                    return a_mv;
+                } else if (op_node.b.fused and !op_node.a.fused and !op_node.b.tensor.isCached()) {
+                    return b_mv;
+                } else if (!op_node.a.tensor.isCached() and !op_node.b.tensor.isCached()) {
+                    return @min(a_mv, b_mv);
+                } else {
+                    return self.uid;
+                }
+            },
+            inline else => |op_node| return if (op_node.x.fused and !op_node.x.tensor.isCached()) op_node.x.tensor.memoryView() else self.uid,
+        }
+    }
+
+    pub fn get(ptr: anytype) *TensorNode {
+        return switch (@typeInfo(@TypeOf(ptr))) {
+            .Pointer => tensors.get(@intFromPtr(ptr)).?,
+            .Int => tensors.get(ptr).?,
+            else => @panic("Must use a tensor pointer or int from tensor pointer"),
+        };
+    }
+
+    fn create(tensor: anytype) void {
+        // const Tensor = @TypeOf(tensor.*);
+        // const fields = @typeInfo
+        const ptr = @intFromPtr(tensor);
+        if (!tensors.contains(ptr)) {
+            const tensor_node = arena.allocator().create(TensorNode) catch unreachable;
+            tensor_node.* = .{
+                .ptr = ptr,
+                .dtype = tensor.dtype,
+                .ndims = tensor.ndims,
+                .shape = tensor.shape[0..tensor.ndims],
+                .strides = tensor.strides[0 .. tensor.ndims + 1],
+                .group = tensors.count(),
+                .uid = tensors.count(),
+                // .label = std.fmt.comptimePrint("{s}{any}", .{ @tagName(tensor.dtype), tensor.shape }),
+            };
+            tensors.putNoClobber(ptr, tensor_node) catch unreachable;
+        }
+    }
+};
+
 pub fn viz(writer: anytype) void {
     const Viz = struct {
         fn vizHelper(target: OpNode.Input, visited: []bool) void {

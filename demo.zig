@@ -16,12 +16,10 @@ fn softmax(x: anytype, comptime dim: u8) @TypeOf(x) {
 }
 
 pub fn main() !void {
-    // All tensor code should must be in comptime
-    // const out = comptime softmax(
-    //     tesseract.Tensor(.f32, .{ 2, 16 }).full(3),
-    //     1,
-    // );
+    tesseract.init();
+    defer tesseract.deinit();
 
+    // All tensor code should must be in comptime
     const out = comptime blk: {
         const a = Tensor(.f32, .{ "B", "M", "K" })
             .full(2);
@@ -30,11 +28,9 @@ pub fn main() !void {
         break :blk softmax(a.matmul(b), 1);
     };
 
-    tesseract.init();
-    defer tesseract.deinit();
-    tesseract.trace(&out);
-    std.debug.print("\n", .{});
+    out.trace();
 
+    std.debug.print("\n", .{});
     const writer = std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write){ .context = std.io.getStdOut() };
     try std.json.stringify(Graph{}, .{ .whitespace = .indent_2 }, writer);
     std.debug.print("\n", .{});
