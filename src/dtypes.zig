@@ -1,21 +1,4 @@
-pub const DType = enum {
-    u1,
-    bool,
-    u8,
-    i8,
-    u16,
-    i16,
-    f16,
-    u32,
-    i32,
-    f32,
-    u64,
-    i64,
-    f64,
-    u128,
-    i128,
-    f128,
-};
+pub const DType = enum { bool, u8, i8, u16, i16, f16, u32, i32, f32, u64, i64, f64, u128, i128, f128 };
 
 pub fn isFloat(t: DType) bool {
     return switch (t) {
@@ -37,11 +20,19 @@ pub fn isBool(t: DType) bool {
 
 pub fn bits(t: DType) u16 {
     return switch (t) {
-        .u1, .bool => 1,
+        .bool => 1,
         .u8, .i8 => 8,
         .u16, .i16, .f16 => 16,
         .u32, .i32, .f32 => 32,
         .u64, .i64, .f64 => 64,
         .u128, .i128, .f128 => 128,
+    };
+}
+
+pub fn ComptimeType(comptime dtype: DType) type {
+    return switch (dtype) {
+        .bool => bool,
+        .u8, .i8, .u16, .i16, .u32, .i32, .u64, .i64, .u128, .i128 => comptime_int,
+        .f16, .f32, .f64, .f128 => comptime_float,
     };
 }

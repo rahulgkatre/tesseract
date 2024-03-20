@@ -33,7 +33,7 @@ pub fn maximum(comptime a: anytype, comptime b: anytype) @TypeOf(a.zip(.Maximum,
 pub fn mod(comptime a: anytype, comptime b: anytype) @TypeOf(a.zip(.Mod, b)) {
     return a.zip(.Mod, b);
 }
-pub fn less_than(comptime a: anytype, comptime b: anytype) @TypeOf(a.zip(.LessThan, b)) {
+pub fn lessThan(comptime a: anytype, comptime b: anytype) @TypeOf(a.zip(.LessThan, b)) {
     return a.zip(.LessThan, b);
 }
 pub fn equals(comptime a: anytype, comptime b: anytype) @TypeOf(a.zip(.Equals, b)) {

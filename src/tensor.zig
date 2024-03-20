@@ -91,7 +91,6 @@ fn Tensor(
         contiguous: bool = contiguous,
 
         any_tensor: Graph.AnyTensor,
-        any_op: Graph.AnyOp,
 
         pub fn init(comptime last_op: Graph.AnyOp) Self {
             return .{
@@ -104,7 +103,6 @@ fn Tensor(
                     .strides = &strides,
                     .size = size,
                 },
-                .any_op = last_op,
             };
         }
 
@@ -119,11 +117,11 @@ fn Tensor(
         }
 
         /// Fill a tensor with a value
-        pub fn full(comptime value: anytype) Self {
+        pub fn full(comptime value: dtypes.ComptimeType(dtype)) Self {
             return init(.{ .InitOp = .{ .op = .Full, .args = .{ .Full = std.fmt.comptimePrint("{any}", .{value}) } } });
         }
         /// Keeps the same shape as another tensor, but initializes a new tensor
-        pub fn fullLike(_: *const Self, comptime value: anytype) Self {
+        pub fn fullLike(_: Self, comptime value: anytype) Self {
             return Self.full(value);
         }
 
@@ -145,14 +143,14 @@ fn Tensor(
             std.debug.assert(dtypes.isFloat(tensor_dtype));
             return init(.{ .InitOp = .{ .op = .Rand, .args = .{ .Rand = {} } } });
         }
-        pub fn randLike(_: *const Self) Self {
+        pub fn randLike(_: Self) Self {
             return Self.rand();
         }
 
         /// A copy is only needed to make a non-contiguous tensor contiguous again.
         /// Each tensor is immutable and operations already produce new tensors
         /// but intermediate tensors can be eliminated through optimization.
-        pub fn copy(x: *const Self) ContiguousTensor(dtype, shape) {
+        pub fn copy(x: Self) ContiguousTensor(dtype, shape) {
             const Out = ContiguousTensor(dtype, shape);
             return Out.init(.{ .MapOp = .{ .op = .Id, .x = &x.any_tensor } });
         }
@@ -168,7 +166,7 @@ fn Tensor(
         }
         /// Permute the dimensions of the tensor. A valid permutation must contain
         /// values from 0 to ndims and each value must appear exactly once.
-        pub fn permute(x: *const Self, comptime perm: [ndims]u8) Permute(perm) {
+        pub fn permute(x: Self, comptime perm: [ndims]u8) Permute(perm) {
             const Out = Permute(perm);
             return x.asStrided(Out.shape, Out.strides);
         }
@@ -187,16 +185,16 @@ fn Tensor(
             }
         }
         /// Transpose two dimensions of the tensor. Similar to permute, but only for two dimensions.
-        pub fn transpose(x: *const Self, comptime dim1: u8, comptime dim2: u8) Transpose(dim1, dim2) {
+        pub fn transpose(x: Self, comptime dim1: u8, comptime dim2: u8) Transpose(dim1, dim2) {
             if (dim1 != dim2) {
                 const Out = Transpose(dim1, dim2);
                 return x.asStrided(Out.shape, Out.strides);
             } else {
-                return x.*;
+                return x;
             }
         }
         /// View the tensor as a different shape.
-        pub fn view(x: *const Self, comptime new_shape: anytype) ContiguousTensor(dtype, new_shape) {
+        pub fn view(x: Self, comptime new_shape: anytype) ContiguousTensor(dtype, new_shape) {
             const Out = ContiguousTensor(dtype, new_shape);
             return Out.init(.{ .TypeOp = .{ .op = .AsStrided, .x = &x.any_tensor } });
         }
@@ -211,7 +209,7 @@ fn Tensor(
             );
         }
         /// Insert a dim of size 1 into the shape of the tensor.
-        pub fn unsqueeze(x: *const Self, comptime dim: u8) Unsqueeze(dim) {
+        pub fn unsqueeze(x: Self, comptime dim: u8) Unsqueeze(dim) {
             const Out = Unsqueeze(dim);
             return x.asStrided(Out.shape, Out.strides);
         }
@@ -232,7 +230,7 @@ fn Tensor(
             );
         }
         /// Remove a dim of size 1 from the shape of the tensor.
-        pub fn squeeze(x: *const Self, comptime dim: u8) Squeeze(dim) {
+        pub fn squeeze(x: Self, comptime dim: u8) Squeeze(dim) {
             const Out = Squeeze(dim);
             return x.asStrided(Out.shape, Out.strides);
         }
@@ -257,25 +255,24 @@ fn Tensor(
         /// Changes the shape and stride of the tensor to change how the underlying memory is accessed.
         /// Powerful enough to be used to implement any reshaping or windowing operation on a tensor.
         /// There are guiderails to prevent out of bounds access into underlying memory.
-        pub fn asStrided(comptime x: *const Self, comptime new_shape: anytype, comptime new_strides: anytype) AsStrided(new_shape, new_strides) {
+        pub fn asStrided(comptime x: Self, comptime new_shape: anytype, comptime new_strides: anytype) AsStrided(new_shape, new_strides) {
             const Out = AsStrided(new_shape, new_strides);
             return Out.init(.{ .TypeOp = .{ .op = .AsStrided, .x = &x.any_tensor } });
         }
 
         ///Cast an array of a datatype to another datatype
-        pub fn asType(comptime x: *const Self, comptime new_dtype: dtypes.DType) Tensor(new_dtype, ndims, shape, strides) {
+        pub fn asType(comptime x: Self, comptime new_dtype: dtypes.DType) Tensor(new_dtype, ndims, shape, strides) {
             const Out = Tensor(new_dtype, ndims, shape, strides);
             return Out.init(.{ .TypeOp = .{ .op = .AsType, .x = &x.any_tensor } });
         }
 
         ///Apply an elementwise map operation
-        pub fn map(comptime x: *const Self, comptime op: ops.MapOp) Self {
-            const Out = @TypeOf(x.*);
-            return Out.init(.{ .MapOp = .{ .op = op, .x = &x.any_tensor } });
+        pub fn map(comptime x: Self, comptime op: ops.MapOp) Self {
+            return init(.{ .MapOp = .{ .op = op, .x = &x.any_tensor } });
         }
 
         pub fn Broadcast(comptime new_shape: anytype, comptime new_dtype: dtypes.DType) type {
-            if (std.mem.eql(u64, &shape, &new_shape)) {
+            if (std.mem.eql(u64, &shape, &new_shape) and new_dtype == dtype) {
                 return Self;
             }
             const bc_ndims = @max(ndims, new_shape.len);
@@ -293,16 +290,16 @@ fn Tensor(
             }
             return ContiguousTensor(new_dtype, bc_shape);
         }
-        pub fn expand(comptime x: *const Self, comptime new_shape: anytype) Broadcast(new_shape, dtype) {
+        pub fn expand(comptime x: Self, comptime new_shape: anytype) Broadcast(new_shape, dtype) {
             const Out = Broadcast(new_shape, dtype);
             if (Self == Out) {
-                return x.*;
+                return x;
             }
             return Out.init(.{ .TypeOp = .{ .op = .AsStrided, .x = &x.any_tensor } });
         }
 
         /// Apply an elementwise zip (binary) operation on two arrays, with broadcasting
-        pub fn zip(comptime a: *const Self, comptime op: ops.ZipOp, comptime b: anytype) Broadcast(
+        pub fn zip(comptime a: Self, comptime op: ops.ZipOp, comptime b: anytype) Broadcast(
             b.shape,
             switch (op) {
                 .Equals, .LessThan => .bool,
@@ -362,7 +359,7 @@ fn Tensor(
         }
         /// Perform a reduction across 1 or more (or all) dimensions of a tensor.
         /// Dimensions to reduce can be passed as a int for 1 dim, tuple for multiple dims, or null/void for all dims
-        pub fn reduce(comptime x: *const Self, comptime op: ops.ReduceOp, comptime reduce_dims: anytype) Reduce(reduce_dims) {
+        pub fn reduce(comptime x: Self, comptime op: ops.ReduceOp, comptime reduce_dims: anytype) Reduce(reduce_dims) {
             const Out = Reduce(reduce_dims);
             const reduction_dim_mask: [ndims]bool = switch (@typeInfo(@TypeOf(reduce_dims))) {
                 .ComptimeInt, .Int => blk: {
@@ -421,13 +418,37 @@ fn Tensor(
                 \\tensor2: {any}
             , .{ shape, Other.shape }));
         }
-        pub fn matmul(comptime a: anytype, comptime b: anytype) MatMul(b) {
+        pub fn matmul(comptime a: Self, comptime b: anytype) MatMul(b) {
             const a_mul_b = a
                 .unsqueeze(a.ndims - 1)
                 .mul(b.transpose(b.ndims - 2, b.ndims - 1).copy().unsqueeze(b.ndims - 2));
             return a_mul_b
                 .sum(a_mul_b.ndims - 1)
                 .squeeze(a_mul_b.ndims - 1);
+        }
+
+        pub fn Where(comptime true_value: anytype, comptime false_value: anytype) type {
+            const T = @TypeOf(true_value);
+            const F = @TypeOf(false_value);
+            std.debug.assert(T.dtype == F.dtype);
+            std.debug.assert(dtypes.isBool(Self.dtype));
+            const TF = T.Broadcast(F.shape, F.dtype);
+            return Self.Broadcast(TF.shape, TF.dtype);
+        }
+        /// Conditional elementwise operator
+        /// out[i] = if (mask[i]) true_value[i] else false_value[i]
+        /// Supports broadcasting between all 3 tensors, but true value and false value are broadcasted together first and must also have the same dtype
+        pub fn where(comptime mask: Self, comptime true_value: anytype, comptime false_value: anytype) Where(true_value, false_value) {
+            const Out = Where(true_value, false_value);
+            const mask_expand = mask.expand(Out.shape);
+            const true_expand = true_value.expand(Out.shape);
+            const false_expand = false_value.expand(Out.shape);
+            return Out.init(.{ .TernaryOp = .{
+                .op = .Where,
+                .a = &mask_expand.any_tensor,
+                .b = &true_expand.any_tensor,
+                .c = &false_expand.any_tensor,
+            } });
         }
 
         // TODO: Need to implement padding to get conv2d to work

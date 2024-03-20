@@ -5,6 +5,13 @@ const Tensor = tesseract.Tensor;
 
 const Graph = @import("src/Graph.zig");
 
+fn sigmoid(x: anytype) @TypeOf(x) {
+    const x_pos = x.neg().exp().add(tesseract.Scalar(x.dtype).full(1)).recip();
+    const x_neg = x.exp().div(x.exp().add(tesseract.Scalar(x.dtype).full(1)));
+    const mask = x.lessThan(tesseract.Scalar(x.dtype).full(0));
+    return mask.where(x_neg, x_pos);
+}
+
 // Example of a softmax
 fn softmax(x: anytype, comptime dim: u8) @TypeOf(x) {
     const max = x.max(null);
@@ -24,7 +31,9 @@ pub fn main() !void {
         const a = Tensor(.f32, .{ 2, 3, 4 }).full(2);
         const b = Tensor(.f32, .{ 2, 4, 3 }).input();
         // break :blk a.matmul(b);
-        break :blk softmax(a.matmul(b), 1);
+        var ab = a.matmul(b);
+        ab = sigmoid(ab);
+        break :blk ab;
     };
 
     out.trace();

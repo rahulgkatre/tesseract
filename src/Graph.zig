@@ -37,6 +37,11 @@ pub const AnyTensor = struct {
                 binary_op.b.trace();
             },
             .InitOp => {},
+            .TernaryOp => |ternary_op| {
+                ternary_op.a.trace();
+                ternary_op.b.trace();
+                ternary_op.c.trace();
+            },
             inline else => |unary_op| unary_op.x.trace(),
         }
         var out: *AnyTensor = @constCast(self);
@@ -95,24 +100,38 @@ pub const AnyOp = union(ops.OpTypes) {
         args: ops.InitOp.Args,
         out: *const AnyTensor = undefined,
     },
+    TernaryOp: struct {
+        op: ops.TernaryOp,
+        a: *const AnyTensor,
+        b: *const AnyTensor,
+        c: *const AnyTensor,
+        out: *const AnyTensor = undefined,
+    },
 
     pub fn jsonStringify(self: AnyOp, write_stream: anytype) !void {
         switch (self) {
-            .ZipOp => |zip_op| try write_stream.write(.{
-                .op = zip_op.op,
-                .a = @intFromPtr(zip_op.a),
-                .b = @intFromPtr(zip_op.b),
-                .out = @intFromPtr(zip_op.out),
+            .ZipOp => |binary| try write_stream.write(.{
+                .op = binary.op,
+                .a = @intFromPtr(binary.a),
+                .b = @intFromPtr(binary.b),
+                .out = @intFromPtr(binary.out),
             }),
-            .InitOp => |init_op| try write_stream.write(.{
-                .op = init_op.op,
-                .args = init_op.args,
-                .out = @intFromPtr(init_op.out),
+            .TernaryOp => |ternary| try write_stream.write(.{
+                .op = ternary.op,
+                .a = @intFromPtr(ternary.a),
+                .b = @intFromPtr(ternary.b),
+                .c = @intFromPtr(ternary.c),
+                .out = @intFromPtr(ternary.out),
             }),
-            inline else => |unary_op| try write_stream.write(.{
-                .op = unary_op.op,
-                .x = @intFromPtr(unary_op.x),
-                .out = @intFromPtr(unary_op.out),
+            .InitOp => |_init| try write_stream.write(.{
+                .op = _init.op,
+                .args = _init.args,
+                .out = @intFromPtr(_init.out),
+            }),
+            inline else => |unary| try write_stream.write(.{
+                .op = unary.op,
+                .x = @intFromPtr(unary.x),
+                .out = @intFromPtr(unary.out),
             }),
         }
     }
