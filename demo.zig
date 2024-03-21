@@ -6,9 +6,9 @@ const Tensor = tesseract.Tensor;
 const Graph = @import("src/Graph.zig");
 
 fn sigmoid(x: anytype) @TypeOf(x) {
-    const x_pos = x.neg().exp().add(tesseract.Scalar(x.dtype).full(1)).recip();
-    const x_neg = x.exp().div(x.exp().add(tesseract.Scalar(x.dtype).full(1)));
-    const mask = x.lessThan(tesseract.Scalar(x.dtype).full(0));
+    const x_pos = x.neg().exp().add(1.0).recip();
+    const x_neg = x.exp().div(x.exp().add(1.0));
+    const mask = x.lessThan(0.0);
     return mask.where(x_neg, x_pos);
 }
 
@@ -28,7 +28,7 @@ pub fn main() !void {
 
     // All tensor code should must be in comptime
     const out = comptime blk: {
-        const a = Tensor(.f32, .{ 2, 3, 4 }).full(2);
+        const a = Tensor(.f32, .{ 2, 3, 4 }).input();
         const b = Tensor(.f32, .{ 2, 4, 3 }).input();
         // break :blk a.matmul(b);
         var ab = a.matmul(b);

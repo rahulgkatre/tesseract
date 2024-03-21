@@ -26,8 +26,9 @@ pub const AnyTensor = struct {
     ndims: u8,
     shape: []const u64,
     strides: []const u64,
-    size: u64,
-    contiguous: bool,
+    offset: u64,
+    // size: u64,
+    // contiguous: bool,
     last_op: AnyOp,
 
     pub fn trace(self: *const AnyTensor) void {
@@ -62,8 +63,9 @@ pub const AnyTensor = struct {
             .ndims = self.ndims,
             .shape = self.shape,
             .strides = self.strides,
-            .size = self.size,
-            .contiguous = self.contiguous,
+            .offset = self.offset,
+            // .size = self.size,
+            // .contiguous = self.contiguous,
         });
     }
 
