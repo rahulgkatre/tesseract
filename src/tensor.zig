@@ -28,11 +28,10 @@ fn contiguousStrides(comptime ndims: u8, shape: [ndims]u64) [ndims]u64 {
 }
 
 pub fn range(
-    comptime dtype: dtypes.DType,
-    comptime start: if (dtypes.isInt(dtype)) comptime_int else @compileError("Range tensor must have int dtype"),
-    comptime stop: if (dtypes.isInt(dtype)) comptime_int else @compileError("Range tensor must have int dtype"),
-) UserTensor(dtype, .{stop - start}) {
-    return UserTensor(dtype, .{stop - start}).range(start, stop);
+    comptime start: comptime_int,
+    comptime stop: comptime_int,
+) UserTensor(.i32, .{stop - start}) {
+    return UserTensor(.i32, .{stop - start}).range(start, stop);
 }
 
 fn Scalar(comptime dtype: dtypes.DType) type {
@@ -103,18 +102,18 @@ pub fn Tensor(
         shape: [ndims]u64 = shape,
         strides: [ndims]u64,
         offset: u64,
-        last_op: Graph.AnyOp,
+        op_node: Graph.OpNode,
 
-        pub fn initContiguous(comptime last_op: Graph.AnyOp) Self {
-            return .{ .last_op = last_op, .strides = contiguousStrides(ndims, shape), .offset = 0 };
+        pub fn initContiguous(comptime op_node: Graph.OpNode) Self {
+            return .{ .op_node = op_node, .strides = contiguousStrides(ndims, shape), .offset = 0 };
         }
 
-        pub fn any(self: *const Self) Graph.AnyTensor {
+        pub fn node(self: *const Self) Graph.TensorNode {
             @setEvalBranchQuota(std.math.maxInt(u32));
             return .{
                 .ptr = self,
                 .dtype = dtype,
-                .last_op = self.last_op,
+                .op_node = self.op_node,
                 .ndims = ndims,
                 .shape = &shape,
                 .offset = self.offset,
@@ -125,7 +124,7 @@ pub fn Tensor(
         }
 
         pub fn trace(self: *const Self) void {
-            self.any().trace();
+            self.node().trace();
         }
 
         pub fn isContiguous(self: Self) bool {
@@ -152,6 +151,10 @@ pub fn Tensor(
             }
             // The result is the size of the storage needed to visit all indices of the tensor
             return _size;
+        }
+
+        pub fn dimSize(_: Self, d: i16) u64 {
+            return shape[normalizedDim(d)];
         }
 
         /// Used to mark a tensor as an input to a graph,
@@ -187,11 +190,11 @@ pub fn Tensor(
         /// A copy is only needed to make a non-contiguous tensor contiguous again.
         /// Each tensor is immutable and operations already produce new tensors
         /// but intermediate tensors can be eliminated through optimization.
-        pub fn copy(a: Self) Self {
-            return UserTensor(dtype, shape).initContiguous(.{ .MapOp = .{ .op = .Id, .a = &a.any() } });
+        pub fn copy(a: Self) UserTensor(dtype, shape) {
+            return UserTensor(dtype, shape).initContiguous(.{ .MapOp = .{ .op = .Id, .a = &a.node() } });
         }
 
-        fn Permute(comptime perm: [ndims]u8) type {
+        fn Permute(comptime perm: [ndims]i16) type {
             return View(utils.arrayPermute(u64, ndims, shape, perm));
         }
         /// Permute the dimensions of the tensor. A valid permutation must contain
@@ -238,13 +241,37 @@ pub fn Tensor(
         /// View the tensor as a different shape.
         pub fn view(a: Self, comptime new_shape: anytype) View(new_shape) {
             if (!isContiguous(a)) {
-                @compileError("Cannot change view of a non-contiguous tensor. Copy the tensor first to make it contiguous.");
+                return a.copy().view(new_shape);
+            } else {
+                return View(new_shape).initContiguous(.{ .TypeOp = .{ .op = .AsStrided, .a = &a.node() } });
             }
-            return View(new_shape).initContiguous(.{ .TypeOp = .{ .op = .AsStrided, .a = &a.any() } });
         }
 
-        pub fn flatten(comptime a: Self) View(.{a.size() - a.offset}) {
-            return a.view(.{a.size() - a.offset});
+        pub fn Flatten(comptime start_dim: i16, comptime end_dim: i16) type {
+            const norm_start = normalizedDim(start_dim);
+            const norm_end = normalizedDim(end_dim);
+            if (norm_start == norm_end) {
+                return Self;
+            } else {
+                var new_shape: [ndims - (norm_end - norm_start)]u64 = undefined;
+                new_shape[norm_start] = 1;
+                for (0..ndims) |d| {
+                    if (d < norm_start or d > norm_end) {
+                        new_shape[d] = shape[d];
+                    } else {
+                        new_shape[norm_start] *= shape[d];
+                    }
+                }
+                return View(new_shape);
+            }
+        }
+
+        pub fn flattenPartial(comptime a: Self, comptime start_dim: i16, comptime end_dim: i16) Flatten(start_dim, end_dim) {
+            return a.view(Flatten(start_dim, end_dim).shape);
+        }
+
+        pub fn flatten(comptime a: Self) Flatten(0, -1) {
+            return a.view(Flatten(0, -1).shape);
         }
 
         fn Unsqueeze(comptime dim: i16) type {
@@ -282,7 +309,7 @@ pub fn Tensor(
         /// There are guiderails to prevent out of bounds access into underlying memory.
         pub fn asStrided(comptime a: Self, comptime new_shape: anytype, comptime new_strides: [new_shape.len]u64, offset: u64) View(new_shape) {
             var out = View(new_shape){
-                .last_op = .{ .TypeOp = .{ .op = .AsStrided, .a = &a.any() } },
+                .op_node = .{ .TypeOp = .{ .op = .AsStrided, .a = &a.node() } },
                 .strides = new_strides,
                 .offset = offset,
             };
@@ -298,12 +325,12 @@ pub fn Tensor(
 
         ///Cast an array of a datatype to another datatype
         pub fn asType(comptime a: Self, comptime new_dtype: dtypes.DType) UserTensor(new_dtype, shape) {
-            return UserTensor(new_dtype, shape).initContiguous(.{ .TypeOp = .{ .op = .AsType, .a = &a.any() } });
+            return UserTensor(new_dtype, shape).initContiguous(.{ .TypeOp = .{ .op = .AsType, .a = &a.node() } });
         }
 
         ///Apply an elementwise map operation
         pub fn map(comptime a: Self, comptime op: ops.MapOp) Self {
-            return initContiguous(.{ .MapOp = .{ .op = op, .a = &a.any() } });
+            return initContiguous(.{ .MapOp = .{ .op = op, .a = &a.node() } });
         }
 
         pub fn Broadcast(comptime new_shape: anytype) type {
@@ -330,7 +357,7 @@ pub fn Tensor(
             if (Self == Out) {
                 return a;
             }
-            return Out.initContiguous(.{ .TypeOp = .{ .op = .AsStrided, .a = &a.any() } });
+            return Out.initContiguous(.{ .TypeOp = .{ .op = .AsStrided, .a = &a.node() } });
         }
 
         pub fn zipOpResultDType(comptime op: ops.ZipOp, a: Self, b: anytype) dtypes.DType {
@@ -341,7 +368,7 @@ pub fn Tensor(
         }
 
         pub fn normalizedDim(dim: i16) u8 {
-            const normalized = if (dim < 0) ndims - dim else dim;
+            const normalized = if (dim < 0) ndims + dim else dim;
             if (normalized < 0 or normalized > ndims) {
                 @compileError(comptimePrint("Dimension index {d} is out of bounds {d}", .{ normalized, ndims }));
             }
@@ -358,7 +385,7 @@ pub fn Tensor(
             const a_expand = comptime a.expand(bc_shape);
             const b_expand = comptime b_tensor.expand(bc_shape);
             const Out = UserTensor(new_dtype, bc_shape);
-            return Out.initContiguous(.{ .ZipOp = .{ .op = op, .a = &a_expand.any(), .b = &b_expand.any() } });
+            return Out.initContiguous(.{ .ZipOp = .{ .op = op, .a = &a_expand.node(), .b = &b_expand.node() } });
         }
 
         pub fn Reduce(comptime reduce_dims: anytype) type {
@@ -399,8 +426,7 @@ pub fn Tensor(
         /// Perform a reduction across 1 or more (or all) dimensions of a tensor.
         /// Dimensions to reduce can be passed as a int for 1 dim, tuple for multiple dims, or null/void for all dims
         pub fn reduce(comptime a: Self, comptime op: ops.ReduceOp, comptime reduce_dims: anytype) Reduce(reduce_dims) {
-            const Out = Reduce(reduce_dims);
-            const reduction_dim_mask: [ndims]bool = switch (@typeInfo(@TypeOf(reduce_dims))) {
+            const reduce_dim_mask: [ndims]bool = switch (@typeInfo(@TypeOf(reduce_dims))) {
                 .ComptimeInt, .Int => blk: {
                     var tmp_mask: [ndims]bool = [_]bool{false} ** ndims;
                     const dim = reduce_dims;
@@ -416,7 +442,7 @@ pub fn Tensor(
                     break :blk tmp_mask;
                 },
             };
-            return Out.initContiguous(.{ .ReduceOp = .{ .op = op, .a = &a.any(), .dims = &reduction_dim_mask } });
+            return Reduce(reduce_dims).initContiguous(.{ .ReduceOp = .{ .op = op, .a = &a.node(), .dims = &reduce_dim_mask } });
         }
 
         pub fn MatMul(comptime other: anytype) type {
@@ -486,7 +512,7 @@ pub fn Tensor(
             const false_expand = asTensor(false_value).expand(Out.shape);
             return Out.initContiguous(.{ .TernaryOp = .{
                 .op = .Where,
-                .a = &mask_expand.any(),
+                .a = &mask_expand.node(),
                 .b = &true_expand.any(),
                 .c = &false_expand.any(),
             } });
@@ -587,7 +613,7 @@ test "map" {
     defer Graph.deinit();
     tensor2.trace();
     try std.testing.expect(tensor2.last_op.MapOp.op == .Neg);
-    try std.testing.expectEqual(tensor2.last_op.MapOp.a.*, tensor1.any());
+    try std.testing.expectEqual(tensor2.last_op.MapOp.a.*, tensor1.node());
 }
 
 test "zip" {
@@ -599,8 +625,8 @@ test "zip" {
     defer Graph.deinit();
     tensor3.trace();
     try std.testing.expect(tensor3.last_op.ZipOp.op == .Add);
-    try std.testing.expectEqual(tensor3.last_op.ZipOp.a.last_op.TypeOp.a.*, tensor1.any());
-    try std.testing.expectEqual(tensor3.last_op.ZipOp.b.last_op.TypeOp.a.*, tensor2.any());
+    try std.testing.expectEqual(tensor3.last_op.ZipOp.a.last_op.TypeOp.a.*, tensor1.node());
+    try std.testing.expectEqual(tensor3.last_op.ZipOp.b.last_op.TypeOp.a.*, tensor2.node());
 }
 
 test "reduce" {
@@ -611,7 +637,7 @@ test "reduce" {
     defer Graph.deinit();
     tensor2.trace();
     try std.testing.expect(tensor2.last_op.ReduceOp.op == .Sum);
-    try std.testing.expectEqual(tensor2.last_op.ReduceOp.a.*, tensor1.any());
+    try std.testing.expectEqual(tensor2.last_op.ReduceOp.a.*, tensor1.node());
     try std.testing.expectEqual(tensor2.last_op.ReduceOp.dims[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
 }
 
@@ -623,7 +649,7 @@ test "multiple dim reduce" {
     defer Graph.deinit();
     tensor2.trace();
     try std.testing.expect(tensor2.last_op.ReduceOp.op == .Sum);
-    try std.testing.expectEqual(tensor2.last_op.ReduceOp.a.*, tensor1.any());
+    try std.testing.expectEqual(tensor2.last_op.ReduceOp.a.*, tensor1.node());
     try std.testing.expectEqual(tensor2.last_op.ReduceOp.dims[0..tensor2.ndims].*, [_]bool{ true, true, false });
 }
 
@@ -638,8 +664,8 @@ test "zip reduce" {
     try std.testing.expect(tensor3.last_op.ReduceOp.op == .Sum);
     // Anonymous intermediate tensor that stores tensor1 + tensor2
     const anon = tensor3.last_op.ReduceOp.a;
-    try std.testing.expectEqual(anon.last_op.ZipOp.a.last_op.TypeOp.a.*, tensor1.any());
-    try std.testing.expectEqual(anon.last_op.ZipOp.b.last_op.TypeOp.a.*, tensor2.any());
+    try std.testing.expectEqual(anon.last_op.ZipOp.a.last_op.TypeOp.a.*, tensor1.node());
+    try std.testing.expectEqual(anon.last_op.ZipOp.b.last_op.TypeOp.a.*, tensor2.node());
 }
 
 test "as_type" {

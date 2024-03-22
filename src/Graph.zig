@@ -6,12 +6,12 @@ const dtypes = @import("dtypes.zig");
 
 var gpa: std.heap.GeneralPurposeAllocator(.{}) = undefined;
 var arena: std.heap.ArenaAllocator = undefined;
-var tensors: std.AutoArrayHashMap(usize, AnyTensor) = undefined;
+var tensors: std.AutoArrayHashMap(usize, TensorNode) = undefined;
 
 pub fn init() void {
     gpa = .{};
     arena = std.heap.ArenaAllocator.init(gpa.allocator());
-    tensors = std.AutoArrayHashMap(usize, AnyTensor).init(arena.allocator());
+    tensors = std.AutoArrayHashMap(usize, TensorNode).init(arena.allocator());
 }
 
 pub fn deinit() void {
@@ -20,7 +20,7 @@ pub fn deinit() void {
 }
 
 /// Strips away comptime / generic information to make it easier to work with pointers to tensors
-pub const AnyTensor = struct {
+pub const TensorNode = struct {
     ptr: *const anyopaque,
     dtype: dtypes.DType,
     ndims: u8,
@@ -29,21 +29,23 @@ pub const AnyTensor = struct {
     offset: u64,
     size: u64,
     contiguous: bool,
-    last_op: AnyOp,
+    op_node: OpNode,
 
-    pub fn trace(self: *const AnyTensor) void {
-        switch (self.last_op) {
-            .ZipOp => |binary_op| {
-                binary_op.a.trace();
-                binary_op.b.trace();
-            },
-            .InitOp => {},
+    pub fn trace(self: *const TensorNode) void {
+        switch (self.op_node) {
             .TernaryOp => |ternary_op| {
                 ternary_op.a.trace();
                 ternary_op.b.trace();
                 ternary_op.c.trace();
             },
-            inline else => |unary_op| unary_op.a.trace(),
+            .ZipOp => |binary_op| {
+                binary_op.a.trace();
+                binary_op.b.trace();
+            },
+            .InitOp => {},
+            inline else => |unary_op| {
+                unary_op.a.trace();
+            },
         }
         const key = @intFromPtr(self);
         if (!tensors.contains(key)) {
@@ -51,7 +53,7 @@ pub const AnyTensor = struct {
         }
     }
 
-    pub fn jsonStringify(self: *const AnyTensor, write_stream: anytype) !void {
+    pub fn jsonStringify(self: *const TensorNode, write_stream: anytype) !void {
         try write_stream.write(.{
             .ptr = @intFromPtr(self.ptr),
             .dtype = self.dtype,
@@ -65,34 +67,30 @@ pub const AnyTensor = struct {
     }
 };
 
-pub const AnyOp = union(ops.OpTypes) {
+pub const OpNode = union(ops.OpTypes) {
     const JsonFormat = union(ops.OpTypes) {
         MapOp: struct {
             op: ops.MapOp,
             a: usize,
             out: usize,
         },
-
         ZipOp: struct {
             op: ops.ZipOp,
             a: usize,
             b: usize,
             out: usize,
         },
-
         ReduceOp: struct {
             op: ops.ReduceOp,
             a: usize,
             dims: []const bool,
             out: usize,
         },
-
         TypeOp: struct {
             op: ops.TypeOp,
             a: usize,
             out: usize,
         },
-
         InitOp: struct {
             op: ops.InitOp,
             args: ops.InitOp.Args,
@@ -105,31 +103,25 @@ pub const AnyOp = union(ops.OpTypes) {
             c: usize,
             out: usize,
         },
-
-        pub fn jsonStringify(self: JsonFormat, write_stream: anytype) !void {
-            switch (self) {
-                inline else => |data| try write_stream.write(data),
-            }
-        }
     };
 
     MapOp: struct {
         op: ops.MapOp,
-        a: *const AnyTensor,
+        a: *const TensorNode,
     },
     ZipOp: struct {
         op: ops.ZipOp,
-        a: *const AnyTensor,
-        b: *const AnyTensor,
+        a: *const TensorNode,
+        b: *const TensorNode,
     },
     ReduceOp: struct {
         op: ops.ReduceOp,
-        a: *const AnyTensor,
+        a: *const TensorNode,
         dims: []const bool,
     },
     TypeOp: struct {
         op: ops.TypeOp,
-        a: *const AnyTensor,
+        a: *const TensorNode,
     },
     InitOp: struct {
         op: ops.InitOp,
@@ -137,45 +129,45 @@ pub const AnyOp = union(ops.OpTypes) {
     },
     TernaryOp: struct {
         op: ops.TernaryOp,
-        a: *const AnyTensor,
-        b: *const AnyTensor,
-        c: *const AnyTensor,
+        a: *const TensorNode,
+        b: *const TensorNode,
+        c: *const TensorNode,
     },
 
-    fn toJsonFormat(self: AnyOp, out: *const AnyTensor) JsonFormat {
+    fn toJsonFormat(self: OpNode, out: *const TensorNode) JsonFormat {
         return switch (self) {
-            .MapOp => |aop| .{ .MapOp = .{
-                .op = aop.op,
-                .a = @intFromPtr(aop.a),
+            .MapOp => |op_node| .{ .MapOp = .{
+                .op = op_node.op,
+                .a = @intFromPtr(op_node.a),
                 .out = @intFromPtr(out.ptr),
             } },
-            .ZipOp => |aop| .{ .ZipOp = .{
-                .op = aop.op,
-                .a = @intFromPtr(aop.a),
-                .b = @intFromPtr(aop.b),
+            .ZipOp => |op_node| .{ .ZipOp = .{
+                .op = op_node.op,
+                .a = @intFromPtr(op_node.a),
+                .b = @intFromPtr(op_node.b),
                 .out = @intFromPtr(out.ptr),
             } },
-            .ReduceOp => |aop| .{ .ReduceOp = .{
-                .op = aop.op,
-                .a = @intFromPtr(aop.a),
-                .dims = aop.dims,
+            .ReduceOp => |op_node| .{ .ReduceOp = .{
+                .op = op_node.op,
+                .a = @intFromPtr(op_node.a),
+                .dims = op_node.dims,
                 .out = @intFromPtr(out.ptr),
             } },
-            .TypeOp => |aop| .{ .TypeOp = .{
-                .op = aop.op,
-                .a = @intFromPtr(aop.a),
+            .TypeOp => |op_node| .{ .TypeOp = .{
+                .op = op_node.op,
+                .a = @intFromPtr(op_node.a),
                 .out = @intFromPtr(out.ptr),
             } },
-            .InitOp => |aop| .{ .InitOp = .{
-                .op = aop.op,
-                .args = aop.args,
+            .InitOp => |op_node| .{ .InitOp = .{
+                .op = op_node.op,
+                .args = op_node.args,
                 .out = @intFromPtr(out.ptr),
             } },
-            .TernaryOp => |aop| .{ .TernaryOp = .{
-                .op = aop.op,
-                .a = @intFromPtr(aop.a),
-                .b = @intFromPtr(aop.b),
-                .c = @intFromPtr(aop.c),
+            .TernaryOp => |op_node| .{ .TernaryOp = .{
+                .op = op_node.op,
+                .a = @intFromPtr(op_node.a),
+                .b = @intFromPtr(op_node.b),
+                .c = @intFromPtr(op_node.c),
                 .out = @intFromPtr(out.ptr),
             } },
         };
@@ -183,10 +175,10 @@ pub const AnyOp = union(ops.OpTypes) {
 };
 
 pub fn jsonStringify(_: Graph, write_stream: anytype) !void {
-    const operations: []AnyOp.JsonFormat = gpa.allocator().alloc(AnyOp.JsonFormat, tensors.count()) catch unreachable;
+    const operations: []OpNode.JsonFormat = gpa.allocator().alloc(OpNode.JsonFormat, tensors.count()) catch unreachable;
     defer gpa.allocator().free(operations);
     for (tensors.values(), operations) |t, *operation| {
-        operation.* = t.last_op.toJsonFormat(&t);
+        operation.* = t.op_node.toJsonFormat(&t);
     }
     try write_stream.write(.{
         .tensors = tensors.values(),
