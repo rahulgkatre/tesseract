@@ -1,3 +1,4 @@
+const ops = @This();
 const dtypes = @import("dtypes.zig");
 // Map, Zip and Reduce ops are arithmetic operations for unary functions, binary functions,
 // and reducing a dimension of a tensor to a single value by applying some binary function
@@ -16,7 +17,6 @@ pub const InitOp = enum {
             stop: []const u8,
         },
     };
-
     Input,
     Full,
     Rand,

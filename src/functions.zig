@@ -58,3 +58,14 @@ pub fn div(comptime a: anytype, comptime b: anytype) @TypeOf(a.mul(b.recip())) {
 pub fn sub(comptime a: anytype, comptime b: anytype) @TypeOf(a.add(b.neg())) {
     return a.add(b.neg());
 }
+
+pub fn sigmoid(x: anytype) @TypeOf(x) {
+    const x_pos = x.neg().exp().add(1.0).recip();
+    const x_neg = x.exp().div(x.exp().add(1.0));
+    const mask = x.lessThan(0.0);
+    return mask.where(x_neg, x_pos);
+}
+
+pub fn relu(x: anytype) @TypeOf(x) {
+    return x.maximum(0);
+}

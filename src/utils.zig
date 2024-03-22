@@ -55,10 +55,10 @@ pub fn arrayDelete(comptime len: u8, array: [len]u64, index: usize) [len - 1]u64
     return new_array;
 }
 
-pub fn ravelMultiIndex(comptime ndims: u8, strides: [ndims + 1]usize, multi_idx: [ndims]usize) usize {
-    var flat_idx = strides[ndims];
-    for (0..ndims) |d| {
-        flat_idx += multi_idx[d] * strides[d];
+pub fn ravelMultiIndex(comptime ndims: u8, strides: [ndims]u64, offset: u64, multi_idx: [ndims]u64) usize {
+    var flat_idx = offset;
+    for (multi_idx, strides) |idx, stride| {
+        flat_idx += idx * stride;
     }
     return flat_idx;
 }

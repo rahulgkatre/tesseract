@@ -1,3 +1,4 @@
+const std = @import("std");
 pub const DType = enum { bool, u8, i8, u16, i16, f16, u32, i32, f32, u64, i64, f64, u128, i128, f128 };
 
 pub fn isFloat(t: DType) bool {
@@ -5,6 +6,19 @@ pub fn isFloat(t: DType) bool {
         .f16, .f32, .f64, .f128 => true,
         else => false,
     };
+}
+
+pub fn isSigned(t: DType) bool {
+    if (isBool(t)) {
+        return false;
+    } else if (isFloat(t)) {
+        return true;
+    } else {
+        return switch (t) {
+            .i8, .i16, .i32, .i64, .i128 => true,
+            else => false,
+        };
+    }
 }
 
 pub fn isInt(t: DType) bool {
@@ -29,10 +43,10 @@ pub fn bits(t: DType) u16 {
     };
 }
 
-pub fn ComptimeType(comptime dtype: DType) type {
+pub fn ZigType(comptime dtype: DType) type {
     return switch (dtype) {
         .bool => bool,
-        .u8, .i8, .u16, .i16, .u32, .i32, .u64, .i64, .u128, .i128 => comptime_int,
-        .f16, .f32, .f64, .f128 => comptime_float,
+        .u8, .i8, .u16, .i16, .u32, .i32, .u64, .i64, .u128, .i128 => std.meta.Int(if (isSigned(dtype)) .signed else .unsigned, bits(dtype)),
+        .f16, .f32, .f64, .f128 => std.meta.Float(bits(dtype)),
     };
 }

@@ -2,15 +2,9 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const tesseract = @import("tesseract.zig");
 const Tensor = tesseract.Tensor;
+const F = tesseract.F;
 
 const Graph = @import("src/Graph.zig");
-
-fn sigmoid(x: anytype) @TypeOf(x) {
-    const x_pos = x.neg().exp().add(1.0).recip();
-    const x_neg = x.exp().div(x.exp().add(1.0));
-    const mask = x.lessThan(0.0);
-    return mask.where(x_neg, x_pos);
-}
 
 // Example of a softmax
 fn softmax(x: anytype, comptime dim: u8) @TypeOf(x) {
@@ -28,18 +22,21 @@ pub fn main() !void {
 
     // All tensor code should must be in comptime
     const out = comptime blk: {
-        const a = Tensor(.f32, .{ 2, 3, 4 }).input();
-        const b = Tensor(.f32, .{ 2, 4, 3 }).input();
-        // break :blk a.matmul(b);
-        var ab = a.matmul(b);
-        ab = sigmoid(ab);
-        break :blk ab;
-    };
+        const x = Tensor(.f32, .{ 16, 28, 28 }).input();
+        const w1 = Tensor(.f32, .{ 28 * 28, 64 }).input();
+        const w2 = Tensor(.f32, .{ 64, 32 }).input();
+        const w3 = Tensor(.f32, .{ 32, 10 }).input();
 
+        const l1_out = F.relu(x.view(.{ 16, 28 * 28 }).matmul(w1));
+        const l2_out = F.relu(l1_out.matmul(w2));
+        const l3_out = F.relu(l2_out.matmul(w3));
+
+        break :blk softmax(l3_out, l3_out.ndims - 1);
+    };
     out.trace();
 
     std.debug.print("\n", .{});
     const writer = std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write){ .context = std.io.getStdOut() };
-    try std.json.stringify(Graph{}, .{ .whitespace = .indent_2 }, writer);
+    try std.json.stringify(Graph{}, .{}, writer);
     std.debug.print("\n", .{});
 }

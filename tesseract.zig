@@ -6,8 +6,9 @@ const Graph = @import("src/Graph.zig");
 
 const tesseract = @This();
 
-pub const Tensor = tensor.Tensor;
+pub const Tensor = tensor.UserTensor;
 pub const Scalar = tensor.Scalar;
+pub const F = @import("src/functions.zig");
 
 // Expose some of the utility functions that create tensors of specific sizes
 pub const constant = tensor.constant;
