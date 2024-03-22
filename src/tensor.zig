@@ -35,9 +35,13 @@ pub fn range(
     return UserTensor(dtype, .{stop - start}).range(start, stop);
 }
 
-/// Utility function for defining a scalar (a 1-size tensor)
-pub fn Scalar(comptime dtype: dtypes.DType) type {
+fn Scalar(comptime dtype: dtypes.DType) type {
     return UserTensor(dtype, .{1});
+}
+
+/// Utility function for defining a scalar (a 1-size tensor)
+pub fn scalar(comptime dtype: dtypes.DType, value: dtypes.ZigType(dtype)) Scalar(dtype) {
+    return Scalar(dtype).full(value);
 }
 
 fn isTensor(comptime a: anytype) bool {
@@ -329,10 +333,10 @@ pub fn Tensor(
             return Out.initContiguous(.{ .TypeOp = .{ .op = .AsStrided, .a = &a.any() } });
         }
 
-        pub fn zipOpResultDType(comptime op: ops.ZipOp) dtypes.DType {
+        pub fn zipOpResultDType(comptime op: ops.ZipOp, a: Self, b: anytype) dtypes.DType {
             return switch (op) {
                 .Equals, .LessThan => .bool,
-                else => dtype,
+                else => dtypes.resultDType(a.dtype, asTensor(b).dtype),
             };
         }
 
@@ -345,10 +349,10 @@ pub fn Tensor(
         }
 
         /// Apply an elementwise zip (binary) operation on two arrays, with broadcasting
-        pub fn zip(comptime a: Self, comptime op: ops.ZipOp, comptime b: anytype) UserTensor(zipOpResultDType(op), Broadcast(asTensor(b).shape).shape) {
+        pub fn zip(comptime a: Self, comptime op: ops.ZipOp, comptime b: anytype) UserTensor(zipOpResultDType(op, a, asTensor(b)), Broadcast(asTensor(b).shape).shape) {
             const b_tensor = comptime asTensor(b);
             const bc_shape = Broadcast(b_tensor.shape).shape;
-            const new_dtype = comptime zipOpResultDType(op);
+            const new_dtype = comptime zipOpResultDType(op, a, b);
 
             // Expand a and b to match the output shape
             const a_expand = comptime a.expand(bc_shape);

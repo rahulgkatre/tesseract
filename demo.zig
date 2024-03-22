@@ -21,16 +21,16 @@ pub fn main() !void {
     defer tesseract.deinit();
 
     // All tensor code should must be in comptime
+    // Here is a small neural network that can be used for MNIST
     const out = comptime blk: {
-        const x = Tensor(.f32, .{ 16, 28, 28 }).input();
-        const w1 = Tensor(.f32, .{ 28 * 28, 64 }).input();
-        const w2 = Tensor(.f32, .{ 64, 32 }).input();
-        const w3 = Tensor(.f32, .{ 32, 10 }).input();
-
-        const l1_out = F.relu(x.view(.{ 16, 28 * 28 }).matmul(w1));
+        const x = Tensor(.u8, .{ 16, 28, 28 }).input();
+        const w1 = Tensor(.f16, .{ 28 * 28, 64 }).input();
+        const w2 = Tensor(.f16, .{ 64, 32 }).input();
+        const w3 = Tensor(.f16, .{ 32, 10 }).input();
+        const norm_x = x.div(tesseract.scalar(.f16, 255));
+        const l1_out = F.relu(norm_x.view(.{ 16, 28 * 28 }).matmul(w1));
         const l2_out = F.relu(l1_out.matmul(w2));
         const l3_out = F.relu(l2_out.matmul(w3));
-
         break :blk softmax(l3_out, l3_out.ndims - 1);
     };
     out.trace();

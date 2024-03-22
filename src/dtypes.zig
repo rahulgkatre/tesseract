@@ -32,7 +32,7 @@ pub fn isBool(t: DType) bool {
     };
 }
 
-pub fn bits(t: DType) u16 {
+pub fn bits(t: DType) u8 {
     return switch (t) {
         .bool => 1,
         .u8, .i8 => 8,
@@ -46,7 +46,54 @@ pub fn bits(t: DType) u16 {
 pub fn ZigType(comptime dtype: DType) type {
     return switch (dtype) {
         .bool => bool,
-        .u8, .i8, .u16, .i16, .u32, .i32, .u64, .i64, .u128, .i128 => std.meta.Int(if (isSigned(dtype)) .signed else .unsigned, bits(dtype)),
+        .u8, .i8, .u16, .i16, .u32, .i32, .u64, .i64, .u128, .i128 => std.meta.Int(
+            if (isSigned(dtype)) .signed else .unsigned,
+            bits(dtype),
+        ),
         .f16, .f32, .f64, .f128 => std.meta.Float(bits(dtype)),
     };
+}
+
+pub fn resultDType(dtype1: DType, dtype2: DType) DType {
+    if (dtype1 == dtype2) {
+        return dtype1;
+    }
+
+    const bits1 = bits(dtype1);
+    const bits2 = bits(dtype2);
+    const is_bool1 = isBool(dtype1);
+    const is_bool2 = isBool(dtype2);
+    const is_float1 = isFloat(dtype1);
+    const is_float2 = isFloat(dtype2);
+    const is_int1 = isInt(dtype1);
+    const is_int2 = isInt(dtype2);
+
+    if (is_bool1 and is_float2 or is_float1 and is_bool2) {
+        @compileError("Cannot combine a float and a bool");
+    }
+
+    if (is_bool1 and is_bool2) {
+        // bool, bool -> bool
+        return .bool;
+    } else if ((is_bool1 and is_int2) or (is_int1 and is_float2)) {
+        // bool, int -> int
+        // int, float -> float
+        return dtype2;
+    } else if ((is_int1 and is_bool2) or (is_float1 and is_int2)) {
+        // int, bool -> int
+        // float, int -> float
+        return dtype1;
+    }
+
+    // If both are same (float or int) choose the one with more bits
+    if ((is_float1 and is_float2) or (is_int1 and is_int2)) {
+        if (bits1 > bits2) {
+            return dtype1;
+        } else {
+            return dtype2;
+        }
+    }
+
+    @compileLog(dtype1, dtype2);
+    unreachable;
 }
