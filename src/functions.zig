@@ -1,23 +1,23 @@
 const tensor = @import("tensor.zig");
 
 // MapOps
-pub fn exp(comptime x: anytype) @TypeOf(x.*) {
-    return x.map(.Exp);
+pub fn exp(comptime a: anytype) tensor.TensorType(a) {
+    return a.map(.Exp);
 }
-pub fn log(comptime x: anytype) @TypeOf(x.*) {
-    return x.map(.Log);
+pub fn log(comptime a: anytype) tensor.TensorType(a) {
+    return a.map(.Log);
 }
-pub fn neg(comptime x: anytype) @TypeOf(x.*) {
-    return x.map(.Neg);
+pub fn neg(comptime a: anytype) tensor.TensorType(a) {
+    return a.map(.Neg);
 }
-pub fn recip(comptime x: anytype) @TypeOf(x.*) {
-    return x.map(.Recip);
+pub fn recip(comptime a: anytype) tensor.TensorType(a) {
+    return a.map(.Recip);
 }
-pub fn sin(comptime x: anytype) @TypeOf(x.*) {
-    return x.map(.Sin);
+pub fn sin(comptime a: anytype) tensor.TensorType(a) {
+    return a.map(.Sin);
 }
-pub fn sqrt(comptime x: anytype) @TypeOf(x.*) {
-    return x.map(.Sqrt);
+pub fn sqrt(comptime a: anytype) tensor.TensorType(a) {
+    return a.map(.Sqrt);
 }
 
 // ZipOps
@@ -44,28 +44,36 @@ pub fn xor(comptime a: anytype, comptime b: anytype) @TypeOf(a.zip(.Xor, b)) {
 }
 
 // ReduceOps
-pub fn sum(comptime x: anytype, comptime dims: anytype) @TypeOf(x.*).Reduce(dims) {
-    return x.reduce(.Sum, dims);
+pub fn sum(comptime a: anytype, comptime dims: anytype) @TypeOf(a.*).Reduce(dims) {
+    return a.reduce(.Sum, dims);
 }
-pub fn max(comptime x: anytype, comptime dims: anytype) @TypeOf(x.*).Reduce(dims) {
-    return x.reduce(.Max, dims);
+pub fn max(comptime a: anytype, comptime dims: anytype) @TypeOf(a.*).Reduce(dims) {
+    return a.reduce(.Max, dims);
 }
 
 // Compounded
-pub fn div(comptime a: anytype, comptime b: anytype) @TypeOf(a.mul(b.recip())) {
-    return a.mul(b.recip());
+pub fn div(comptime a: anytype, comptime b: anytype) t: {
+    const a_tensor = tensor.tensorOf(a);
+    const b_tensor = tensor.tensorOf(b);
+    break :t @TypeOf(a_tensor.mul(b_tensor.recip()));
+} {
+    const a_tensor = tensor.tensorOf(a);
+    const b_tensor = tensor.tensorOf(b);
+    return a_tensor.mul(b_tensor.recip());
 }
 pub fn sub(comptime a: anytype, comptime b: anytype) @TypeOf(a.add(b.neg())) {
     return a.add(b.neg());
 }
 
-pub fn sigmoid(x: anytype) @TypeOf(x) {
-    const x_pos = x.neg().exp().add(1.0).recip();
-    const x_neg = x.exp().div(x.exp().add(1.0));
-    const mask = x.lessThan(0.0);
+pub fn sigmoid(comptime a: anytype) @TypeOf(a) {
+    const x_pos = a.neg().exp().add(1.0).recip();
+    const x_neg = a.exp().div(a.exp().add(1.0));
+    const mask = a.lessThan(0.0);
     return mask.where(x_neg, x_pos);
 }
 
-pub fn relu(x: anytype) @TypeOf(x) {
-    return x.maximum(0);
+pub fn relu(comptime a: anytype) @TypeOf(a) {
+    return a.maximum(0);
 }
+
+pub fn abs(a: anytype) @TypeOf(a) {}

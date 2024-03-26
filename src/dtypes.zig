@@ -1,4 +1,5 @@
 const std = @import("std");
+const tensor = @import("tensor.zig");
 pub const DType = enum { bool, u8, i8, u16, i16, f16, u32, i32, f32, u64, i64, f64, u128, i128, f128 };
 
 pub fn isFloat(t: DType) bool {
@@ -51,6 +52,14 @@ pub fn ZigType(comptime dtype: DType) type {
             bits(dtype),
         ),
         .f16, .f32, .f64, .f128 => std.meta.Float(bits(dtype)),
+    };
+}
+
+pub fn inferDType(comptime value: anytype) DType {
+    return switch (@typeInfo(@TypeOf(value))) {
+        .ComptimeInt, .ComptimeFloat => .f32,
+        .Int, .Float, .Bool => @field(DType, @typeName(@TypeOf(value))),
+        else => @compileError(@typeName(@TypeOf(value)) ++ " is not a valid tensor element type"),
     };
 }
 

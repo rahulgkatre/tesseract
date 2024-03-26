@@ -62,3 +62,23 @@ pub fn ravelMultiIndex(comptime ndims: u8, strides: [ndims]u64, offset: u64, mul
     }
     return flat_idx;
 }
+
+// Infer the contiguous stride pattern from the shape
+// This is the default stride pattern unless a stride is manually provided
+// using asStrided
+pub fn contiguousStrides(comptime ndims: u8, shape: [ndims]u64) [ndims]u64 {
+    var offset: u64 = 1;
+    var strides: [ndims]u64 = undefined;
+    for (0..ndims - 1) |d| {
+        const stride = shape[ndims - d - 1] * offset;
+        strides[ndims - d - 2] = stride;
+        offset = stride;
+    }
+    strides[ndims - 1] = 1;
+    for (0..ndims) |d| {
+        if (shape[d] == 0 or shape[d] == 1) {
+            strides[d] = 0;
+        }
+    }
+    return strides;
+}
