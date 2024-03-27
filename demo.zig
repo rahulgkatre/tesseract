@@ -6,13 +6,6 @@ const F = tesseract.F;
 
 const Graph = @import("src/Graph.zig");
 
-// Example of a softmax
-fn softmax(x: anytype, comptime dim: i16) @TypeOf(x) {
-    const x_minus_max_exp = x.sub(x.max({})).exp();
-    const sumexp = x_minus_max_exp.sum(dim);
-    return x_minus_max_exp.div(sumexp);
-}
-
 pub fn main() !void {
     tesseract.init();
     defer tesseract.deinit();
@@ -33,9 +26,17 @@ pub fn main() !void {
         const l1_out = F.relu(norm_x.matmul(w1).add(b1));
         const l2_out = F.relu(l1_out.matmul(w2).add(b2));
         const l3_out = F.relu(l2_out.matmul(w3).add(b3));
-        break :blk softmax(l3_out, -1);
+        break :blk F.softmax(l3_out, -1);
     };
     out.trace();
+
+    // @compileLog(@sizeOf(@TypeOf(out)), @sizeOf(@TypeOf(out.node())) - @sizeOf(@TypeOf(out.node().ptr)));
+    // @compileLog(@sizeOf(@TypeOf(out.dtype)), @sizeOf(@TypeOf(out.node().dtype)));
+    // @compileLog(@sizeOf(@TypeOf(out.ndims)), @sizeOf(@TypeOf(out.node().ndims)));
+    // @compileLog(@sizeOf(@TypeOf(out.shape)), @sizeOf(@TypeOf(out.node().shape)));
+    // @compileLog(@sizeOf(@TypeOf(out.strides)), @sizeOf(@TypeOf(out.node().strides)));
+    // @compileLog(@sizeOf(@TypeOf(out.offset)), @sizeOf(@TypeOf(out.node().offset)));
+    // @compileLog(@sizeOf(@TypeOf(out.op_node)), @sizeOf(@TypeOf(out.node().op_node)));
 
     const writer = std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write){ .context = std.io.getStdOut() };
     try Graph.viz(writer);

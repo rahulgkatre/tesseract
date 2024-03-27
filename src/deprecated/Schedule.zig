@@ -335,7 +335,7 @@ pub const Statement = struct {
                         .op = op_node.op,
                         .args = op_node.args,
                     } } else .{ .MapOp = .{
-                        .op = .Id,
+                        .op = .Copy,
                         .x = .{ .global = op_node.out.tensor },
                     } },
                     .ZipOp => |op_node| .{ .ZipOp = .{

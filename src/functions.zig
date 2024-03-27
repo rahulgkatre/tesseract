@@ -19,6 +19,9 @@ pub fn sin(comptime a: anytype) tensor.TensorType(a) {
 pub fn sqrt(comptime a: anytype) tensor.TensorType(a) {
     return a.map(.Sqrt);
 }
+pub fn copy(comptime a: anytype) tensor.TensorType(a) {
+    return a.map(.Copy);
+}
 
 // ZipOps
 pub fn add(comptime a: anytype, comptime b: anytype) @TypeOf(a.zip(.Add, b)) {
@@ -76,4 +79,8 @@ pub fn relu(comptime a: anytype) @TypeOf(a) {
     return a.maximum(0);
 }
 
-pub fn abs(a: anytype) @TypeOf(a) {}
+pub fn softmax(x: anytype, comptime dim: i16) @TypeOf(x) {
+    const x_minus_max_exp = x.sub(x.max({})).exp();
+    const sumexp = x_minus_max_exp.sum(dim);
+    return x_minus_max_exp.div(sumexp);
+}

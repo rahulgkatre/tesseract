@@ -28,8 +28,8 @@ pub const TensorNode = struct {
     shape: []const u64,
     strides: []const u64,
     offset: u64,
-    size: u64,
-    contiguous: bool,
+    // size: u64,
+    // contiguous: bool,
     op_node: OpNode,
 
     pub fn viz(self: *const TensorNode, writer: anytype, visited: []bool) !void {
@@ -39,9 +39,9 @@ pub const TensorNode = struct {
         visited[@intCast(self.uid())] = true;
         switch (self.op_node) {
             .TernaryOp => |ternary_op| {
-                try ternary_op.a.viz(writer, visited);
-                try ternary_op.b.viz(writer, visited);
-                try ternary_op.c.viz(writer, visited);
+                try ternary_op.a.tensor.viz(writer, visited);
+                try ternary_op.b.tensor.viz(writer, visited);
+                try ternary_op.c.tensor.viz(writer, visited);
                 try writer.print(
                     \\    {[op_tag]s}{[out_uid]d}[label="{[op_tag]s}"];
                     \\    T{[a_uid]d}->{[op_tag]s}{[out_uid]d}[label="{[a_dtype]s}{[a_shape]any}"];
@@ -55,20 +55,20 @@ pub const TensorNode = struct {
                     .out_uid = self.uid(),
                     .out_dtype = @tagName(self.dtype),
                     .out_shape = self.shape,
-                    .a_uid = ternary_op.a.uid(),
-                    .a_dtype = @tagName(ternary_op.a.dtype),
-                    .a_shape = ternary_op.a.shape,
-                    .b_uid = ternary_op.b.uid(),
-                    .b_dtype = @tagName(ternary_op.b.dtype),
-                    .b_shape = ternary_op.b.shape,
-                    .c_uid = ternary_op.c.uid(),
-                    .c_dtype = @tagName(ternary_op.c.dtype),
-                    .c_shape = ternary_op.c.shape,
+                    .a_uid = ternary_op.a.tensor.uid(),
+                    .a_dtype = @tagName(ternary_op.a.tensor.dtype),
+                    .a_shape = ternary_op.a.tensor.shape,
+                    .b_uid = ternary_op.b.tensor.uid(),
+                    .b_dtype = @tagName(ternary_op.b.tensor.dtype),
+                    .b_shape = ternary_op.b.tensor.shape,
+                    .c_uid = ternary_op.c.tensor.uid(),
+                    .c_dtype = @tagName(ternary_op.c.tensor.dtype),
+                    .c_shape = ternary_op.c.tensor.shape,
                 });
             },
             .ZipOp => |binary_op| {
-                try binary_op.a.viz(writer, visited);
-                try binary_op.b.viz(writer, visited);
+                try binary_op.a.tensor.viz(writer, visited);
+                try binary_op.b.tensor.viz(writer, visited);
                 try writer.print(
                     \\    {[op_tag]s}{[out_uid]d}[label="{[op_tag]s}"];
                     \\    T{[a_uid]d}->{[op_tag]s}{[out_uid]d}[label="{[a_dtype]s}{[a_shape]any}"];
@@ -81,12 +81,12 @@ pub const TensorNode = struct {
                     .out_uid = self.uid(),
                     .out_dtype = @tagName(self.dtype),
                     .out_shape = self.shape,
-                    .a_uid = binary_op.a.uid(),
-                    .a_dtype = @tagName(binary_op.a.dtype),
-                    .a_shape = binary_op.a.shape,
-                    .b_uid = binary_op.b.uid(),
-                    .b_dtype = @tagName(binary_op.b.dtype),
-                    .b_shape = binary_op.b.shape,
+                    .a_uid = binary_op.a.tensor.uid(),
+                    .a_dtype = @tagName(binary_op.a.tensor.dtype),
+                    .a_shape = binary_op.a.tensor.shape,
+                    .b_uid = binary_op.b.tensor.uid(),
+                    .b_dtype = @tagName(binary_op.b.tensor.dtype),
+                    .b_shape = binary_op.b.tensor.shape,
                 });
             },
             .InitOp => |init_op| {
@@ -102,8 +102,31 @@ pub const TensorNode = struct {
                     .out_shape = self.shape,
                 });
             },
+            .TypeOp => |unary_op| {
+                try unary_op.a.tensor.viz(writer, visited);
+                try writer.print(
+                    \\    {[op_tag]s}{[out_uid]d}[label="{[op_tag]s}{[out_extra]any}"];
+                    \\    T{[a_uid]d}->{[op_tag]s}{[out_uid]d}[label="{[a_dtype]s}{[a_shape]any}"];
+                    \\    T{[out_uid]d}[label="T{[out_uid]d}"shape=box];
+                    \\    {[op_tag]s}{[out_uid]d}->T{[out_uid]d}[label="{[out_dtype]s}{[out_shape]any}"];
+                    \\
+                , .{
+                    .op_tag = @tagName(unary_op.op),
+                    .out_uid = self.uid(),
+                    .out_dtype = @tagName(self.dtype),
+                    .out_shape = self.shape,
+                    .out_extra = .{
+                        self.shape,
+                        self.strides,
+                        self.offset,
+                    },
+                    .a_uid = unary_op.a.tensor.uid(),
+                    .a_dtype = @tagName(unary_op.a.tensor.dtype),
+                    .a_shape = unary_op.a.tensor.shape,
+                });
+            },
             inline else => |unary_op| {
-                try unary_op.a.viz(writer, visited);
+                try unary_op.a.tensor.viz(writer, visited);
                 try writer.print(
                     \\    {[op_tag]s}{[out_uid]d}[label="{[op_tag]s}"];
                     \\    T{[a_uid]d}->{[op_tag]s}{[out_uid]d}[label="{[a_dtype]s}{[a_shape]any}"];
@@ -115,9 +138,9 @@ pub const TensorNode = struct {
                     .out_uid = self.uid(),
                     .out_dtype = @tagName(self.dtype),
                     .out_shape = self.shape,
-                    .a_uid = unary_op.a.uid(),
-                    .a_dtype = @tagName(unary_op.a.dtype),
-                    .a_shape = unary_op.a.shape,
+                    .a_uid = unary_op.a.tensor.uid(),
+                    .a_dtype = @tagName(unary_op.a.tensor.dtype),
+                    .a_shape = unary_op.a.tensor.shape,
                 });
             },
         }
@@ -126,17 +149,17 @@ pub const TensorNode = struct {
     pub fn trace(self: *const TensorNode) void {
         switch (self.op_node) {
             .TernaryOp => |ternary_op| {
-                ternary_op.a.trace();
-                ternary_op.b.trace();
-                ternary_op.c.trace();
+                ternary_op.a.tensor.trace();
+                ternary_op.b.tensor.trace();
+                ternary_op.c.tensor.trace();
             },
             .ZipOp => |binary_op| {
-                binary_op.a.trace();
-                binary_op.b.trace();
+                binary_op.a.tensor.trace();
+                binary_op.b.tensor.trace();
             },
             .InitOp => {},
             inline else => |unary_op| {
-                unary_op.a.trace();
+                unary_op.a.tensor.trace();
             },
         }
         const key = @intFromPtr(self.ptr);
@@ -154,8 +177,8 @@ pub const TensorNode = struct {
             .shape = self.shape,
             .strides = self.strides,
             .offset = self.offset,
-            .size = self.size,
-            .contiguous = self.contiguous,
+            // .size = self.size,
+            // .contiguous = self.contiguous,
         });
     }
 
@@ -209,21 +232,21 @@ pub const OpNode = union(ops.OpTypes) {
 
     MapOp: struct {
         op: ops.MapOp,
-        a: *const TensorNode,
+        a: Input,
     },
     ZipOp: struct {
         op: ops.ZipOp,
-        a: *const TensorNode,
-        b: *const TensorNode,
+        a: Input,
+        b: Input,
     },
     ReduceOp: struct {
         op: ops.ReduceOp,
-        a: *const TensorNode,
+        a: Input,
         dims: []const bool,
     },
     TypeOp: struct {
         op: ops.TypeOp,
-        a: *const TensorNode,
+        a: Input,
     },
     InitOp: struct {
         op: ops.InitOp,
@@ -231,10 +254,53 @@ pub const OpNode = union(ops.OpTypes) {
     },
     TernaryOp: struct {
         op: ops.TernaryOp,
-        a: *const TensorNode,
-        b: *const TensorNode,
-        c: *const TensorNode,
+        a: Input,
+        b: Input,
+        c: Input,
     },
+
+    pub fn init(
+        comptime tag: ops.OpTypes,
+        op: @field(ops, @tagName(tag)),
+        inputs: switch (tag) {
+            .TernaryOp => [3]*const TensorNode,
+            .ZipOp => [2]*const TensorNode,
+            .MapOp, .TypeOp, .ReduceOp => [1]*const TensorNode,
+            .InitOp => void,
+        },
+        args: switch (tag) {
+            .ReduceOp => []const bool,
+            .InitOp => ops.InitOp.Args,
+            else => void,
+        },
+    ) OpNode {
+        return @unionInit(OpNode, @tagName(tag), switch (tag) {
+            .TernaryOp => .{
+                .op = op,
+                .a = .{ .tensor = inputs[0] },
+                .b = .{ .tensor = inputs[1] },
+                .c = .{ .tensor = inputs[2] },
+            },
+            .ZipOp => .{
+                .op = op,
+                .a = .{ .tensor = inputs[0] },
+                .b = .{ .tensor = inputs[1] },
+            },
+            .ReduceOp => .{
+                .op = op,
+                .a = .{ .tensor = inputs[0] },
+                .dims = args,
+            },
+            .MapOp, .TypeOp => .{
+                .op = op,
+                .a = .{ .tensor = inputs[0] },
+            },
+            .InitOp => .{
+                .op = op,
+                .args = args,
+            },
+        });
+    }
 
     fn toJsonFormat(self: OpNode, out: TensorNode) JsonFormat {
         return switch (self) {
@@ -245,19 +311,19 @@ pub const OpNode = union(ops.OpTypes) {
             } },
             .ZipOp => |op_node| .{ .ZipOp = .{
                 .op = op_node.op,
-                .a = @intFromPtr(op_node.a),
-                .b = @intFromPtr(op_node.b),
+                .a = @intFromPtr(op_node.a.tensor),
+                .b = @intFromPtr(op_node.b.tensor),
                 .out = @intFromPtr(out.ptr),
             } },
             .ReduceOp => |op_node| .{ .ReduceOp = .{
                 .op = op_node.op,
-                .a = @intFromPtr(op_node.a),
+                .a = @intFromPtr(op_node.a.tensor),
                 .dims = op_node.dims,
                 .out = @intFromPtr(out.ptr),
             } },
             .TypeOp => |op_node| .{ .TypeOp = .{
                 .op = op_node.op,
-                .a = @intFromPtr(op_node.a),
+                .a = @intFromPtr(op_node.a.tensor),
                 .out = @intFromPtr(out.ptr),
             } },
             .InitOp => |op_node| .{ .InitOp = .{
@@ -267,9 +333,9 @@ pub const OpNode = union(ops.OpTypes) {
             } },
             .TernaryOp => |op_node| .{ .TernaryOp = .{
                 .op = op_node.op,
-                .a = @intFromPtr(op_node.a),
-                .b = @intFromPtr(op_node.b),
-                .c = @intFromPtr(op_node.c),
+                .a = @intFromPtr(op_node.a.tensor),
+                .b = @intFromPtr(op_node.b.tensor),
+                .c = @intFromPtr(op_node.c.tensor),
                 .out = @intFromPtr(out.ptr),
             } },
         };

@@ -17,8 +17,8 @@ pub fn TensorType(comptime val: anytype) type {
 pub fn range(
     comptime start: comptime_int,
     comptime stop: comptime_int,
-) UserTensor(.i32, .{stop - start}) {
-    return UserTensor(.i32, .{stop - start}).initContiguous(.{ .InitOp = .Range }, {}, .{
+) _Tensor(.i32, .{stop - start}) {
+    return _Tensor(.i32, .{stop - start}).initContiguous(.{ .InitOp = .Range }, {}, .{
         .Range = .{
             .start = std.fmt.comptimePrint("{d}", .{start}),
             .stop = std.fmt.comptimePrint("{d}", .{stop}),
@@ -27,7 +27,7 @@ pub fn range(
 }
 
 fn Scalar(comptime dtype: dtypes.DType) type {
-    return UserTensor(dtype, .{1});
+    return _Tensor(dtype, .{1});
 }
 
 /// Utility function for defining a scalar (a 1-size tensor)
@@ -61,7 +61,7 @@ pub fn fullLike(comptime other: anytype, value: dtypes.ZigType(other.dtype)) @Ty
     return @TypeOf(other).full(value);
 }
 
-pub fn UserTensor(comptime dtype: dtypes.DType, comptime shape: anytype) type {
+pub fn _Tensor(comptime dtype: dtypes.DType, comptime shape: anytype) type {
     return Tensor(dtype, shape.len, shape);
 }
 
@@ -102,8 +102,8 @@ pub fn Tensor(
                 .shape = self.shape,
                 .offset = self.offset,
                 .strides = self.strides,
-                .size = self.size(),
-                .contiguous = self.isContiguous(),
+                // .size = self.size(),
+                // .contiguous = self.isContiguous(),
             };
         }
 
@@ -146,24 +146,33 @@ pub fn Tensor(
         /// Used to mark a tensor as an input to a graph,
         /// codegen will make this an argument of the function
         pub fn input() Self {
-            return initContiguous(.{ .InitOp = .{ .op = .Input, .args = .{ .Input = {} } } });
+            return initContiguous(Graph.OpNode.init(
+                .InitOp,
+                .Input,
+                {},
+                .{ .Input = {} },
+            ));
         }
 
         /// Fill a tensor with a value
         pub fn full(comptime value: dtypes.ZigType(dtype)) Self {
-            return initContiguous(.{ .InitOp = .{ .op = .Full, .args = .{ .Full = std.fmt.comptimePrint("{}", .{value}) } } });
+            return initContiguous(
+                Graph.OpNode.init(
+                    .InitOp,
+                    .Full,
+                    {},
+                    .{ .Full = std.fmt.comptimePrint("{}", .{value}) },
+                ),
+            );
         }
 
         pub fn rand() Self {
-            std.debug.assert(dtypes.isFloat(_dtype));
-            return initContiguous(.{ .InitOp = .{ .op = .Rand, .args = .{ .Rand = {} } } });
-        }
-
-        /// A copy is only needed to make a non-contiguous tensor contiguous again.
-        /// Each tensor is immutable and operations already produce new tensors
-        /// but intermediate tensors can be eliminated through optimization.
-        pub fn copy(a: Self) Self {
-            return initContiguous(.{ .MapOp = .{ .op = .Id, .a = &a.node() } });
+            std.debug.assert(dtypes.isFloat(dtype));
+            return initContiguous(Graph.OpNode.init(
+                .InitOp,
+                .Rand,
+                .{ .Rand = {} },
+            ));
         }
 
         fn Permute(comptime perm: [ndims]u8) type {
@@ -192,12 +201,11 @@ pub fn Tensor(
             const norm1 = normalizedDim(dim1);
             const norm2 = normalizedDim(dim2);
             if (norm1 != norm2) {
-                const Out = Transpose(norm1, norm2);
                 var new_strides = a.strides[0..a.ndims].*;
                 new_strides[norm1] = a.strides[norm2];
                 new_strides[norm2] = a.strides[norm1];
                 return a.asStrided(
-                    Out.shape,
+                    Transpose(norm1, norm2).shape,
                     new_strides,
                     a.offset,
                 );
@@ -207,14 +215,14 @@ pub fn Tensor(
         }
 
         pub fn View(comptime new_shape: anytype) type {
-            return UserTensor(dtype, new_shape);
+            return _Tensor(dtype, new_shape);
         }
         /// View the tensor as a different shape.
         pub fn view(a: Self, comptime new_shape: anytype) View(new_shape) {
             if (!isContiguous(a)) {
                 return a.copy().view(new_shape);
             } else {
-                return View(new_shape).initContiguous(.{ .TypeOp = .{ .op = .AsStrided, .a = &a.node() } });
+                return a.asStrided(new_shape, utils.contiguousStrides(new_shape.len, new_shape), a.offset);
             }
         }
 
@@ -277,7 +285,7 @@ pub fn Tensor(
         /// There are guiderails to prevent out of bounds access into underlying memory.
         pub fn asStrided(comptime a: Self, comptime new_shape: anytype, comptime new_strides: [new_shape.len]u64, new_offset: u64) View(new_shape) {
             var out = View(new_shape){
-                .op_node = .{ .TypeOp = .{ .op = .AsStrided, .a = &a.node() } },
+                .op_node = Graph.OpNode.init(.TypeOp, .AsStrided, .{&a.node()}, {}),
                 .strides = &new_strides,
                 .offset = new_offset,
             };
@@ -307,13 +315,13 @@ pub fn Tensor(
         }
 
         ///Cast an array of a datatype to another datatype
-        pub fn asType(comptime a: Self, comptime new_dtype: dtypes.DType) UserTensor(new_dtype, shape) {
-            return UserTensor(new_dtype, shape).initContiguous(.{ .TypeOp = .{ .op = .AsType, .a = &a.node() } });
+        pub fn asType(comptime a: Self, comptime new_dtype: dtypes.DType) _Tensor(new_dtype, shape) {
+            return _Tensor(new_dtype, shape).initContiguous(Graph.OpNode.init(.TypeOp, .AsType, .{&a.node()}, {}));
         }
 
         ///Apply an elementwise map operation
         pub fn map(comptime a: Self, comptime op: ops.MapOp) Self {
-            return initContiguous(.{ .MapOp = .{ .op = op, .a = &a.node() } });
+            return initContiguous(Graph.OpNode.init(.MapOp, op, .{&a.node()}, {}));
         }
 
         pub fn Broadcast(comptime new_shape: anytype) type {
@@ -343,7 +351,11 @@ pub fn Tensor(
             if (Self == Out) {
                 return a;
             }
-            return Out.initContiguous(.{ .TypeOp = .{ .op = .AsStrided, .a = &a.node() } });
+            var bc_strides: [new_shape.len]u64 = undefined;
+            for (0..new_shape.len) |i| {
+                bc_strides[new_shape.len - i - 1] = if (i >= ndims) 0 else a.strides[ndims - i - 1];
+            }
+            return a.asStrided(new_shape, bc_strides, a.offset);
         }
 
         pub fn zipResultDType(comptime op: ops.ZipOp, a: Self, b: anytype) dtypes.DType {
@@ -372,7 +384,7 @@ pub fn Tensor(
             const b_tensor = tensorOfDType(b, dtype);
             const bc_shape = Broadcast(b_tensor.shape[0..b_tensor.ndims].*).shape;
             const new_dtype = zipResultDType(op, a, b);
-            break :t UserTensor(new_dtype, bc_shape);
+            break :t _Tensor(new_dtype, bc_shape);
         } {
             const b_tensor = comptime tensorOfDType(b, dtype);
             const bc_shape = Broadcast(b_tensor.shape[0..b_tensor.ndims].*).shape;
@@ -381,12 +393,8 @@ pub fn Tensor(
             // Expand a and b to match the output shape
             const a_expand = comptime a.expand(bc_shape);
             const b_expand = comptime b_tensor.expand(bc_shape);
-            const Out = UserTensor(new_dtype, bc_shape);
-            return Out.initContiguous(.{ .ZipOp = .{
-                .op = op,
-                .a = &a_expand.node(),
-                .b = &b_expand.node(),
-            } });
+            const Out = _Tensor(new_dtype, bc_shape);
+            return Out.initContiguous(Graph.OpNode.init(.ZipOp, op, .{ &a_expand.node(), &b_expand.node() }, {}));
         }
 
         pub fn Reduce(comptime reduce_dims: anytype) type {
@@ -447,30 +455,26 @@ pub fn Tensor(
                     break :blk tmp_mask;
                 },
             };
-            return Reduce(reduce_dims).initContiguous(.{ .ReduceOp = .{
-                .op = op,
-                .a = &a.node(),
-                .dims = &reduce_dim_mask,
-            } });
+
+            return Reduce(reduce_dims).initContiguous(Graph.OpNode.init(.ReduceOp, op, .{&a.node()}, &reduce_dim_mask));
         }
 
         pub fn MatMul(comptime other: anytype) type {
             // Matrix multiplication invariant
             // (n a m1) matmul (m2 a p) -> (n a p) iff m1 = m2
             // otherwise matmul is invalid, compile error
-            const Other = @TypeOf(other);
             const n = if (ndims == 1) 1 else shape[ndims - 2];
             const m = shape[ndims - 1];
-            const other_m = if (Other.ndims == 1) 1 else Other.shape[Other.ndims - 2];
-            const p = Other.shape[Other.ndims - 1];
+            const other_m = if (other.ndims == 1) 1 else other.shape[other.ndims - 2];
+            const p = other.shape[other.ndims - 1];
 
             if (m == other_m) {
-                const mm_ndims = @max(ndims, Other.ndims);
+                const mm_ndims = @max(ndims, other.ndims);
                 var mm_shape: [mm_ndims]u64 = undefined;
                 // Broadcasting check, look only at batch dimensions (everything before last 2 dimensions)
                 for (0..mm_ndims - 2) |i| {
                     const dim1 = if (i >= ndims - 2) 1 else shape[ndims - i - 3];
-                    const dim2 = if (i >= Other.ndims - 2) 1 else Other.shape[Other.ndims - i - 3];
+                    const dim2 = if (i >= other.ndims - 2) 1 else other.shape[other.ndims - i - 3];
                     if (dim1 == dim2 or dim1 == 1 or dim2 == 1) {
                         mm_shape[mm_ndims - i - 3] = if (dim1 == dim2 or dim2 == 1) dim1 else dim2;
                     } else {
@@ -478,7 +482,7 @@ pub fn Tensor(
                             \\Tensors have incompatible shapes for batch matrix multiplication
                             \\Tensor A: {any}
                             \\Tensor B: {any}
-                        , .{ shape, Other.shape }));
+                        , .{ shape, other.shape }));
                     }
                 }
                 mm_shape[mm_ndims - 2] = n;
@@ -489,7 +493,7 @@ pub fn Tensor(
                 \\Tensors have incompatible shapes for batch matrix multiplication
                 \\Tensor A: {any}
                 \\Tensor B: {any}
-            , .{ shape, Other.shape }));
+            , .{ shape, other.shape }));
         }
         pub fn matmul(comptime a: Self, comptime b: anytype) MatMul(b) {
             return a
@@ -502,12 +506,12 @@ pub fn Tensor(
         pub fn Where(comptime true_value: anytype, comptime false_value: anytype) type {
             const true_tensor = tensorOf(true_value);
             const false_tensor = tensorOf(false_value);
+            std.debug.assert(true_tensor.dtype == false_tensor.dtype);
+            std.debug.assert(dtypes.isBool(Self.dtype));
             const T = @TypeOf(true_tensor);
             const F = @TypeOf(false_tensor);
-            std.debug.assert(T.dtype == F.dtype);
-            std.debug.assert(dtypes.isBool(Self.dtype));
             const TF = T.Broadcast(F.shape);
-            return UserTensor(TF.dtype, Broadcast(TF.shape).shape);
+            return _Tensor(TF.dtype, Broadcast(TF.shape).shape);
         }
         /// Conditional elementwise operator
         /// out[i] = if (mask[i]) true_value[i] else false_value[i]
@@ -517,12 +521,7 @@ pub fn Tensor(
             const mask_expand = mask.expand(Out.shape);
             const true_expand = tensorOf(true_value).expand(Out.shape);
             const false_expand = tensorOf(false_value).expand(Out.shape);
-            return Out.initContiguous(.{ .TernaryOp = .{
-                .op = .Where,
-                .a = &mask_expand.node(),
-                .b = &true_expand.any(),
-                .c = &false_expand.any(),
-            } });
+            return Out.initContiguous(Graph.OpNode.init(.TernaryOp, .Where, .{ &mask_expand.node(), &true_expand.node(), &false_expand.node() }, {}));
         }
 
         // TODO: Need to implement padding to get conv2d to work
@@ -559,23 +558,23 @@ test "same tensors assignable" {
     // equal to teach other, which would cause this test to not compile
     // Note that the fill value is different: this should have no effect
     comptime {
-        const tensor1 = UserTensor(.i32, .{ 2, 3, 4 }).full(0);
-        var tensor2 = UserTensor(.i32, .{ 2, 3, 4 }).full(1);
-        var tensor3 = UserTensor(tensor2.dtype, tensor2.shape[0..tensor2.ndims].*).full(2);
+        const tensor1 = _Tensor(.i32, .{ 2, 3, 4 }).full(0);
+        var tensor2 = _Tensor(.i32, .{ 2, 3, 4 }).full(1);
+        var tensor3 = _Tensor(tensor2.dtype, tensor2.shape[0..tensor2.ndims].*).full(2);
         tensor2 = tensor1;
         tensor3 = tensor2;
     }
 }
 
 test "permute" {
-    const tensor1 = comptime UserTensor(.i32, .{ 2, 3, 4 }).full(0);
+    const tensor1 = comptime _Tensor(.i32, .{ 2, 3, 4 }).full(0);
     const tensor2 = comptime tensor1.permute(.{ 0, 2, 1 });
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 4, 3 }, tensor2.shape);
     try std.testing.expectEqualSlices(u64, &[_]u64{ 12, 1, 4 }, tensor2.strides);
 }
 
 test "view" {
-    const tensor1 = comptime UserTensor(.i32, .{ 2, 3, 4 }).full(0);
+    const tensor1 = comptime _Tensor(.i32, .{ 2, 3, 4 }).full(0);
     const tensor2 = comptime tensor1.view(.{ 12, 2 });
     const tensor3 = comptime tensor2.view(.{24});
     try std.testing.expectEqualSlices(u64, &[_]u64{ 12, 2 }, tensor2.shape);
@@ -586,7 +585,7 @@ test "view" {
 
 test "as strided" {
     // Based on example from https://pytorch.org/docs/stable/generated/torch.as_strided.html
-    const tensor1 = comptime UserTensor(.i32, .{ 3, 3 }).full(0);
+    const tensor1 = comptime _Tensor(.i32, .{ 3, 3 }).full(0);
     const tensor2 = comptime tensor1.asStrided(.{ 2, 2 }, .{ 1, 2 }, 0);
 
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 2 }, tensor2.shape);
@@ -609,7 +608,7 @@ test "as strided" {
 }
 
 test "map" {
-    const tensor1 = comptime UserTensor(.i32, .{ 2, 3, 4 }).full(3);
+    const tensor1 = comptime _Tensor(.i32, .{ 2, 3, 4 }).full(3);
     const tensor2 = comptime tensor1.neg();
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor2.shape);
     Graph.init();
@@ -620,8 +619,8 @@ test "map" {
 }
 
 test "zip" {
-    const tensor1 = comptime UserTensor(.i32, .{ 2, 1, 4 }).full(2);
-    const tensor2 = comptime UserTensor(.i32, .{ 3, 1 }).full(3);
+    const tensor1 = comptime _Tensor(.i32, .{ 2, 1, 4 }).full(2);
+    const tensor2 = comptime _Tensor(.i32, .{ 3, 1 }).full(3);
     const tensor3 = comptime tensor1.add(tensor2);
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor3.shape);
     Graph.init();
@@ -633,7 +632,7 @@ test "zip" {
 }
 
 test "reduce" {
-    const tensor1 = comptime UserTensor(.i32, .{ 2, 3, 4 }).full(5);
+    const tensor1 = comptime _Tensor(.i32, .{ 2, 3, 4 }).full(5);
     const tensor2 = comptime tensor1.sum(1);
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 1, 4 }, tensor2.shape);
     Graph.init();
@@ -645,7 +644,7 @@ test "reduce" {
 }
 
 test "multiple dim reduce" {
-    const tensor1 = comptime UserTensor(.i32, .{ 2, 3, 4 }).full(5);
+    const tensor1 = comptime _Tensor(.i32, .{ 2, 3, 4 }).full(5);
     const tensor2 = comptime tensor1.sum(.{ 0, 1 });
     try std.testing.expectEqualSlices(u64, &[_]u64{ 1, 1, 4 }, tensor2.shape);
     Graph.init();
@@ -657,8 +656,8 @@ test "multiple dim reduce" {
 }
 
 test "zip reduce" {
-    const tensor1 = comptime UserTensor(.i32, .{ 2, 1, 4 }).full(2);
-    const tensor2 = comptime UserTensor(.i32, .{ 2, 3, 1 }).full(3);
+    const tensor1 = comptime _Tensor(.i32, .{ 2, 1, 4 }).full(2);
+    const tensor2 = comptime _Tensor(.i32, .{ 2, 3, 1 }).full(3);
     const tensor3 = comptime tensor1.add(tensor2).sum(1);
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 1, 4 }, tensor3.shape);
     Graph.init();
@@ -672,7 +671,7 @@ test "zip reduce" {
 }
 
 test "as_type" {
-    const tensor1 = comptime UserTensor(.bool, .{3}).full(true);
+    const tensor1 = comptime _Tensor(.bool, .{3}).full(true);
     try std.testing.expect(tensor1.dtype == .bool);
     const tensor2 = comptime tensor1.asType(.i32);
     try std.testing.expect(tensor2.dtype == .i32);
@@ -684,17 +683,17 @@ test "as_type" {
     try std.testing.expect(tensor5.dtype == .f32);
 }
 
-fn fn1() UserTensor(.i32, .{ 2, 1, 4 }) {
-    const tensor1 = UserTensor(.i32, .{ 2, 1, 4 }).full(1);
-    const tensor2 = UserTensor(.i32, .{ 2, 3, 1 }).full(2);
+fn fn1() _Tensor(.i32, .{ 2, 1, 4 }) {
+    const tensor1 = _Tensor(.i32, .{ 2, 1, 4 }).full(1);
+    const tensor2 = _Tensor(.i32, .{ 2, 3, 1 }).full(2);
     const tensor3 = tensor1.add(tensor2).sum(1);
     return tensor3;
 }
 
-fn fn2(input: anytype) UserTensor(.i32, .{ 2, 3, 4 }) {
+fn fn2(input: anytype) _Tensor(.i32, .{ 2, 3, 4 }) {
     return comptime blk: {
-        const tensor4 = UserTensor(.i32, .{ 2, 1, 4 }).full(4);
-        const tensor5 = UserTensor(.i32, .{ 2, 3, 1 }).full(5);
+        const tensor4 = _Tensor(.i32, .{ 2, 1, 4 }).full(4);
+        const tensor5 = _Tensor(.i32, .{ 2, 3, 1 }).full(5);
         const tensor6 = tensor4.mul(input).sum(1).add(tensor5);
         break :blk tensor6;
     };

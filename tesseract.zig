@@ -6,7 +6,7 @@ const Graph = @import("src/Graph.zig");
 
 const tesseract = @This();
 
-pub const Tensor = tensor.UserTensor;
+pub const Tensor = tensor._Tensor;
 pub const scalar = tensor.scalar;
 pub const F = @import("src/functions.zig");
 
