@@ -5,12 +5,43 @@ const utils = @import("utils.zig");
 const ops = @import("ops.zig");
 const Graph = @import("Graph.zig");
 const dtypes = @import("dtypes.zig");
+const functions = @import("functions.zig");
 
 pub fn TensorType(comptime val: anytype) type {
     if (isTensor(@TypeOf(val))) {
         return Tensor(val.dtype, val.ndims, val.shape[0..val.ndims].*);
     } else {
-        return Scalar(dtypes.inferDType(val, .f32));
+        const default = dtypes.default;
+        const inferred = dtypes.inferDType(val);
+        if ((dtypes.isBool(inferred) and dtypes.isBool(default)) or (dtypes.isInt(inferred) and dtypes.isInt(default)) or (dtypes.isFloat(inferred) and dtypes.isFloat(default))) {
+            return Scalar(default);
+        } else {
+            return Scalar(inferred);
+        }
+    }
+}
+
+pub fn FloatTensor(comptime TT: type) type {
+    if (!dtypes.isFloat(TT.dtype)) {
+        return TT.AsType(dtypes.default);
+    } else {
+        return TT;
+    }
+}
+
+pub fn BoolTensor(comptime TT: type) type {
+    if (!dtypes.isBool(TT.dtype)) {
+        @compileError("Must be bool datatype");
+    } else {
+        return TT;
+    }
+}
+
+pub fn IntTensor(comptime TT: type) type {
+    if (!dtypes.isInt(TT.dtype)) {
+        @compileError("Must cast to int datatype first");
+    } else {
+        return TT;
     }
 }
 
@@ -35,7 +66,7 @@ pub fn scalar(comptime dtype: dtypes.DType, value: dtypes.ZigType(dtype)) Scalar
     return Scalar(dtype).full(value);
 }
 
-fn isTensor(comptime T: type) bool {
+pub fn isTensor(comptime T: type) bool {
     return switch (@typeInfo(T)) {
         .Pointer => |ptr| isTensor(ptr.child),
         .Struct => Tensor(T.dtype, T.ndims, T.shape) == T,
@@ -48,9 +79,10 @@ pub fn tensorOfDType(comptime val: anytype, comptime dtype: dtypes.DType) if (!i
     return if (!isTensor(@TypeOf(val))) Scalar(dtype).full(val) else val;
 }
 
-pub fn tensorOf(comptime val: anytype) if (!isTensor(@TypeOf(val))) Scalar(dtypes.inferDType(val)) else @TypeOf(val) {
-    return if (!isTensor(@TypeOf(val))) Scalar(dtypes.inferDType(val)).full(val) else val;
+pub fn tensorOf(comptime val: anytype) TensorType(val) {
+    return if (!isTensor(@TypeOf(val))) TensorType(val).full(val) else val;
 }
+
 pub fn randLike(comptime other: anytype) @TypeOf(other) {
     std.debug.assert(isTensor(@TypeOf(other)));
     return @TypeOf(other).rand();
@@ -73,8 +105,8 @@ pub fn Tensor(
 ) type {
     return struct {
         // All the functions for operations are implemented separately
-        pub usingnamespace @import("functions.zig");
         const Self = @This();
+        pub usingnamespace functions.Functions(Self);
 
         // Type level constants for comptime shape logic (e.g. @TypeOf(a).ndims)
         pub const dtype: dtypes.DType = _dtype;
@@ -88,7 +120,7 @@ pub fn Tensor(
         offset: u64,
         op_node: Graph.OpNode,
 
-        pub fn initContiguous(comptime op_node: Graph.OpNode) Self {
+        pub fn initContiguous(op_node: Graph.OpNode) Self {
             return .{ .op_node = op_node, .strides = &utils.contiguousStrides(ndims, shape), .offset = 0 };
         }
 
@@ -151,6 +183,15 @@ pub fn Tensor(
                 .Input,
                 {},
                 .{ .Input = {} },
+            ));
+        }
+
+        pub fn param() Self {
+            return initContiguous(Graph.OpNode.init(
+                .InitOp,
+                .Parameter,
+                {},
+                .{ .Parameter = {} },
             ));
         }
 
@@ -245,11 +286,11 @@ pub fn Tensor(
             }
         }
 
-        pub fn flattenPartial(comptime a: Self, comptime start_dim: i16, comptime end_dim: i16) Flatten(start_dim, end_dim) {
+        pub fn flattenPartial(a: Self, comptime start_dim: i16, comptime end_dim: i16) Flatten(start_dim, end_dim) {
             return a.view(Flatten(start_dim, end_dim).shape);
         }
 
-        pub fn flatten(comptime a: Self) Flatten(0, -1) {
+        pub fn flatten(a: Self) Flatten(0, -1) {
             return a.view(Flatten(0, -1).shape);
         }
 
@@ -283,7 +324,7 @@ pub fn Tensor(
         /// Changes the shape and stride of the tensor to change how the underlying memory is accessed.
         /// Powerful enough to be used to implement any reshaping or windowing operation on a tensor.
         /// There are guiderails to prevent out of bounds access into underlying memory.
-        pub fn asStrided(comptime a: Self, comptime new_shape: anytype, comptime new_strides: [new_shape.len]u64, new_offset: u64) View(new_shape) {
+        pub fn asStrided(a: Self, comptime new_shape: anytype, comptime new_strides: [new_shape.len]u64, new_offset: u64) View(new_shape) {
             var out = View(new_shape){
                 .op_node = Graph.OpNode.init(.TypeOp, .AsStrided, .{&a.node()}, {}),
                 .strides = &new_strides,
@@ -314,13 +355,16 @@ pub fn Tensor(
             return out;
         }
 
+        pub fn AsType(comptime new_dtype: dtypes.DType) type {
+            return _Tensor(new_dtype, shape);
+        }
         ///Cast an array of a datatype to another datatype
-        pub fn asType(comptime a: Self, comptime new_dtype: dtypes.DType) _Tensor(new_dtype, shape) {
+        pub fn asType(a: Self, comptime new_dtype: dtypes.DType) AsType(new_dtype) {
             return _Tensor(new_dtype, shape).initContiguous(Graph.OpNode.init(.TypeOp, .AsType, .{&a.node()}, {}));
         }
 
         ///Apply an elementwise map operation
-        pub fn map(comptime a: Self, comptime op: ops.MapOp) Self {
+        pub fn map(a: Self, comptime op: ops.MapOp) Self {
             return initContiguous(Graph.OpNode.init(.MapOp, op, .{&a.node()}, {}));
         }
 
@@ -346,7 +390,7 @@ pub fn Tensor(
             }
             return View(bc_shape);
         }
-        pub fn expand(comptime a: Self, comptime new_shape: anytype) Broadcast(new_shape) {
+        pub fn expand(a: Self, comptime new_shape: anytype) Broadcast(new_shape) {
             const Out = Broadcast(new_shape);
             if (Self == Out) {
                 return a;
@@ -358,12 +402,12 @@ pub fn Tensor(
             return a.asStrided(new_shape, bc_strides, a.offset);
         }
 
-        pub fn zipResultDType(comptime op: ops.ZipOp, a: Self, b: anytype) dtypes.DType {
+        pub fn zipResultDType(op: ops.ZipOp, dtype1: dtypes.DType, dtype2: dtypes.DType) dtypes.DType {
             return switch (op) {
                 .Equals, .LessThan => .bool,
                 else => dtypes.resultDType(
-                    a.dtype,
-                    tensorOfDType(b, dtype).dtype,
+                    dtype1,
+                    dtype2,
                 ),
             };
         }
@@ -379,22 +423,25 @@ pub fn Tensor(
             return @intCast(normalized);
         }
 
+        pub fn Zip(comptime new_shape: anytype, comptime other_dtype: dtypes.DType, comptime op: ops.ZipOp) type {
+            const bc_shape = Broadcast(new_shape).shape;
+            const new_dtype = zipResultDType(op, Self.dtype, other_dtype);
+            return _Tensor(new_dtype, bc_shape);
+        }
+
         /// Apply an elementwise zip (binary) operation on two arrays, with broadcasting
-        pub fn zip(comptime a: Self, comptime op: ops.ZipOp, comptime b: anytype) t: {
-            const b_tensor = tensorOfDType(b, dtype);
-            const bc_shape = Broadcast(b_tensor.shape[0..b_tensor.ndims].*).shape;
-            const new_dtype = zipResultDType(op, a, b);
-            break :t _Tensor(new_dtype, bc_shape);
-        } {
-            const b_tensor = comptime tensorOfDType(b, dtype);
-            const bc_shape = Broadcast(b_tensor.shape[0..b_tensor.ndims].*).shape;
-            const new_dtype = comptime zipResultDType(op, a, b);
+        pub fn zip(a: Self, b: anytype, comptime op: ops.ZipOp) Zip(TensorType(b).shape, TensorType(b).dtype, op) {
+            const b_tensor = comptime tensorOf(b);
 
             // Expand a and b to match the output shape
-            const a_expand = comptime a.expand(bc_shape);
-            const b_expand = comptime b_tensor.expand(bc_shape);
-            const Out = _Tensor(new_dtype, bc_shape);
-            return Out.initContiguous(Graph.OpNode.init(.ZipOp, op, .{ &a_expand.node(), &b_expand.node() }, {}));
+            // const a_expand = comptime a.expand(bc_shape);
+            // const b_expand = comptime b_tensor.expand(bc_shape);
+            return Zip(b_tensor.shape[0..b_tensor.ndims].*, b_tensor.dtype, op).initContiguous(Graph.OpNode.init(
+                .ZipOp,
+                op,
+                .{ &a.node(), &b_tensor.node() },
+                {},
+            ));
         }
 
         pub fn Reduce(comptime reduce_dims: anytype) type {
@@ -435,7 +482,7 @@ pub fn Tensor(
         /// Perform a reduction across 1 or more (or all) dimensions of a tensor.
         /// Dimensions to reduce can be passed as a int for 1 dim, tuple for multiple dims, or null/void for all dims
         pub fn reduce(
-            comptime a: Self,
+            a: Self,
             comptime op: ops.ReduceOp,
             comptime reduce_dims: anytype,
         ) Reduce(reduce_dims) {
@@ -495,7 +542,7 @@ pub fn Tensor(
                 \\Tensor B: {any}
             , .{ shape, other.shape }));
         }
-        pub fn matmul(comptime a: Self, comptime b: anytype) MatMul(b) {
+        pub fn matmul(a: Self, b: anytype) MatMul(b) {
             return a
                 .unsqueeze(a.ndims - 1)
                 .mul(b.transpose(b.ndims - 2, b.ndims - 1).copy().unsqueeze(b.ndims - 2))
@@ -516,7 +563,7 @@ pub fn Tensor(
         /// Conditional elementwise operator
         /// out[i] = if (mask[i]) true_value[i] else false_value[i]
         /// Supports broadcasting between all 3 tensors, but true value and false value are broadcasted together first and must also have the same dtype
-        pub fn where(comptime mask: Self, comptime true_value: anytype, comptime false_value: anytype) Where(true_value, false_value) {
+        pub fn where(mask: Self, true_value: anytype, false_value: anytype) Where(true_value, false_value) {
             const Out = Where(true_value, false_value);
             const mask_expand = mask.expand(Out.shape);
             const true_expand = tensorOf(true_value).expand(Out.shape);

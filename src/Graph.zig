@@ -191,29 +191,33 @@ pub const OpNode = union(ops.OpTypes) {
     const Input = struct {
         tensor: *const TensorNode,
         fused: bool = false,
+
+        pub fn jsonStringify(input: @This(), write_stream: anytype) !void {
+            try write_stream.write(@intFromPtr(input.tensor));
+        }
     };
 
     const JsonFormat = union(ops.OpTypes) {
         MapOp: struct {
             op: ops.MapOp,
-            a: usize,
+            a: Input,
             out: usize,
         },
         ZipOp: struct {
             op: ops.ZipOp,
-            a: usize,
-            b: usize,
+            a: Input,
+            b: Input,
             out: usize,
         },
         ReduceOp: struct {
             op: ops.ReduceOp,
-            a: usize,
+            a: Input,
             dims: []const bool,
             out: usize,
         },
         TypeOp: struct {
             op: ops.TypeOp,
-            a: usize,
+            a: Input,
             out: usize,
         },
         InitOp: struct {
@@ -223,9 +227,9 @@ pub const OpNode = union(ops.OpTypes) {
         },
         TernaryOp: struct {
             op: ops.TernaryOp,
-            a: usize,
-            b: usize,
-            c: usize,
+            a: Input,
+            b: Input,
+            c: Input,
             out: usize,
         },
     };
@@ -306,24 +310,24 @@ pub const OpNode = union(ops.OpTypes) {
         return switch (self) {
             .MapOp => |op_node| .{ .MapOp = .{
                 .op = op_node.op,
-                .a = @intFromPtr(op_node.a),
+                .a = op_node.a,
                 .out = @intFromPtr(out.ptr),
             } },
             .ZipOp => |op_node| .{ .ZipOp = .{
                 .op = op_node.op,
-                .a = @intFromPtr(op_node.a.tensor),
-                .b = @intFromPtr(op_node.b.tensor),
+                .a = op_node.a,
+                .b = op_node.a,
                 .out = @intFromPtr(out.ptr),
             } },
             .ReduceOp => |op_node| .{ .ReduceOp = .{
                 .op = op_node.op,
-                .a = @intFromPtr(op_node.a.tensor),
+                .a = op_node.a,
                 .dims = op_node.dims,
                 .out = @intFromPtr(out.ptr),
             } },
             .TypeOp => |op_node| .{ .TypeOp = .{
                 .op = op_node.op,
-                .a = @intFromPtr(op_node.a.tensor),
+                .a = op_node.a,
                 .out = @intFromPtr(out.ptr),
             } },
             .InitOp => |op_node| .{ .InitOp = .{
@@ -333,9 +337,9 @@ pub const OpNode = union(ops.OpTypes) {
             } },
             .TernaryOp => |op_node| .{ .TernaryOp = .{
                 .op = op_node.op,
-                .a = @intFromPtr(op_node.a.tensor),
-                .b = @intFromPtr(op_node.b.tensor),
-                .c = @intFromPtr(op_node.c.tensor),
+                .a = op_node.a,
+                .b = op_node.a,
+                .c = op_node.a,
                 .out = @intFromPtr(out.ptr),
             } },
         };

@@ -10,6 +10,7 @@ pub const TypeOp = enum { AsStrided, AsType };
 pub const InitOp = enum {
     pub const Args = union(InitOp) {
         Input: void,
+        Parameter: void,
         Full: []const u8,
         Rand: void,
         Range: struct {
@@ -18,6 +19,7 @@ pub const InitOp = enum {
         },
     };
     Input,
+    Parameter,
     Full,
     Rand,
     Range,

@@ -1,6 +1,8 @@
 const std = @import("std");
 const tensor = @import("tensor.zig");
-pub const DType = enum { bool, u8, i8, u16, i16, f16, u32, i32, f32, u64, i64, f64, u128, i128, f128 };
+pub const DType = enum(u8) { bool, u8, i8, u16, i16, f16, u32, i32, f32, u64, i64, f64, u128, i128, f128 };
+
+pub const default: DType = .f32;
 
 pub fn isFloat(t: DType) bool {
     return switch (t) {
@@ -105,4 +107,11 @@ pub fn resultDType(dtype1: DType, dtype2: DType) DType {
 
     @compileLog(dtype1, dtype2);
     unreachable;
+}
+
+/// When a float data type is necessary (e.g.  for division) this function can be used
+/// It will always return a float dtype, either the default (f32) or a satisfying one from dtype1 and dtype2
+pub fn floatResultDType(dtype1: DType, dtype2: DType) DType {
+    const result = resultDType(dtype1, dtype2);
+    return if (isFloat(result)) result else .f32;
 }
