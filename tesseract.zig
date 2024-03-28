@@ -8,7 +8,6 @@ const tesseract = @This();
 
 pub const Tensor = tensor._Tensor;
 pub const scalar = tensor.scalar;
-pub const F = @import("src/functions.zig");
 
 // Expose some of the utility functions that create tensors of specific sizes
 pub const constant = tensor.constant;

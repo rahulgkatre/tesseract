@@ -2,11 +2,10 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const tesseract = @import("tesseract.zig");
 const Tensor = tesseract.Tensor;
-const F = tesseract.F;
 
 const Graph = @import("src/Graph.zig");
 
-pub fn tmain() std.meta.Tuple(&[_]type{Tensor(.f16, .{ 16, 10 })}) {
+pub fn tmain() Tensor(.f16, .{ 16, 10 }) {
     // Here is a small neural network that can be used for MNIST
     const x = Tensor(.u8, .{ 16, 28, 28 }).input();
     const x_flatten = x.flattenPartial(-2, -1);
@@ -21,7 +20,7 @@ pub fn tmain() std.meta.Tuple(&[_]type{Tensor(.f16, .{ 16, 10 })}) {
     const l1_out = norm_x.matmul(w1).add(b1).relu();
     const l2_out = l1_out.matmul(w2).add(b2).relu();
     const l3_out = l2_out.matmul(w3).add(b3).relu();
-    return .{l3_out.softmax(-1)};
+    return l3_out.softmax(-1);
 }
 
 pub fn main() !void {
@@ -30,7 +29,7 @@ pub fn main() !void {
 
     // All tensor code should run in comptime
     const out = comptime tmain();
-    out[0].trace();
+    out.trace();
 
     const writer = std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write){ .context = std.io.getStdOut() };
     try Graph.viz(writer);

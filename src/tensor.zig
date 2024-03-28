@@ -1,5 +1,4 @@
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 const comptimePrint = std.fmt.comptimePrint;
 const utils = @import("utils.zig");
 const ops = @import("ops.zig");
@@ -22,6 +21,7 @@ pub fn TensorType(comptime val: anytype) type {
 }
 
 pub fn FloatTensor(comptime TT: type) type {
+    std.debug.assert(isTensor(TT));
     if (!dtypes.isFloat(TT.dtype)) {
         return TT.AsType(dtypes.default);
     } else {
@@ -30,6 +30,7 @@ pub fn FloatTensor(comptime TT: type) type {
 }
 
 pub fn BoolTensor(comptime TT: type) type {
+    std.debug.assert(isTensor(TT));
     if (!dtypes.isBool(TT.dtype)) {
         @compileError("Must be bool datatype");
     } else {
@@ -38,6 +39,7 @@ pub fn BoolTensor(comptime TT: type) type {
 }
 
 pub fn IntTensor(comptime TT: type) type {
+    std.debug.assert(isTensor(TT));
     if (!dtypes.isInt(TT.dtype)) {
         @compileError("Must cast to int datatype first");
     } else {
@@ -61,11 +63,6 @@ fn Scalar(comptime dtype: dtypes.DType) type {
     return _Tensor(dtype, .{1});
 }
 
-/// Utility function for defining a scalar (a 1-size tensor)
-pub fn scalar(comptime dtype: dtypes.DType, value: dtypes.ZigType(dtype)) Scalar(dtype) {
-    return Scalar(dtype).full(value);
-}
-
 pub fn isTensor(comptime T: type) bool {
     return switch (@typeInfo(T)) {
         .Pointer => |ptr| isTensor(ptr.child),
@@ -75,10 +72,6 @@ pub fn isTensor(comptime T: type) bool {
 }
 
 /// Used for wrapping immediate values in single size tensors with the same dtype as the current tensor
-pub fn tensorOfDType(comptime val: anytype, comptime dtype: dtypes.DType) if (!isTensor(@TypeOf(val))) Scalar(dtype) else @TypeOf(val) {
-    return if (!isTensor(@TypeOf(val))) Scalar(dtype).full(val) else val;
-}
-
 pub fn tensorOf(comptime val: anytype) TensorType(val) {
     return if (!isTensor(@TypeOf(val))) TensorType(val).full(val) else val;
 }
@@ -368,22 +361,22 @@ pub fn Tensor(
             return initContiguous(Graph.OpNode.init(.MapOp, op, .{&a.node()}, {}));
         }
 
-        pub fn Broadcast(comptime new_shape: anytype) type {
-            if (std.mem.eql(u64, &shape, &new_shape)) {
+        pub fn Broadcast(comptime other_shape: anytype) type {
+            if (std.mem.eql(u64, &shape, &other_shape)) {
                 return Self;
             }
-            const bc_ndims = @max(ndims, new_shape.len);
+            const bc_ndims = @max(ndims, other_shape.len);
             var bc_shape: [bc_ndims]u64 = undefined;
             for (0..bc_ndims) |i| {
                 const dim1 = if (i >= ndims) 1 else shape[ndims - i - 1];
-                const dim2 = if (i >= new_shape.len) 1 else new_shape[new_shape.len - i - 1]; // orelse dim1;
+                const dim2 = if (i >= other_shape.len) 1 else other_shape[other_shape.len - i - 1]; // orelse dim1;
                 if (dim1 != 1 and dim2 != 1 and dim1 != dim2) {
                     @compileError(comptimePrint(
                         \\Tensor shapes are not comaptible for broadcasting
                         \\Tensor A shape: {any}
                         \\Tensor B shape: {any}
                     ,
-                        .{ shape, new_shape },
+                        .{ shape, other_shape },
                     ));
                 }
                 bc_shape[bc_ndims - i - 1] = if (dim1 == dim2 or dim2 == 1) dim1 else dim2;
@@ -402,16 +395,6 @@ pub fn Tensor(
             return a.asStrided(new_shape, bc_strides, a.offset);
         }
 
-        pub fn zipResultDType(op: ops.ZipOp, dtype1: dtypes.DType, dtype2: dtypes.DType) dtypes.DType {
-            return switch (op) {
-                .Equals, .LessThan => .bool,
-                else => dtypes.resultDType(
-                    dtype1,
-                    dtype2,
-                ),
-            };
-        }
-
         pub fn normalizedDim(dim: i16) u8 {
             const normalized = if (dim < 0) ndims + dim else dim;
             if (normalized < 0 or normalized > ndims) {
@@ -423,20 +406,20 @@ pub fn Tensor(
             return @intCast(normalized);
         }
 
-        pub fn Zip(comptime new_shape: anytype, comptime other_dtype: dtypes.DType, comptime op: ops.ZipOp) type {
-            const bc_shape = Broadcast(new_shape).shape;
-            const new_dtype = zipResultDType(op, Self.dtype, other_dtype);
+        pub fn Zip(comptime Other: type, comptime op: ops.ZipOp) type {
+            std.debug.assert(isTensor(Other));
+            const bc_shape = Broadcast(Other.shape).shape;
+            const new_dtype = utils.zipResultDType(op, Self.dtype, Other.dtype);
             return _Tensor(new_dtype, bc_shape);
         }
 
         /// Apply an elementwise zip (binary) operation on two arrays, with broadcasting
-        pub fn zip(a: Self, b: anytype, comptime op: ops.ZipOp) Zip(TensorType(b).shape, TensorType(b).dtype, op) {
+        pub fn zip(a: Self, b: anytype, comptime op: ops.ZipOp) Zip(TensorType(b), op) {
             const b_tensor = comptime tensorOf(b);
-
             // Expand a and b to match the output shape
             // const a_expand = comptime a.expand(bc_shape);
             // const b_expand = comptime b_tensor.expand(bc_shape);
-            return Zip(b_tensor.shape[0..b_tensor.ndims].*, b_tensor.dtype, op).initContiguous(Graph.OpNode.init(
+            return Zip(TensorType(b), op).initContiguous(Graph.OpNode.init(
                 .ZipOp,
                 op,
                 .{ &a.node(), &b_tensor.node() },

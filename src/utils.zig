@@ -1,5 +1,7 @@
 const std = @import("std");
 const comptimePrint = std.fmt.comptimePrint;
+const ops = @import("ops.zig");
+const dtypes = @import("dtypes.zig");
 
 pub fn arrayPermute(comptime T: type, comptime len: u8, array: [len]u64, perm: [len]u8) [len]T {
     var used: [len]bool = [_]bool{false} ** len;
@@ -81,4 +83,14 @@ pub fn contiguousStrides(comptime ndims: u8, shape: [ndims]u64) [ndims]u64 {
         }
     }
     return strides;
+}
+
+pub fn zipResultDType(op: ops.ZipOp, dtype1: dtypes.DType, dtype2: dtypes.DType) dtypes.DType {
+    return switch (op) {
+        .Equals, .LessThan => .bool,
+        else => dtypes.resultDType(
+            dtype1,
+            dtype2,
+        ),
+    };
 }
