@@ -5,6 +5,8 @@ const ops = @import("ops.zig");
 const Graph = @import("Graph.zig");
 const dtypes = @import("dtypes.zig");
 const functions = @import("functions.zig");
+const anytensor = @import("anytensor.zig");
+const Record = @import("record.zig").Record;
 
 pub fn TensorType(comptime val: anytype) type {
     if (isTensor(@TypeOf(val))) {
@@ -111,29 +113,14 @@ pub fn Tensor(
         shape: []const u64 = &shape,
         strides: []const u64,
         offset: u64,
-        op_node: Graph.OpNode,
+        record: Record,
 
-        pub fn initContiguous(op_node: Graph.OpNode) Self {
-            return .{ .op_node = op_node, .strides = &utils.contiguousStrides(ndims, shape), .offset = 0 };
-        }
-
-        pub fn node(self: *const Self) Graph.TensorNode {
-            @setEvalBranchQuota(std.math.maxInt(u32));
-            return .{
-                .ptr = self,
-                .dtype = dtype,
-                .op_node = self.op_node,
-                .ndims = ndims,
-                .shape = self.shape,
-                .offset = self.offset,
-                .strides = self.strides,
-                // .size = self.size(),
-                // .contiguous = self.isContiguous(),
-            };
+        pub fn initContiguous(record: Record) Self {
+            return .{ .record = record, .strides = &utils.contiguousStrides(ndims, shape), .offset = 0 };
         }
 
         pub fn trace(self: *const Self) void {
-            self.node().trace();
+            anytensor.trace(@ptrCast(self));
         }
 
         pub fn isContiguous(self: Self) bool {
@@ -171,7 +158,7 @@ pub fn Tensor(
         /// Used to mark a tensor as an input to a graph,
         /// codegen will make this an argument of the function
         pub fn input() Self {
-            return initContiguous(Graph.OpNode.init(
+            return initContiguous(Record.init(
                 .InitOp,
                 .Input,
                 {},
@@ -180,7 +167,7 @@ pub fn Tensor(
         }
 
         pub fn param() Self {
-            return initContiguous(Graph.OpNode.init(
+            return initContiguous(Record.init(
                 .InitOp,
                 .Parameter,
                 {},
@@ -191,7 +178,7 @@ pub fn Tensor(
         /// Fill a tensor with a value
         pub fn full(comptime value: dtypes.ZigType(dtype)) Self {
             return initContiguous(
-                Graph.OpNode.init(
+                Record.init(
                     .InitOp,
                     .Full,
                     {},
@@ -202,7 +189,7 @@ pub fn Tensor(
 
         pub fn rand() Self {
             std.debug.assert(dtypes.isFloat(dtype));
-            return initContiguous(Graph.OpNode.init(
+            return initContiguous(Record.init(
                 .InitOp,
                 .Rand,
                 .{ .Rand = {} },
@@ -319,7 +306,7 @@ pub fn Tensor(
         /// There are guiderails to prevent out of bounds access into underlying memory.
         pub fn asStrided(a: Self, comptime new_shape: anytype, comptime new_strides: [new_shape.len]u64, new_offset: u64) View(new_shape) {
             var out = View(new_shape){
-                .op_node = Graph.OpNode.init(.TypeOp, .AsStrided, .{&a.node()}, {}),
+                .record = Record.init(.TypeOp, .AsStrided, .{@ptrCast(&a)}, {}),
                 .strides = &new_strides,
                 .offset = new_offset,
             };
@@ -353,12 +340,12 @@ pub fn Tensor(
         }
         ///Cast an array of a datatype to another datatype
         pub fn asType(a: Self, comptime new_dtype: dtypes.DType) AsType(new_dtype) {
-            return _Tensor(new_dtype, shape).initContiguous(Graph.OpNode.init(.TypeOp, .AsType, .{&a.node()}, {}));
+            return _Tensor(new_dtype, shape).initContiguous(Record.init(.TypeOp, .AsType, .{@ptrCast(&a)}, {}));
         }
 
         ///Apply an elementwise map operation
         pub fn map(a: Self, comptime op: ops.MapOp) Self {
-            return initContiguous(Graph.OpNode.init(.MapOp, op, .{&a.node()}, {}));
+            return initContiguous(Record.init(.MapOp, op, .{@ptrCast(&a)}, {}));
         }
 
         pub fn Broadcast(comptime other_shape: anytype) type {
@@ -419,10 +406,10 @@ pub fn Tensor(
             // Expand a and b to match the output shape
             // const a_expand = comptime a.expand(bc_shape);
             // const b_expand = comptime b_tensor.expand(bc_shape);
-            return Zip(TensorType(b), op).initContiguous(Graph.OpNode.init(
+            return Zip(TensorType(b), op).initContiguous(Record.init(
                 .ZipOp,
                 op,
-                .{ &a.node(), &b_tensor.node() },
+                .{ @ptrCast(&a), @ptrCast(&b_tensor) },
                 {},
             ));
         }
@@ -486,7 +473,7 @@ pub fn Tensor(
                 },
             };
 
-            return Reduce(reduce_dims).initContiguous(Graph.OpNode.init(.ReduceOp, op, .{&a.node()}, &reduce_dim_mask));
+            return Reduce(reduce_dims).initContiguous(Record.init(.ReduceOp, op, .{@ptrCast(&a)}, &reduce_dim_mask));
         }
 
         pub fn MatMul(comptime other: anytype) type {
@@ -551,7 +538,7 @@ pub fn Tensor(
             const mask_expand = mask.expand(Out.shape);
             const true_expand = tensorOf(true_value).expand(Out.shape);
             const false_expand = tensorOf(false_value).expand(Out.shape);
-            return Out.initContiguous(Graph.OpNode.init(.TernaryOp, .Where, .{ &mask_expand.node(), &true_expand.node(), &false_expand.node() }, {}));
+            return Out.initContiguous(Record.init(.TernaryOp, .Where, .{ @ptrCast(&mask_expand), @ptrCast(&true_expand), @ptrCast(&false_expand) }, {}));
         }
 
         // TODO: Need to implement padding to get conv2d to work
@@ -644,8 +631,8 @@ test "map" {
     Graph.init();
     defer Graph.deinit();
     tensor2.trace();
-    try std.testing.expect(tensor2.op_node.MapOp.op == .Neg);
-    try std.testing.expectEqual(tensor2.op_node.MapOp.a.*, tensor1.node());
+    try std.testing.expect(tensor2.record.MapOp.op == .Neg);
+    try std.testing.expectEqual(tensor2.record.MapOp.a.*, tensor1.node());
 }
 
 test "zip" {
@@ -656,9 +643,9 @@ test "zip" {
     Graph.init();
     defer Graph.deinit();
     tensor3.trace();
-    try std.testing.expect(tensor3.op_node.ZipOp.op == .Add);
-    try std.testing.expectEqual(tensor3.op_node.ZipOp.a.op_node.TypeOp.a.*, tensor1.node());
-    try std.testing.expectEqual(tensor3.op_node.ZipOp.b.op_node.TypeOp.a.*, tensor2.node());
+    try std.testing.expect(tensor3.record.ZipOp.op == .Add);
+    try std.testing.expectEqual(tensor3.record.ZipOp.a.record.TypeOp.a.*, tensor1.node());
+    try std.testing.expectEqual(tensor3.record.ZipOp.b.record.TypeOp.a.*, tensor2.node());
 }
 
 test "reduce" {
@@ -668,9 +655,9 @@ test "reduce" {
     Graph.init();
     defer Graph.deinit();
     tensor2.trace();
-    try std.testing.expect(tensor2.op_node.ReduceOp.op == .Sum);
-    try std.testing.expectEqual(tensor2.op_node.ReduceOp.a.*, tensor1.node());
-    try std.testing.expectEqual(tensor2.op_node.ReduceOp.dims[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
+    try std.testing.expect(tensor2.record.ReduceOp.op == .Sum);
+    try std.testing.expectEqual(tensor2.record.ReduceOp.a.*, tensor1.node());
+    try std.testing.expectEqual(tensor2.record.ReduceOp.dims[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
 }
 
 test "multiple dim reduce" {
@@ -680,9 +667,9 @@ test "multiple dim reduce" {
     Graph.init();
     defer Graph.deinit();
     tensor2.trace();
-    try std.testing.expect(tensor2.op_node.ReduceOp.op == .Sum);
-    try std.testing.expectEqual(tensor2.op_node.ReduceOp.a.*, tensor1.node());
-    try std.testing.expectEqual(tensor2.op_node.ReduceOp.dims[0..tensor2.ndims].*, [_]bool{ true, true, false });
+    try std.testing.expect(tensor2.record.ReduceOp.op == .Sum);
+    try std.testing.expectEqual(tensor2.record.ReduceOp.a.*, tensor1.node());
+    try std.testing.expectEqual(tensor2.record.ReduceOp.dims[0..tensor2.ndims].*, [_]bool{ true, true, false });
 }
 
 test "zip reduce" {
@@ -693,11 +680,11 @@ test "zip reduce" {
     Graph.init();
     defer Graph.deinit();
     tensor3.trace();
-    try std.testing.expect(tensor3.op_node.ReduceOp.op == .Sum);
+    try std.testing.expect(tensor3.record.ReduceOp.op == .Sum);
     // Anonymous intermediate tensor that stores tensor1 + tensor2
-    const anon = tensor3.op_node.ReduceOp.a;
-    try std.testing.expectEqual(anon.op_node.ZipOp.a.op_node.TypeOp.a.*, tensor1.node());
-    try std.testing.expectEqual(anon.op_node.ZipOp.b.op_node.TypeOp.a.*, tensor2.node());
+    const anon = tensor3.record.ReduceOp.a;
+    try std.testing.expectEqual(anon.record.ZipOp.a.record.TypeOp.a.*, tensor1.node());
+    try std.testing.expectEqual(anon.record.ZipOp.b.record.TypeOp.a.*, tensor2.node());
 }
 
 test "as_type" {

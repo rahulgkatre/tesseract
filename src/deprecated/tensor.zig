@@ -132,7 +132,7 @@ fn Tensor(
         size: Dim = size,
         contiguous: ?bool = contiguous,
 
-        pub fn any(_: *const Self) Graph.AnyTensor {
+        pub fn any(_: *const Self) Graph.anytensor {
             return .{
                 .dtype = dtype,
                 .ndims = ndims,
@@ -586,8 +586,8 @@ test "map" {
     Graph.init();
     defer Graph.deinit();
     tensor2.trace();
-    try std.testing.expect(Graph.AnyTensor.get((&tensor2)).last_op.MapOp.op == .Neg);
-    try std.testing.expect(Graph.AnyTensor.get((&tensor2)).last_op.MapOp.x == Graph.AnyTensor.get((&tensor1)));
+    try std.testing.expect(Graph.anytensor.get((&tensor2)).last_op.MapOp.op == .Neg);
+    try std.testing.expect(Graph.anytensor.get((&tensor2)).last_op.MapOp.x == Graph.anytensor.get((&tensor1)));
 }
 
 test "zip" {
@@ -598,9 +598,9 @@ test "zip" {
     Graph.init();
     defer Graph.deinit();
     tensor3.trace();
-    try std.testing.expect(Graph.AnyTensor.get((&tensor3)).last_op.ZipOp.op == .Add);
-    try std.testing.expect(Graph.AnyTensor.get((&tensor3)).last_op.ZipOp.a.last_op.TypeOp.x == Graph.AnyTensor.get((&tensor1)));
-    try std.testing.expect(Graph.AnyTensor.get((&tensor3)).last_op.ZipOp.b.last_op.TypeOp.x == Graph.AnyTensor.get((&tensor2)));
+    try std.testing.expect(Graph.anytensor.get((&tensor3)).last_op.ZipOp.op == .Add);
+    try std.testing.expect(Graph.anytensor.get((&tensor3)).last_op.ZipOp.a.last_op.TypeOp.x == Graph.anytensor.get((&tensor1)));
+    try std.testing.expect(Graph.anytensor.get((&tensor3)).last_op.ZipOp.b.last_op.TypeOp.x == Graph.anytensor.get((&tensor2)));
 }
 
 test "reduce" {
@@ -610,9 +610,9 @@ test "reduce" {
     Graph.init();
     defer Graph.deinit();
     tensor2.trace();
-    try std.testing.expect(Graph.AnyTensor.get(&tensor2).last_op.ReduceOp.op == .Sum);
-    try std.testing.expect(Graph.AnyTensor.get((&tensor2)).last_op.ReduceOp.x == Graph.AnyTensor.get((&tensor1)));
-    try std.testing.expectEqual(Graph.AnyTensor.get((&tensor2)).last_op.ReduceOp.dims[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
+    try std.testing.expect(Graph.anytensor.get(&tensor2).last_op.ReduceOp.op == .Sum);
+    try std.testing.expect(Graph.anytensor.get((&tensor2)).last_op.ReduceOp.x == Graph.anytensor.get((&tensor1)));
+    try std.testing.expectEqual(Graph.anytensor.get((&tensor2)).last_op.ReduceOp.dims[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
 }
 
 test "multiple dim reduce" {
@@ -622,9 +622,9 @@ test "multiple dim reduce" {
     Graph.init();
     defer Graph.deinit();
     tensor2.trace();
-    try std.testing.expect(Graph.AnyTensor.get((&tensor2)).last_op.ReduceOp.op == .Sum);
-    try std.testing.expect(Graph.AnyTensor.get((&tensor2)).last_op.ReduceOp.x == Graph.AnyTensor.get((&tensor1)));
-    try std.testing.expectEqual(Graph.AnyTensor.get((&tensor2)).last_op.ReduceOp.dims[0..tensor2.ndims].*, [_]bool{ true, true, false });
+    try std.testing.expect(Graph.anytensor.get((&tensor2)).last_op.ReduceOp.op == .Sum);
+    try std.testing.expect(Graph.anytensor.get((&tensor2)).last_op.ReduceOp.x == Graph.anytensor.get((&tensor1)));
+    try std.testing.expectEqual(Graph.anytensor.get((&tensor2)).last_op.ReduceOp.dims[0..tensor2.ndims].*, [_]bool{ true, true, false });
 }
 
 test "zip reduce" {
@@ -635,11 +635,11 @@ test "zip reduce" {
     Graph.init();
     defer Graph.deinit();
     tensor3.trace();
-    try std.testing.expect(Graph.AnyTensor.get((&tensor3)).last_op.ReduceOp.op == .Sum);
+    try std.testing.expect(Graph.anytensor.get((&tensor3)).last_op.ReduceOp.op == .Sum);
     // Anonymous intermediate tensor that stores tensor1 + tensor2
-    const anon = Graph.AnyTensor.get((&tensor3)).last_op.ReduceOp.x;
-    try std.testing.expect(anon.last_op.ZipOp.a.last_op.TypeOp.x == Graph.AnyTensor.get((&tensor1)));
-    try std.testing.expect(anon.last_op.ZipOp.b.last_op.TypeOp.x == Graph.AnyTensor.get((&tensor2)));
+    const anon = Graph.anytensor.get((&tensor3)).last_op.ReduceOp.x;
+    try std.testing.expect(anon.last_op.ZipOp.a.last_op.TypeOp.x == Graph.anytensor.get((&tensor1)));
+    try std.testing.expect(anon.last_op.ZipOp.b.last_op.TypeOp.x == Graph.anytensor.get((&tensor2)));
 }
 
 test "as_type" {
