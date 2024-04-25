@@ -3,4 +3,6 @@
         "./coverage/test.*/cov.xml",
         "./coverage/test.*/cobertura.xml",
     ],
+    "zig.zls.path": "/home/rahul/zls/zig-out/bin/zls",
+    "zig.path": "/home/rahul/bin/zig",
 }

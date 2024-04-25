@@ -2,11 +2,11 @@ const ops = @This();
 const dtypes = @import("dtypes.zig");
 // Map, Zip and Reduce ops are arithmetic operations for unary functions, binary functions,
 // and reducing a dimension of a tensor to a single value by applying some binary function
-pub const MapOp = enum { Copy, Neg, Log, Exp, Sqrt, Recip, Sin };
+pub const UnaryOp = enum { Copy, Neg, Log, Exp, Sqrt, Recip, Sin };
 // LessThan, Equals, Xor will produce a bool tensor which can be used in mask based operations later on
-pub const ZipOp = enum { Add, Mul, Maximum, Mod, LessThan, Equals, Xor };
+pub const BinaryOp = enum { Add, Mul, Maximum, Mod, LessThan, Equals, Xor };
 pub const ReduceOp = enum { Sum, Max };
-pub const TypeOp = enum { AsStrided, AsType };
+pub const DataOp = enum { AsStrided, AsType };
 pub const InitOp = enum {
     pub const Args = union(InitOp) {
         Input: void,
@@ -26,4 +26,4 @@ pub const InitOp = enum {
 };
 // Where is an if statement that takes in a mask boolean (the operand tensor), a true branch value, and a false branch value
 pub const TernaryOp = enum { Where };
-pub const OpTypes = enum { MapOp, ZipOp, ReduceOp, TypeOp, InitOp, TernaryOp };
+pub const OpTypes = enum { UnaryOp, BinaryOp, ReduceOp, DataOp, InitOp, TernaryOp };

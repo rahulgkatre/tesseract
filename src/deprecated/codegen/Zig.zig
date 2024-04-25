@@ -73,7 +73,7 @@ fn loopCode(program: *const Program, loop: *Program.Loop, writer: anytype) std.m
     }
 }
 
-fn mapOpCode(op: ops.MapOp, dtype: dtypes.DType, x: []const u8) ![]const u8 {
+fn mapOpCode(op: ops.UnaryOp, dtype: dtypes.DType, x: []const u8) ![]const u8 {
     return try switch (op) {
         .Copy => std.fmt.allocPrint(allocator, "{s}", .{x}),
         .Neg => if (dtypes.isBool(dtype)) std.fmt.allocPrint(allocator, "!({s})", .{x}) else std.fmt.allocPrint(allocator, "-({s})", .{x}),
@@ -86,7 +86,7 @@ fn mapOpCode(op: ops.MapOp, dtype: dtypes.DType, x: []const u8) ![]const u8 {
 }
 
 fn zipOpCode(
-    op: ops.ZipOp,
+    op: ops.BinaryOp,
     a: []const u8,
     b: []const u8,
 ) ![]const u8 {
@@ -102,7 +102,7 @@ fn zipOpCode(
 }
 
 fn reduceOpCode(op: ops.ReduceOp, x: []const u8, out_id: usize) ![]const u8 {
-    const zip_op: ops.ZipOp = switch (op) {
+    const zip_op: ops.BinaryOp = switch (op) {
         .Sum => .Add,
         .Max => .Maximum,
     };
@@ -132,14 +132,14 @@ fn expressionCode(statement: *const Program.Statement, expression: ?*const Progr
         return null;
     }
     switch (expression.?.*) {
-        .MapOp => |expr| {
+        .UnaryOp => |expr| {
             const inner_x = try expressionCode(statement, expr.x.inner) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
                 expr.x.tensor.memId(),
                 try codegen.unravelCode(allocator, expr.x.node),
             });
             return try mapOpCode(expr.op, expr.x.tensor.tensor.dtype, inner_x);
         },
-        .ZipOp => |expr| {
+        .BinaryOp => |expr| {
             const inner_a = try expressionCode(statement, expr.a.inner) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
                 expr.a.tensor.memId(),
                 try codegen.broadcastedUnravelCode(allocator, expr.a.node, statement.out),
@@ -169,7 +169,7 @@ fn expressionCode(statement: *const Program.Statement, expression: ?*const Progr
                 return null;
             }
         },
-        .TypeOp => |expr| {
+        .DataOp => |expr| {
             if (expr.op == .AsType) {
                 const inner_x = try expressionCode(statement, expr.x.inner) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
                     expr.x.tensor.memId(),

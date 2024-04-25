@@ -32,9 +32,9 @@ pub fn main() !void {
     out.trace();
 
     const writer = std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write){ .context = std.io.getStdOut() };
-    // try Graph.viz(writer);
+    try Graph.viz(writer);
 
-    std.debug.print("\n", .{});
-    try std.json.stringify(Graph{}, .{}, writer);
-    std.debug.print("\n", .{});
+    // std.debug.print("\n", .{});
+    // try std.json.stringify(Graph{}, .{}, writer);
+    // std.debug.print("\n", .{});
 }

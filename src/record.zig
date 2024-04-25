@@ -1,5 +1,5 @@
 const ops = @import("ops.zig");
-const anytensor = @import("anytensor.zig");
+const anytensor = @import("anytensor.zig").anytensor;
 
 pub const Record = union(ops.OpTypes) {
     const Input = struct {
@@ -7,18 +7,18 @@ pub const Record = union(ops.OpTypes) {
         fused: bool = false,
 
         pub fn jsonStringify(input: @This(), write_stream: anytype) !void {
-            try write_stream.write(input.tensor.ordinal());
+            try write_stream.write(@intFromPtr(input.tensor));
         }
     };
 
     pub const JsonFormat = union(ops.OpTypes) {
-        MapOp: struct {
-            op: ops.MapOp,
+        UnaryOp: struct {
+            op: ops.UnaryOp,
             a: Input,
             out: usize,
         },
-        ZipOp: struct {
-            op: ops.ZipOp,
+        BinaryOp: struct {
+            op: ops.BinaryOp,
             a: Input,
             b: Input,
             out: usize,
@@ -29,8 +29,8 @@ pub const Record = union(ops.OpTypes) {
             dims: []const bool,
             out: usize,
         },
-        TypeOp: struct {
-            op: ops.TypeOp,
+        DataOp: struct {
+            op: ops.DataOp,
             a: Input,
             out: usize,
         },
@@ -48,12 +48,12 @@ pub const Record = union(ops.OpTypes) {
         },
     };
 
-    MapOp: struct {
-        op: ops.MapOp,
+    UnaryOp: struct {
+        op: ops.UnaryOp,
         a: Input,
     },
-    ZipOp: struct {
-        op: ops.ZipOp,
+    BinaryOp: struct {
+        op: ops.BinaryOp,
         a: Input,
         b: Input,
     },
@@ -62,8 +62,8 @@ pub const Record = union(ops.OpTypes) {
         a: Input,
         dims: []const bool,
     },
-    TypeOp: struct {
-        op: ops.TypeOp,
+    DataOp: struct {
+        op: ops.DataOp,
         a: Input,
     },
     InitOp: struct {
@@ -82,8 +82,8 @@ pub const Record = union(ops.OpTypes) {
         op: @field(ops, @tagName(tag)),
         inputs: switch (tag) {
             .TernaryOp => [3]*const anytensor,
-            .ZipOp => [2]*const anytensor,
-            .MapOp, .TypeOp, .ReduceOp => [1]*const anytensor,
+            .BinaryOp => [2]*const anytensor,
+            .UnaryOp, .DataOp, .ReduceOp => [1]*const anytensor,
             .InitOp => void,
         },
         args: switch (tag) {
@@ -99,7 +99,7 @@ pub const Record = union(ops.OpTypes) {
                 .b = .{ .tensor = inputs[1] },
                 .c = .{ .tensor = inputs[2] },
             },
-            .ZipOp => .{
+            .BinaryOp => .{
                 .op = op,
                 .a = .{ .tensor = inputs[0] },
                 .b = .{ .tensor = inputs[1] },
@@ -109,7 +109,7 @@ pub const Record = union(ops.OpTypes) {
                 .a = .{ .tensor = inputs[0] },
                 .dims = args,
             },
-            .MapOp, .TypeOp => .{
+            .UnaryOp, .DataOp => .{
                 .op = op,
                 .a = .{ .tensor = inputs[0] },
             },
@@ -120,15 +120,14 @@ pub const Record = union(ops.OpTypes) {
         });
     }
 
-    pub fn toJsonFormat(self: *const Record) JsonFormat {
-        const out: *const anytensor = @fieldParentPtr(anytensor, "record", self);
+    pub fn toJsonFormat(self: *const Record, out: *const anytensor) JsonFormat {
         return switch (self.*) {
-            .MapOp => |record| .{ .MapOp = .{
+            .UnaryOp => |record| .{ .UnaryOp = .{
                 .op = record.op,
                 .a = record.a,
                 .out = @intFromPtr(out),
             } },
-            .ZipOp => |record| .{ .ZipOp = .{
+            .BinaryOp => |record| .{ .BinaryOp = .{
                 .op = record.op,
                 .a = record.a,
                 .b = record.a,
@@ -140,7 +139,7 @@ pub const Record = union(ops.OpTypes) {
                 .dims = record.dims,
                 .out = @intFromPtr(out),
             } },
-            .TypeOp => |record| .{ .TypeOp = .{
+            .DataOp => |record| .{ .DataOp = .{
                 .op = record.op,
                 .a = record.a,
                 .out = @intFromPtr(out),

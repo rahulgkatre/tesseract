@@ -19,7 +19,7 @@ pub const TensorNode = struct {
     pub fn memoryView(self: *const TensorNode) u64 {
         switch (self.op_node) {
             .InitOp => return self.uid,
-            .ZipOp => |op_node| {
+            .BinaryOp => |op_node| {
                 if (!op_node.a.fused and !op_node.b.fused) {
                     return self.uid;
                 }
@@ -78,7 +78,7 @@ pub fn viz(writer: anytype) void {
             // Recursive calls
             switch (op_node) {
                 .InitOp => opNodeViz(op_node, visited), // the undefined tensor field is never accessed for an init op
-                .ZipOp => |binary_op_node| {
+                .BinaryOp => |binary_op_node| {
                     vizHelper(binary_op_node.a, visited);
                     opNodeViz(op_node, visited);
                     opNodeInputViz(op_node, binary_op_node.a, visited);
@@ -198,7 +198,7 @@ pub const Fusion = struct {
 
         switch (child.op_node) {
             .InitOp => unreachable, // Impossible as init op will only have a child (output) and no tensor input
-            .ZipOp => |*op_node| {
+            .BinaryOp => |*op_node| {
                 if (op_node.a.tensor.uid != parent.uid and op_node.b.tensor.uid != parent.uid) {
                     return FusionError.NotParentChild;
                 }
@@ -246,12 +246,12 @@ pub const Fusion = struct {
     /// (reductions) from being in the same kernel. This might change after further testing.
     fn greedyFusionHelper(node: *TensorNode) void {
         switch (node.op_node) {
-            .MapOp => |*op_node| {
+            .UnaryOp => |*op_node| {
                 verticalFusion(op_node.x.tensor, node) catch {};
                 greedyFusionHelper(op_node.x.tensor);
                 if (op_node.x.tensor.group != node.group) op_node.x.tensor.global = true;
             },
-            .ZipOp => |*op_node| {
+            .BinaryOp => |*op_node| {
                 // Process the temporally closer input first
                 const inputs: std.meta.Tuple(&[_]type{OpNode.Input} ** 2) = if (op_node.a.tensor.uid > op_node.b.tensor.uid) .{ op_node.a, op_node.b } else .{ op_node.b, op_node.a };
                 verticalFusion(inputs[0].tensor, node) catch {};
@@ -266,7 +266,7 @@ pub const Fusion = struct {
                 greedyFusionHelper(op_node.x.tensor);
                 if (op_node.x.tensor.group != node.group) op_node.x.tensor.global = true;
             },
-            .TypeOp => |*op_node| {
+            .DataOp => |*op_node| {
                 verticalFusion(op_node.x.tensor, node) catch {};
                 greedyFusionHelper(op_node.x.tensor);
                 if (op_node.x.tensor.group != node.group) op_node.x.tensor.global = true;

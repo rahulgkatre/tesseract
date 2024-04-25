@@ -1,5 +1,5 @@
 const std = @import("std");
-const anytensor = @import("anytensor.zig");
+const anytensor = @import("anytensor.zig").anytensor;
 const ops = @import("ops.zig");
 const utils = @import("utils.zig");
 const dtypes = @import("dtypes.zig");
@@ -31,7 +31,7 @@ pub fn jsonStringify(_: @This(), write_stream: anytype) !void {
     for (tensors.keys(), records_json, tensors_json) |key, *rec, *ct| {
         const tensor: *const anytensor = @ptrFromInt(key);
         ct.* = tensor.toJsonFormat();
-        rec.* = (&tensor.record).toJsonFormat();
+        rec.* = Record.toJsonFormat(tensor.record, tensor);
     }
     try write_stream.write(.{
         .tensors = tensors_json,
@@ -50,10 +50,10 @@ pub fn viz(writer: anytype) !void {
     // TODO: Support for multiple entrypoints in the case of a DAG with multiple sinks
     for (tensors.keys()) |key| {
         const tensor: *const anytensor = @ptrFromInt(key);
-        if (written[@intCast(tensor.uid())]) {
+        if (written[@intCast(tensor.ordinal())]) {
             continue;
         }
-        written[@intCast(tensor.uid())] = true;
+        written[@intCast(tensor.ordinal())] = true;
         try tensor.viz(writer);
     }
 

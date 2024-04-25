@@ -84,13 +84,3 @@ pub fn contiguousStrides(comptime ndims: u8, shape: [ndims]u64) [ndims]u64 {
     }
     return strides;
 }
-
-pub fn zipResultDType(op: ops.ZipOp, dtype1: dtypes.DType, dtype2: dtypes.DType) dtypes.DType {
-    return switch (op) {
-        .Equals, .LessThan => .bool,
-        else => dtypes.resultDType(
-            dtype1,
-            dtype2,
-        ),
-    };
-}

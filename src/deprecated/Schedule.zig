@@ -166,7 +166,7 @@ pub const Loop = struct {
         }
         switch (target.tensor.op_node) {
             .InitOp => if (target.tensor.op_node.InitOp.op == .Input) return,
-            .ZipOp => |op_node| {
+            .BinaryOp => |op_node| {
                 // Generate the loop that is temporally closer first
                 if (op_node.a.tensor.uid < op_node.b.tensor.uid) {
                     try Loop.create(op_node.a);
@@ -263,7 +263,7 @@ pub const Statement = struct {
                         .ReduceOp => {
                             return .{ .local = target.tensor };
                         },
-                        .TypeOp => |op_node| {
+                        .DataOp => |op_node| {
                             if (op_node.op == .AsType) {
                                 return .{ .expression = &(try Statement.getOrInit(target)).expression };
                             } else {
@@ -290,12 +290,12 @@ pub const Statement = struct {
                 }
             }
         };
-        MapOp: struct {
-            op: ops.MapOp,
+        UnaryOp: struct {
+            op: ops.UnaryOp,
             x: Operand,
         },
-        ZipOp: struct {
-            op: ops.ZipOp,
+        BinaryOp: struct {
+            op: ops.BinaryOp,
             a: Operand,
             b: Operand,
         },
@@ -303,8 +303,8 @@ pub const Statement = struct {
             op: ops.ReduceOp,
             x: Operand,
         },
-        TypeOp: struct {
-            op: ops.TypeOp,
+        DataOp: struct {
+            op: ops.DataOp,
             x: Operand,
         },
         InitOp: struct {
@@ -334,21 +334,21 @@ pub const Statement = struct {
                     .InitOp => |op_node| if (op_node.op != .Input) .{ .InitOp = .{
                         .op = op_node.op,
                         .args = op_node.args,
-                    } } else .{ .MapOp = .{
+                    } } else .{ .UnaryOp = .{
                         .op = .Copy,
                         .x = .{ .global = op_node.out.tensor },
                     } },
-                    .ZipOp => |op_node| .{ .ZipOp = .{
+                    .BinaryOp => |op_node| .{ .BinaryOp = .{
                         .op = op_node.op,
                         .a = try Expression.Operand.init(op_node.a, target.tensor.group),
                         .b = try Expression.Operand.init(op_node.b, target.tensor.group),
                     } },
-                    .MapOp => |op_node| .{ .MapOp = .{
+                    .UnaryOp => |op_node| .{ .UnaryOp = .{
                         .op = op_node.op,
                         .x = try Expression.Operand.init(op_node.x, target.tensor.group),
                     } },
                     .ReduceOp => |op_node| .{
-                        .ZipOp = .{
+                        .BinaryOp = .{
                             .op = switch (op_node.op) {
                                 .Sum => .Add,
                                 .Max => .Maximum,
@@ -357,7 +357,7 @@ pub const Statement = struct {
                             .b = .{ .local = target.tensor },
                         },
                     },
-                    .TypeOp => |op_node| if (op_node.op == .AsType) .{ .TypeOp = .{
+                    .DataOp => |op_node| if (op_node.op == .AsType) .{ .DataOp = .{
                         .op = op_node.op,
                         .x = try Expression.Operand.init(op_node.x, target.tensor.group),
                     } } else {
@@ -377,7 +377,7 @@ pub const Statement = struct {
                 },
                 .out = switch (target.tensor.op_node) {
                     // The output of a reduce op is always an accumulator
-                    // A map op will be pushed in after the reduce loop to assign the accumulator to the global tensor
+                    // A unaryFn op will be pushed in after the reduce loop to assign the accumulator to the global tensor
                     .ReduceOp => .{ .local = target.tensor },
                     else => if (target.tensor.isCached()) .{ .local = target.tensor } else .{ .global = target.tensor },
                 },
