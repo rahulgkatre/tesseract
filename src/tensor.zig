@@ -1,11 +1,9 @@
 const std = @import("std");
 const comptimePrint = std.fmt.comptimePrint;
+
 const utils = @import("utils.zig");
 const ops = @import("ops.zig");
-const Graph = @import("Graph.zig");
 const dtypes = @import("dtypes.zig");
-const functions = @import("functions.zig");
-const anytensor = @import("anytensor.zig").anytensor;
 const Record = @import("record.zig").Record;
 
 pub fn TensorType(comptime val: anytype) type {
@@ -53,12 +51,10 @@ pub fn range(
     comptime start: comptime_int,
     comptime stop: comptime_int,
 ) _Tensor(.i32, .{stop - start}) {
-    return _Tensor(.i32, .{stop - start}).initContiguous(.{ .InitOp = .Range }, {}, .{
-        .Range = .{
-            .start = std.fmt.comptimePrint("{d}", .{start}),
-            .stop = std.fmt.comptimePrint("{d}", .{stop}),
-        },
-    });
+    return _Tensor(.i32, .{stop - start}).initContiguous(Record.init(.InitOp, .Range, {}, .{ .Range = .{
+        .start = std.fmt.comptimePrint("{d}", .{start}),
+        .stop = std.fmt.comptimePrint("{d}", .{stop}),
+    } }));
 }
 
 fn Scalar(comptime dtype: dtypes.DType) type {
@@ -101,7 +97,7 @@ pub fn Tensor(
     return extern struct {
         // All the functions for operations are implemented separately
         const Self = @This();
-        pub usingnamespace functions.Functions(Self);
+        pub usingnamespace @import("functions.zig").Functions(Self);
 
         // Type level constants for comptime shape logic (e.g. @TypeOf(a).ndims)
         pub const dtype: dtypes.DType = _dtype;
@@ -119,10 +115,6 @@ pub fn Tensor(
 
         pub fn initContiguous(record: Record) Self {
             return Self{ .record = &record };
-        }
-
-        pub fn trace(self: *const Self) void {
-            anytensor.trace(@ptrCast(self));
         }
 
         pub fn isContiguous(self: Self) bool {
@@ -194,6 +186,7 @@ pub fn Tensor(
             return initContiguous(Record.init(
                 .InitOp,
                 .Rand,
+                {},
                 .{ .Rand = {} },
             ));
         }
@@ -524,7 +517,7 @@ pub fn Tensor(
         pub fn matmul(a: Self, b: anytype) MatMul(b) {
             return a
                 .unsqueeze(a.ndims - 1)
-                .mul(b.transpose(b.ndims - 2, b.ndims - 1).copy().unsqueeze(b.ndims - 2))
+                .mul(b.transpose(b.ndims - 2, b.ndims - 1).unsqueeze(b.ndims - 2))
                 .sum(a.ndims)
                 .squeeze(a.ndims);
         }
@@ -637,9 +630,6 @@ test "unaryFn" {
     const tensor1 = comptime _Tensor(.i32, .{ 2, 3, 4 }).full(3);
     const tensor2 = comptime tensor1.neg();
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor2.shape[0..tensor2.ndims]);
-    Graph.init();
-    defer Graph.deinit();
-    tensor2.trace();
     try std.testing.expect(tensor2.record.UnaryOp.op == .Neg);
     try std.testing.expectEqual(tensor2.record.UnaryOp.a.tensor.infer(), tensor1);
 }
@@ -649,9 +639,6 @@ test "binaryFn" {
     const tensor2 = comptime _Tensor(.i32, .{ 3, 1 }).full(3);
     const tensor3 = comptime tensor1.add(tensor2);
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor3.shape[0..tensor3.ndims]);
-    Graph.init();
-    defer Graph.deinit();
-    tensor3.trace();
     try std.testing.expect(tensor3.record.BinaryOp.op == .Add);
     try std.testing.expectEqual(tensor3.record.BinaryOp.a.tensor.infer(), tensor1);
     try std.testing.expectEqual(tensor3.record.BinaryOp.b.tensor.infer(), tensor2);
@@ -661,9 +648,6 @@ test "reduce" {
     const tensor1 = comptime _Tensor(.i32, .{ 2, 3, 4 }).full(5);
     const tensor2 = comptime tensor1.sum(1);
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 1, 4 }, tensor2.shape[0..tensor1.ndims]);
-    Graph.init();
-    defer Graph.deinit();
-    tensor2.trace();
     try std.testing.expect(tensor2.record.ReduceOp.op == .Sum);
     try std.testing.expectEqual(tensor2.record.ReduceOp.a.tensor.infer(), tensor1);
     try std.testing.expectEqual(tensor2.record.ReduceOp.dims[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
@@ -673,9 +657,6 @@ test "multiple dim reduce" {
     const tensor1 = comptime _Tensor(.i32, .{ 2, 3, 4 }).full(5);
     const tensor2 = comptime tensor1.sum(.{ 0, 1 });
     try std.testing.expectEqualSlices(u64, &[_]u64{ 1, 1, 4 }, tensor2.shape[0..tensor2.ndims]);
-    Graph.init();
-    defer Graph.deinit();
-    tensor2.trace();
     try std.testing.expect(tensor2.record.ReduceOp.op == .Sum);
     try std.testing.expectEqual(tensor2.record.ReduceOp.a.tensor.infer(), tensor1);
     try std.testing.expectEqualDeep(tensor2.record.ReduceOp.dims[0..tensor2.ndims], &[_]bool{ true, true, false });
@@ -686,10 +667,6 @@ test "binaryFn reduce" {
     const tensor2 = comptime _Tensor(.i32, .{ 2, 3, 1 }).full(3);
     const tensor3 = comptime tensor1.add(tensor2).sum(1);
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 1, 4 }, tensor3.shape[0..tensor3.ndims]);
-    Graph.init();
-    defer Graph.deinit();
-    tensor3.trace();
-
     try std.testing.expect(tensor3.record.ReduceOp.op == .Sum);
     // Anonymous intermediate tensor that stores tensor1 + tensor2
     const anon = tensor3.record.ReduceOp.a.tensor;
@@ -727,16 +704,11 @@ fn fn2(input: anytype) _Tensor(.i32, .{ 2, 3, 4 }) {
 }
 
 test "tensors from functions" {
-    const out = comptime blk: {
+    _ = comptime blk: {
         const tensor3 = fn1();
         const tensor6 = fn2(tensor3);
         break :blk tensor6;
     };
-
-    Graph.init();
-    defer Graph.deinit();
-    out.trace();
-    // Graph.viz();
 }
 
 test "transpose" {

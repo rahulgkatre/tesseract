@@ -1,10 +1,11 @@
 const dtypes = @import("dtypes.zig");
 const record = @import("record.zig");
-const Graph = @import("Graph.zig");
 const tensor = @import("tensor.zig");
 
-/// Strips away comptime generic information to make it easier to work with pointers to tensors
-/// The fields are the same in order to be able to @ptrCast() a generic tensor to anytensor
+/// Strips away generic information to make it easier to work with pointers to tensors
+/// with different shapes, dtypes, etc.
+/// By making anytensor and generic tensor extern structs, they are guaranteed to have
+/// the same layout.
 pub const anytensor = extern struct {
     dtype: dtypes.DType,
     ndims: u8,
@@ -22,128 +23,121 @@ pub const anytensor = extern struct {
     }
 
     pub fn viz(self: *const anytensor, writer: anytype) !void {
+        const Viz = struct {
+            fn vizOp(t: *const anytensor, w: anytype) !void {
+                switch (t.record.*) {
+                    .DataOp => |rec| {
+                        try switch (rec.op) {
+                            .AsType => w.print(
+                                \\    {[op]s}_{[out]x}[label="{[op]s}({[data]s})"];
+                                \\
+                            , .{
+                                .op = @tagName(rec.op),
+                                .out = @intFromPtr(t),
+                                .data = @tagName(t.dtype),
+                            }),
+                            .AsStrided => w.print(
+                                \\    {[op]s}_{[out]x}[label="{[op]s}{[data]any}"];
+                                \\
+                            , .{
+                                .op = @tagName(rec.op),
+                                .out = @intFromPtr(t),
+                                .data = .{
+                                    t.shape[0..t.ndims],
+                                    t.strides[0..t.ndims],
+                                    t.offset,
+                                },
+                            }),
+                        };
+                    },
+                    inline else => |rec| {
+                        try w.print(
+                            \\    {[op]s}_{[out]x}[label="{[op]s}"];
+                            \\
+                        , .{
+                            .op = @tagName(rec.op),
+                            .out = @intFromPtr(t),
+                        });
+                    },
+                }
+            }
+        };
+
+        try Viz.vizOp(self, writer);
+
         switch (self.record.*) {
             .TernaryOp => |rec| {
                 try writer.print(
-                    \\    {[op_tag]s}{[out_uid]d}[label="{[op_tag]s}"];
-                    \\    T{[a_uid]d}->{[op_tag]s}{[out_uid]d}[label="{[a_dtype]s}{[a_shape]any}"];
-                    \\    T{[b_uid]d}->{[op_tag]s}{[out_uid]d}[label="{[b_dtype]s}{[b_shape]any}"];
-                    \\    T{[c_uid]d}->{[op_tag]s}{[out_uid]d}[label="{[c_dtype]s}{[c_shape]any}"];
-                    \\    T{[out_uid]d}[label="T{[out_uid]d}"shape=box];
-                    \\    {[op_tag]s}{[out_uid]d}->T{[out_uid]d}[label="{[out_dtype]s}{[out_shape]any}"];
+                    \\    T_{[a]x}->{[op]s}_{[out]x}[label="{[a_dtype]s}{[a_shape]any}"];
+                    \\    T_{[b]x}->{[op]s}_{[out]x}[label="{[b_dtype]s}{[b_shape]any}"];
+                    \\    T_{[c]x}->{[op]s}_{[out]x}[label="{[c_dtype]s}{[c_shape]any}"];
+                    \\    T_{[out]x}[label="T_{[out]x}"shape=box];
+                    \\    {[op]s}_{[out]x}->T_{[out]x}[label="{[out_dtype]s}{[out_shape]any}"];
                     \\    
                 , .{
-                    .op_tag = @tagName(rec.op),
-                    .out_uid = self.ordinal(),
+                    .op = @tagName(rec.op),
+                    .out = @intFromPtr(self),
                     .out_dtype = @tagName(self.dtype),
                     .out_shape = self.shape[0..self.ndims],
-                    .a_uid = rec.a.tensor.ordinal(),
+                    .a = @intFromPtr(rec.a.tensor),
                     .a_dtype = @tagName(rec.a.tensor.dtype),
                     .a_shape = rec.a.tensor.shape[0..rec.a.tensor.ndims],
-                    .b_uid = rec.b.tensor.ordinal(),
+                    .b = @intFromPtr(rec.b.tensor),
                     .b_dtype = @tagName(rec.b.tensor.dtype),
                     .b_shape = rec.b.tensor.shape[0..rec.b.tensor.ndims],
-                    .c_uid = rec.c.tensor.ordinal(),
+                    .c = @intFromPtr(rec.c.tensor),
                     .c_dtype = @tagName(rec.c.tensor.dtype),
                     .c_shape = rec.c.tensor.shape[0..rec.c.tensor.ndims],
                 });
             },
             .BinaryOp => |rec| {
                 try writer.print(
-                    \\    {[op_tag]s}{[out_uid]d}[label="{[op_tag]s}"];
-                    \\    T{[a_uid]d}->{[op_tag]s}{[out_uid]d}[label="{[a_dtype]s}{[a_shape]any}"];
-                    \\    T{[b_uid]d}->{[op_tag]s}{[out_uid]d}[label="{[b_dtype]s}{[b_shape]any}"];
-                    \\    T{[out_uid]d}[label="T{[out_uid]d}"shape=box];
-                    \\    {[op_tag]s}{[out_uid]d}->T{[out_uid]d}[label="{[out_dtype]s}{[out_shape]any}"];
+                    \\    T_{[a]x}->{[op]s}_{[out]x}[label="{[a_dtype]s}{[a_shape]any}"];
+                    \\    T_{[b]x}->{[op]s}_{[out]x}[label="{[b_dtype]s}{[b_shape]any}"];
+                    \\    T_{[out]x}[label="T_{[out]x}"shape=box];
+                    \\    {[op]s}_{[out]x}->T_{[out]x}[label="{[out_dtype]s}{[out_shape]any}"];
                     \\
                 , .{
-                    .op_tag = @tagName(rec.op),
-                    .out_uid = self.ordinal(),
+                    .op = @tagName(rec.op),
+                    .out = @intFromPtr(self),
                     .out_dtype = @tagName(self.dtype),
                     .out_shape = self.shape[0..self.ndims],
-                    .a_uid = rec.a.tensor.ordinal(),
+                    .a = @intFromPtr(rec.a.tensor),
                     .a_dtype = @tagName(rec.a.tensor.dtype),
                     .a_shape = rec.a.tensor.shape[0..rec.a.tensor.ndims],
-                    .b_uid = rec.b.tensor.ordinal(),
+                    .b = @intFromPtr(rec.b.tensor),
                     .b_dtype = @tagName(rec.b.tensor.dtype),
                     .b_shape = rec.b.tensor.shape[0..rec.b.tensor.ndims],
                 });
             },
             .InitOp => |rec| {
                 try writer.print(
-                    \\    {[op_tag]s}{[out_uid]d}[label="{[op_tag]s}"];
-                    \\    T{[out_uid]d}[label="T{[out_uid]d}"shape=box];
-                    \\    {[op_tag]s}{[out_uid]d}->T{[out_uid]d}[label="{[out_dtype]s}{[out_shape]any}"];
+                    \\    T_{[out]x}[label="T_{[out]x}"shape=box];
+                    \\    {[op]s}_{[out]x}->T_{[out]x}[label="{[out_dtype]s}{[out_shape]any}"];
                     \\
                 , .{
-                    .op_tag = @tagName(rec.op),
-                    .out_uid = self.ordinal(),
+                    .op = @tagName(rec.op),
+                    .out = @intFromPtr(self),
                     .out_dtype = @tagName(self.dtype),
                     .out_shape = self.shape[0..self.ndims],
-                });
-            },
-            .DataOp => |rec| {
-                try writer.print(
-                    \\    {[op_tag]s}{[out_uid]d}[label="{[op_tag]s}{[out_extra]any}"];
-                    \\    T{[a_uid]d}->{[op_tag]s}{[out_uid]d}[label="{[a_dtype]s}{[a_shape]any}"];
-                    \\    T{[out_uid]d}[label="T{[out_uid]d}"shape=box];
-                    \\    {[op_tag]s}{[out_uid]d}->T{[out_uid]d}[label="{[out_dtype]s}{[out_shape]any}"];
-                    \\
-                , .{
-                    .op_tag = @tagName(rec.op),
-                    .out_uid = self.ordinal(),
-                    .out_dtype = @tagName(self.dtype),
-                    .out_shape = self.shape[0..self.ndims],
-                    .out_extra = .{
-                        self.shape[0..self.ndims],
-                        self.strides[0..self.ndims],
-                        self.offset,
-                    },
-                    .a_uid = rec.a.tensor.ordinal(),
-                    .a_dtype = @tagName(rec.a.tensor.dtype),
-                    .a_shape = rec.a.tensor.shape[0..rec.a.tensor.ndims],
                 });
             },
             inline else => |rec| {
                 try writer.print(
-                    \\    {[op_tag]s}{[out_uid]d}[label="{[op_tag]s}"];
-                    \\    T{[a_uid]d}->{[op_tag]s}{[out_uid]d}[label="{[a_dtype]s}{[a_shape]any}"];
-                    \\    T{[out_uid]d}[label="T{[out_uid]d}"shape=box];
-                    \\    {[op_tag]s}{[out_uid]d}->T{[out_uid]d}[label="{[out_dtype]s}{[out_shape]any}"];
+                    \\    T_{[a]x}->{[op]s}_{[out]x}[label="{[a_dtype]s}{[a_shape]any}"];
+                    \\    T_{[out]x}[label="T_{[out]x}"shape=box];
+                    \\    {[op]s}_{[out]x}->T_{[out]x}[label="{[out_dtype]s}{[out_shape]any}"];
                     \\
                 , .{
-                    .op_tag = @tagName(rec.op),
-                    .out_uid = self.ordinal(),
+                    .op = @tagName(rec.op),
+                    .out = @intFromPtr(self),
                     .out_dtype = @tagName(self.dtype),
                     .out_shape = self.shape[0..self.ndims],
-                    .a_uid = rec.a.tensor.ordinal(),
+                    .a = @intFromPtr(rec.a.tensor),
                     .a_dtype = @tagName(rec.a.tensor.dtype),
                     .a_shape = rec.a.tensor.shape[0..rec.a.tensor.ndims],
                 });
             },
-        }
-    }
-
-    pub fn trace(self: *const anytensor) void {
-        switch (self.record.*) {
-            .TernaryOp => |ternary_op| {
-                ternary_op.a.tensor.trace();
-                ternary_op.b.tensor.trace();
-                ternary_op.c.tensor.trace();
-            },
-            .BinaryOp => |binary_op| {
-                binary_op.a.tensor.trace();
-                binary_op.b.tensor.trace();
-            },
-            .InitOp => {},
-            inline else => |unary_op| {
-                unary_op.a.tensor.trace();
-            },
-        }
-        const key = @intFromPtr(self);
-        if (!Graph.tensors.contains(key)) {
-            Graph.ordinals.putNoClobber(key, Graph.ordinals.count()) catch unreachable;
-            Graph.tensors.putNoClobber(key, self.*) catch unreachable;
         }
     }
 
@@ -165,9 +159,5 @@ pub const anytensor = extern struct {
             .strides = self.strides[0..self.ndims],
             .offset = self.offset,
         };
-    }
-
-    pub fn ordinal(self: *const anytensor) u64 {
-        return Graph.ordinals.get(@intFromPtr(self)).?;
     }
 };

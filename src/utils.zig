@@ -2,6 +2,7 @@ const std = @import("std");
 const comptimePrint = std.fmt.comptimePrint;
 const ops = @import("ops.zig");
 const dtypes = @import("dtypes.zig");
+const anytensor = @import("anytensor.zig").anytensor;
 
 pub fn arrayPermute(comptime T: type, comptime len: u8, array: [len]u64, perm: [len]u8) [len]T {
     var used: [len]bool = [_]bool{false} ** len;
@@ -84,3 +85,66 @@ pub fn contiguousStrides(comptime ndims: u8, shape: [ndims]u64) [ndims]u64 {
     }
     return strides;
 }
+
+pub fn viz(entrypoints: []const *const anytensor, writer: anytype, allocator: std.mem.Allocator) !void {
+    // TODO: Support for multiple entrypoints in the case of a DAG with multiple sinks
+
+    var written = std.AutoArrayHashMap(*const anytensor, void).init(allocator);
+    defer written.deinit();
+    try writer.print(
+        \\digraph G {{
+        \\    compound=true;
+        \\
+    , .{});
+    var queue = std.ArrayList(*const anytensor).init(allocator);
+    defer queue.deinit();
+
+    for (entrypoints) |entry| {
+        try queue.append(@ptrCast(entry));
+    }
+
+    while (queue.popOrNull()) |tensor| {
+        if (written.contains(tensor)) {
+            continue;
+        }
+        try written.putNoClobber(tensor, {});
+        try tensor.viz(writer);
+
+        switch (tensor.record.*) {
+            .TernaryOp => |rec| {
+                try queue.append(rec.a.tensor);
+                try queue.append(rec.b.tensor);
+                try queue.append(rec.c.tensor);
+            },
+            .BinaryOp => |rec| {
+                try queue.append(rec.a.tensor);
+                try queue.append(rec.b.tensor);
+            },
+            .InitOp => {},
+            inline else => |rec| {
+                try queue.append(rec.a.tensor);
+            },
+        }
+    }
+
+    try writer.print(
+        \\}}
+        \\
+    , .{});
+}
+
+// pub fn jsonStringify(_: @This(), write_stream: anytype) !void {
+//     const tensors_json: []anytensor.JsonFormat = gpa.allocator().alloc(anytensor.JsonFormat, tensors.count()) catch unreachable;
+//     defer gpa.allocator().free(tensors_json);
+//     const records_json: []Record.JsonFormat = gpa.allocator().alloc(Record.JsonFormat, tensors.count()) catch unreachable;
+//     defer gpa.allocator().free(records_json);
+//     for (tensors.keys(), records_json, tensors_json) |key, *rec, *ct| {
+//         const tensor: *const anytensor = @ptrFromInt(key);
+//         ct.* = tensor.toJsonFormat();
+//         rec.* = Record.toJsonFormat(tensor.record, tensor);
+//     }
+//     try write_stream.write(.{
+//         .tensors = tensors_json,
+//         .operations = records_json,
+//     });
+// }

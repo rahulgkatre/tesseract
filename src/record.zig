@@ -4,7 +4,6 @@ const anytensor = @import("anytensor.zig").anytensor;
 pub const Record = union(ops.OpTypes) {
     const Input = struct {
         tensor: *const anytensor,
-        fused: bool = false,
 
         pub fn jsonStringify(input: @This(), write_stream: anytype) !void {
             try write_stream.write(@intFromPtr(input.tensor));
