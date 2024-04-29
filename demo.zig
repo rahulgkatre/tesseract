@@ -23,5 +23,7 @@ pub fn main() !void {
     // All tensor code should run in comptime
     const writer = std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write){ .context = std.io.getStdOut() };
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    try tesseract.utils.viz(&[_]*const tesseract.anytensor{@ptrCast(&out)}, writer, gpa.allocator());
+    defer _ = gpa.deinit();
+    // try tesseract.utils.dataflowViz(&[_]*const tesseract.anytensor{@ptrCast(&out)}, writer, gpa.allocator());
+    try tesseract.utils.dataflowJson(&[_]*const tesseract.anytensor{@ptrCast(&out)}, writer, gpa.allocator());
 }

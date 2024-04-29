@@ -10,43 +10,6 @@ pub const Record = union(ops.OpTypes) {
         }
     };
 
-    pub const JsonFormat = union(ops.OpTypes) {
-        UnaryOp: struct {
-            op: ops.UnaryOp,
-            a: Input,
-            out: usize,
-        },
-        BinaryOp: struct {
-            op: ops.BinaryOp,
-            a: Input,
-            b: Input,
-            out: usize,
-        },
-        ReduceOp: struct {
-            op: ops.ReduceOp,
-            a: Input,
-            dims: []const bool,
-            out: usize,
-        },
-        DataOp: struct {
-            op: ops.DataOp,
-            a: Input,
-            out: usize,
-        },
-        InitOp: struct {
-            op: ops.InitOp,
-            args: ops.InitOp.Args,
-            out: usize,
-        },
-        TernaryOp: struct {
-            op: ops.TernaryOp,
-            a: Input,
-            b: Input,
-            c: Input,
-            out: usize,
-        },
-    };
-
     UnaryOp: struct {
         op: ops.UnaryOp,
         a: Input,
@@ -157,4 +120,41 @@ pub const Record = union(ops.OpTypes) {
             } },
         };
     }
+
+    pub const JsonFormat = union(ops.OpTypes) {
+        UnaryOp: struct {
+            op: ops.UnaryOp,
+            a: Input,
+            out: usize,
+        },
+        BinaryOp: struct {
+            op: ops.BinaryOp,
+            a: Input,
+            b: Input,
+            out: usize,
+        },
+        ReduceOp: struct {
+            op: ops.ReduceOp,
+            a: Input,
+            dims: []const bool,
+            out: usize,
+        },
+        DataOp: struct {
+            op: ops.DataOp,
+            a: Input,
+            out: usize,
+        },
+        InitOp: struct {
+            op: ops.InitOp,
+            args: ops.InitOp.Args,
+            out: usize,
+        },
+        TernaryOp: struct {
+            op: ops.TernaryOp,
+            a: Input,
+            b: Input,
+            c: Input,
+            out: usize,
+        },
+    };
 };

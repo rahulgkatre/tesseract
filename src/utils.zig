@@ -86,9 +86,8 @@ pub fn contiguousStrides(comptime ndims: u8, shape: [ndims]u64) [ndims]u64 {
     return strides;
 }
 
-pub fn viz(entrypoints: []const *const anytensor, writer: anytype, allocator: std.mem.Allocator) !void {
-    // TODO: Support for multiple entrypoints in the case of a DAG with multiple sinks
-
+/// Utility function for visualizing the full graph that is created at compile time, no scheduling is done yet
+pub fn dataflowViz(entrypoints: []const *const anytensor, writer: anytype, allocator: std.mem.Allocator) !void {
     var written = std.AutoArrayHashMap(*const anytensor, void).init(allocator);
     defer written.deinit();
     try writer.print(
@@ -108,7 +107,117 @@ pub fn viz(entrypoints: []const *const anytensor, writer: anytype, allocator: st
             continue;
         }
         try written.putNoClobber(tensor, {});
-        try tensor.viz(writer);
+
+        switch (tensor.record.*) {
+            .DataOp => |rec| {
+                try switch (rec.op) {
+                    .AsType => writer.print(
+                        \\    {[op]s}_{[out]x}[label="{[op]s}({[data]s})"];
+                        \\
+                    , .{
+                        .op = @tagName(rec.op),
+                        .out = @intFromPtr(tensor),
+                        .data = @tagName(tensor.dtype),
+                    }),
+                    .AsStrided => writer.print(
+                        \\    {[op]s}_{[out]x}[label="{[op]s}{[data]any}"];
+                        \\
+                    , .{
+                        .op = @tagName(rec.op),
+                        .out = @intFromPtr(tensor),
+                        .data = .{
+                            tensor.shape[0..tensor.ndims],
+                            tensor.strides[0..tensor.ndims],
+                            tensor.offset,
+                        },
+                    }),
+                };
+            },
+            inline else => |rec| {
+                try writer.print(
+                    \\    {[op]s}_{[out]x}[label="{[op]s}"];
+                    \\
+                , .{
+                    .op = @tagName(rec.op),
+                    .out = @intFromPtr(tensor),
+                });
+            },
+        }
+
+        switch (tensor.record.*) {
+            .TernaryOp => |rec| {
+                try writer.print(
+                    \\    T_{[a]x}->{[op]s}_{[out]x}[label="{[a_dtype]s}{[a_shape]any}"];
+                    \\    T_{[b]x}->{[op]s}_{[out]x}[label="{[b_dtype]s}{[b_shape]any}"];
+                    \\    T_{[c]x}->{[op]s}_{[out]x}[label="{[c_dtype]s}{[c_shape]any}"];
+                    \\    T_{[out]x}[label="T_{[out]x}"shape=box];
+                    \\    {[op]s}_{[out]x}->T_{[out]x}[label="{[out_dtype]s}{[out_shape]any}"];
+                    \\    
+                , .{
+                    .op = @tagName(rec.op),
+                    .out = @intFromPtr(tensor),
+                    .out_dtype = @tagName(tensor.dtype),
+                    .out_shape = tensor.shape[0..tensor.ndims],
+                    .a = @intFromPtr(rec.a.tensor),
+                    .a_dtype = @tagName(rec.a.tensor.dtype),
+                    .a_shape = rec.a.tensor.shape[0..rec.a.tensor.ndims],
+                    .b = @intFromPtr(rec.b.tensor),
+                    .b_dtype = @tagName(rec.b.tensor.dtype),
+                    .b_shape = rec.b.tensor.shape[0..rec.b.tensor.ndims],
+                    .c = @intFromPtr(rec.c.tensor),
+                    .c_dtype = @tagName(rec.c.tensor.dtype),
+                    .c_shape = rec.c.tensor.shape[0..rec.c.tensor.ndims],
+                });
+            },
+            .BinaryOp => |rec| {
+                try writer.print(
+                    \\    T_{[a]x}->{[op]s}_{[out]x}[label="{[a_dtype]s}{[a_shape]any}"];
+                    \\    T_{[b]x}->{[op]s}_{[out]x}[label="{[b_dtype]s}{[b_shape]any}"];
+                    \\    T_{[out]x}[label="T_{[out]x}"shape=box];
+                    \\    {[op]s}_{[out]x}->T_{[out]x}[label="{[out_dtype]s}{[out_shape]any}"];
+                    \\
+                , .{
+                    .op = @tagName(rec.op),
+                    .out = @intFromPtr(tensor),
+                    .out_dtype = @tagName(tensor.dtype),
+                    .out_shape = tensor.shape[0..tensor.ndims],
+                    .a = @intFromPtr(rec.a.tensor),
+                    .a_dtype = @tagName(rec.a.tensor.dtype),
+                    .a_shape = rec.a.tensor.shape[0..rec.a.tensor.ndims],
+                    .b = @intFromPtr(rec.b.tensor),
+                    .b_dtype = @tagName(rec.b.tensor.dtype),
+                    .b_shape = rec.b.tensor.shape[0..rec.b.tensor.ndims],
+                });
+            },
+            .InitOp => |rec| {
+                try writer.print(
+                    \\    T_{[out]x}[label="T_{[out]x}"shape=box];
+                    \\    {[op]s}_{[out]x}->T_{[out]x}[label="{[out_dtype]s}{[out_shape]any}"];
+                    \\
+                , .{
+                    .op = @tagName(rec.op),
+                    .out = @intFromPtr(tensor),
+                    .out_dtype = @tagName(tensor.dtype),
+                    .out_shape = tensor.shape[0..tensor.ndims],
+                });
+            },
+            inline else => |rec| {
+                try writer.print(
+                    \\    T_{[a]x}->{[op]s}_{[out]x}[label="{[a_dtype]s}{[a_shape]any}"];
+                    \\    T_{[out]x}[label="T_{[out]x}"shape=box];
+                    \\    {[op]s}_{[out]x}->T_{[out]x}[label="{[out_dtype]s}{[out_shape]any}"];
+                    \\
+                , .{
+                    .op = @tagName(rec.op),
+                    .out = @intFromPtr(tensor),
+                    .out_dtype = @tagName(tensor.dtype),
+                    .out_shape = tensor.shape[0..tensor.ndims],
+                    .a = @intFromPtr(rec.a.tensor),
+                    .a_dtype = @tagName(rec.a.tensor.dtype),
+                    .a_shape = rec.a.tensor.shape[0..rec.a.tensor.ndims],
+                });
+            },
+        }
 
         switch (tensor.record.*) {
             .TernaryOp => |rec| {
@@ -148,3 +257,47 @@ pub fn viz(entrypoints: []const *const anytensor, writer: anytype, allocator: st
 //         .operations = records_json,
 //     });
 // }
+
+pub fn dataflowJson(entrypoints: []const *const anytensor, writer: anytype, allocator: std.mem.Allocator) !void {
+    var tensors_json = std.AutoArrayHashMap(*const anytensor, anytensor.JsonFormat).init(allocator);
+    defer tensors_json.deinit();
+
+    var records_json = std.ArrayList(@import("record.zig").Record.JsonFormat).init(allocator);
+    defer records_json.deinit();
+
+    var queue = std.ArrayList(*const anytensor).init(allocator);
+    defer queue.deinit();
+
+    for (entrypoints) |entry| {
+        try queue.append(@ptrCast(entry));
+    }
+
+    while (queue.popOrNull()) |tensor| {
+        if (tensors_json.contains(tensor)) {
+            continue;
+        }
+        try tensors_json.put(tensor, tensor.toJsonFormat());
+        try records_json.append(tensor.record.toJsonFormat(tensor));
+        switch (tensor.record.*) {
+            .TernaryOp => |rec| {
+                try queue.append(rec.a.tensor);
+                try queue.append(rec.b.tensor);
+                try queue.append(rec.c.tensor);
+            },
+            .BinaryOp => |rec| {
+                try queue.append(rec.a.tensor);
+                try queue.append(rec.b.tensor);
+            },
+            .InitOp => {},
+            inline else => |rec| {
+                try queue.append(rec.a.tensor);
+            },
+        }
+    }
+
+    try std.json.stringify(.{
+        .tensors = tensors_json.values(),
+        .operations = records_json.items,
+    }, .{}, writer);
+    try writer.print("\n", .{});
+}
