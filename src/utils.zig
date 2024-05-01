@@ -86,6 +86,14 @@ pub fn contiguousStrides(comptime ndims: u8, shape: [ndims]u64) [ndims]u64 {
     return strides;
 }
 
+pub fn numEntries(comptime ndims: u8, shape: [ndims]u64) u128 {
+    var prod: u128 = 1;
+    for (shape) |s| {
+        prod *= s;
+    }
+    return prod;
+}
+
 /// Utility function for visualizing the full graph that is created at compile time, no scheduling is done yet
 pub fn dataflowViz(entrypoints: []const *const anytensor, writer: anytype, allocator: std.mem.Allocator) !void {
     var written = std.AutoArrayHashMap(*const anytensor, void).init(allocator);
@@ -109,18 +117,18 @@ pub fn dataflowViz(entrypoints: []const *const anytensor, writer: anytype, alloc
         try written.putNoClobber(tensor, {});
 
         switch (tensor.record.*) {
-            .DataOp => |rec| {
+            .ArrayOp => |rec| {
                 try switch (rec.op) {
-                    .AsType => writer.print(
-                        \\    {[op]s}_{[out]x}[label="{[op]s}({[data]s})"];
+                    .Cast => writer.print(
+                        \\    {[op]s}_{[out]x}[label="{[op]s}\n({[data]s})"];
                         \\
                     , .{
                         .op = @tagName(rec.op),
                         .out = @intFromPtr(tensor),
                         .data = @tagName(tensor.dtype),
                     }),
-                    .AsStrided => writer.print(
-                        \\    {[op]s}_{[out]x}[label="{[op]s}{[data]any}"];
+                    .View => writer.print(
+                        \\    {[op]s}_{[out]x}[label="{[op]s}\n{[data]any}"];
                         \\
                     , .{
                         .op = @tagName(rec.op),
@@ -131,11 +139,19 @@ pub fn dataflowViz(entrypoints: []const *const anytensor, writer: anytype, alloc
                             tensor.offset,
                         },
                     }),
+                    else => writer.print(
+                        \\    {[op]s}_{[out]x}[label="{[op]s}\n{[data]any}"];
+                        \\
+                    , .{
+                        .op = @tagName(rec.op),
+                        .out = @intFromPtr(tensor),
+                        .data = tensor.shape[0..tensor.ndims],
+                    }),
                 };
             },
             inline else => |rec| {
                 try writer.print(
-                    \\    {[op]s}_{[out]x}[label="{[op]s}"];
+                    \\    {[op]s}_{[out]x}[label="{[op]s}\n"];
                     \\
                 , .{
                     .op = @tagName(rec.op),
@@ -158,15 +174,15 @@ pub fn dataflowViz(entrypoints: []const *const anytensor, writer: anytype, alloc
                     .out = @intFromPtr(tensor),
                     .out_dtype = @tagName(tensor.dtype),
                     .out_shape = tensor.shape[0..tensor.ndims],
-                    .a = @intFromPtr(rec.a.tensor),
-                    .a_dtype = @tagName(rec.a.tensor.dtype),
-                    .a_shape = rec.a.tensor.shape[0..rec.a.tensor.ndims],
-                    .b = @intFromPtr(rec.b.tensor),
-                    .b_dtype = @tagName(rec.b.tensor.dtype),
-                    .b_shape = rec.b.tensor.shape[0..rec.b.tensor.ndims],
-                    .c = @intFromPtr(rec.c.tensor),
-                    .c_dtype = @tagName(rec.c.tensor.dtype),
-                    .c_shape = rec.c.tensor.shape[0..rec.c.tensor.ndims],
+                    .a = @intFromPtr(rec.a),
+                    .a_dtype = @tagName(rec.a.dtype),
+                    .a_shape = rec.a.shape[0..rec.a.ndims],
+                    .b = @intFromPtr(rec.b),
+                    .b_dtype = @tagName(rec.b.dtype),
+                    .b_shape = rec.b.shape[0..rec.b.ndims],
+                    .c = @intFromPtr(rec.c),
+                    .c_dtype = @tagName(rec.c.dtype),
+                    .c_shape = rec.c.shape[0..rec.c.ndims],
                 });
             },
             .BinaryOp => |rec| {
@@ -181,12 +197,12 @@ pub fn dataflowViz(entrypoints: []const *const anytensor, writer: anytype, alloc
                     .out = @intFromPtr(tensor),
                     .out_dtype = @tagName(tensor.dtype),
                     .out_shape = tensor.shape[0..tensor.ndims],
-                    .a = @intFromPtr(rec.a.tensor),
-                    .a_dtype = @tagName(rec.a.tensor.dtype),
-                    .a_shape = rec.a.tensor.shape[0..rec.a.tensor.ndims],
-                    .b = @intFromPtr(rec.b.tensor),
-                    .b_dtype = @tagName(rec.b.tensor.dtype),
-                    .b_shape = rec.b.tensor.shape[0..rec.b.tensor.ndims],
+                    .a = @intFromPtr(rec.a),
+                    .a_dtype = @tagName(rec.a.dtype),
+                    .a_shape = rec.a.shape[0..rec.a.ndims],
+                    .b = @intFromPtr(rec.b),
+                    .b_dtype = @tagName(rec.b.dtype),
+                    .b_shape = rec.b.shape[0..rec.b.ndims],
                 });
             },
             .InitOp => |rec| {
@@ -212,26 +228,26 @@ pub fn dataflowViz(entrypoints: []const *const anytensor, writer: anytype, alloc
                     .out = @intFromPtr(tensor),
                     .out_dtype = @tagName(tensor.dtype),
                     .out_shape = tensor.shape[0..tensor.ndims],
-                    .a = @intFromPtr(rec.a.tensor),
-                    .a_dtype = @tagName(rec.a.tensor.dtype),
-                    .a_shape = rec.a.tensor.shape[0..rec.a.tensor.ndims],
+                    .a = @intFromPtr(rec.a),
+                    .a_dtype = @tagName(rec.a.dtype),
+                    .a_shape = rec.a.shape[0..rec.a.ndims],
                 });
             },
         }
 
         switch (tensor.record.*) {
             .TernaryOp => |rec| {
-                try queue.append(rec.a.tensor);
-                try queue.append(rec.b.tensor);
-                try queue.append(rec.c.tensor);
+                try queue.append(rec.a);
+                try queue.append(rec.b);
+                try queue.append(rec.c);
             },
             .BinaryOp => |rec| {
-                try queue.append(rec.a.tensor);
-                try queue.append(rec.b.tensor);
+                try queue.append(rec.a);
+                try queue.append(rec.b);
             },
             .InitOp => {},
             inline else => |rec| {
-                try queue.append(rec.a.tensor);
+                try queue.append(rec.a);
             },
         }
     }
@@ -241,22 +257,6 @@ pub fn dataflowViz(entrypoints: []const *const anytensor, writer: anytype, alloc
         \\
     , .{});
 }
-
-// pub fn jsonStringify(_: @This(), write_stream: anytype) !void {
-//     const tensors_json: []anytensor.JsonFormat = gpa.allocator().alloc(anytensor.JsonFormat, tensors.count()) catch unreachable;
-//     defer gpa.allocator().free(tensors_json);
-//     const records_json: []Record.JsonFormat = gpa.allocator().alloc(Record.JsonFormat, tensors.count()) catch unreachable;
-//     defer gpa.allocator().free(records_json);
-//     for (tensors.keys(), records_json, tensors_json) |key, *rec, *ct| {
-//         const tensor: *const anytensor = @ptrFromInt(key);
-//         ct.* = tensor.toJsonFormat();
-//         rec.* = Record.toJsonFormat(tensor.record, tensor);
-//     }
-//     try write_stream.write(.{
-//         .tensors = tensors_json,
-//         .operations = records_json,
-//     });
-// }
 
 pub fn dataflowJson(entrypoints: []const *const anytensor, writer: anytype, allocator: std.mem.Allocator) !void {
     var tensors_json = std.AutoArrayHashMap(*const anytensor, anytensor.JsonFormat).init(allocator);
@@ -280,17 +280,17 @@ pub fn dataflowJson(entrypoints: []const *const anytensor, writer: anytype, allo
         try records_json.append(tensor.record.toJsonFormat(tensor));
         switch (tensor.record.*) {
             .TernaryOp => |rec| {
-                try queue.append(rec.a.tensor);
-                try queue.append(rec.b.tensor);
-                try queue.append(rec.c.tensor);
+                try queue.append(rec.a);
+                try queue.append(rec.b);
+                try queue.append(rec.c);
             },
             .BinaryOp => |rec| {
-                try queue.append(rec.a.tensor);
-                try queue.append(rec.b.tensor);
+                try queue.append(rec.a);
+                try queue.append(rec.b);
             },
             .InitOp => {},
             inline else => |rec| {
-                try queue.append(rec.a.tensor);
+                try queue.append(rec.a);
             },
         }
     }

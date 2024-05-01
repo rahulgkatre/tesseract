@@ -1,14 +1,28 @@
 const ops = @This();
 const dtypes = @import("dtypes.zig");
-// Map, Zip and Reduce ops are arithmetic operations for unary functions, binary functions,
+// Arithmetic operations for unary functions, binary functions,
 // and reducing a dimension of a tensor to a single value by applying some binary function
-pub const UnaryOp = enum { Copy, Neg, Log, Exp, Sqrt, Recip, Sin };
-// LessThan, Equals, Xor will produce a bool tensor which can be used in mask based operations later on
-pub const BinaryOp = enum { Add, Mul, Maximum, Mod, LessThan, Equals, Xor };
-pub const ReduceOp = enum { Sum, Max };
-pub const DataOp = enum { AsStrided, AsType };
+pub const UnaryOp = enum { Id, Neg, Log2, Exp2, Sqrt, Rcp, Sin };
+// Lt, Eq, Xor will produce a bool tensor which can be used in mask based operations later on
+pub const BinaryOp = enum { Add, Mul, Max, Mod, Lt, Eq, Xor };
+// Ternary ops take in 3 arguments which can have different purposes
+pub const TernaryOp = enum { Where };
+// ReduceOps are just recurrently applied binary ops
+pub const ReduceOp = enum {
+    Add,
+    Mul,
+    Max,
+    Xor,
+
+    pub fn binaryOp(comptime reduceOp: ReduceOp) BinaryOp {
+        return @field(BinaryOp, @tagName(reduceOp));
+    }
+};
+// Array ops do not have runtime dependencies as they are consumed by the code generator
+pub const ArrayOp = enum { View, Cast, Pad, Expand, Shrink, Contiguous };
 pub const InitOp = enum {
     pub const Args = union(InitOp) {
+        Empty: void,
         Input: void,
         Parameter: void,
         Full: []const u8,
@@ -18,12 +32,12 @@ pub const InitOp = enum {
             stop: []const u8,
         },
     };
+    Empty,
     Input,
     Parameter,
     Full,
     Rand,
     Range,
 };
-// Where is an if statement that takes in a mask boolean (the operand tensor), a true branch value, and a false branch value
-pub const TernaryOp = enum { Where };
-pub const OpTypes = enum { UnaryOp, BinaryOp, ReduceOp, DataOp, InitOp, TernaryOp };
+// Terna
+pub const OpTypes = enum { UnaryOp, BinaryOp, ReduceOp, ArrayOp, InitOp, TernaryOp };

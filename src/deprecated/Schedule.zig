@@ -263,7 +263,7 @@ pub const Statement = struct {
                         .ReduceOp => {
                             return .{ .local = target.tensor };
                         },
-                        .DataOp => |op_node| {
+                        .ArrayOp => |op_node| {
                             if (op_node.op == .AsType) {
                                 return .{ .expression = &(try Statement.getOrInit(target)).expression };
                             } else {
@@ -303,8 +303,8 @@ pub const Statement = struct {
             op: ops.ReduceOp,
             x: Operand,
         },
-        DataOp: struct {
-            op: ops.DataOp,
+        ArrayOp: struct {
+            op: ops.ArrayOp,
             x: Operand,
         },
         InitOp: struct {
@@ -351,13 +351,13 @@ pub const Statement = struct {
                         .BinaryOp = .{
                             .op = switch (op_node.op) {
                                 .Sum => .Add,
-                                .Max => .Maximum,
+                                .Max => .Max,
                             },
                             .a = try Expression.Operand.init(op_node.x, target.tensor.group),
                             .b = .{ .local = target.tensor },
                         },
                     },
-                    .DataOp => |op_node| if (op_node.op == .AsType) .{ .DataOp = .{
+                    .ArrayOp => |op_node| if (op_node.op == .AsType) .{ .ArrayOp = .{
                         .op = op_node.op,
                         .x = try Expression.Operand.init(op_node.x, target.tensor.group),
                     } } else {

@@ -2,6 +2,20 @@ const dtypes = @import("dtypes.zig");
 const record = @import("record.zig");
 const tensor = @import("tensor.zig");
 
+// anytensor and tensor need to have the exact same runtime layout for @ptrCast tricks to work
+comptime {
+    const std = @import("std");
+    const t_info = @typeInfo(tensor.tensor(.bool, .{1})).Struct;
+    const a_info = @typeInfo(anytensor).Struct;
+    std.debug.assert(t_info.layout == .@"extern");
+    std.debug.assert(t_info.layout == a_info.layout);
+    for (t_info.fields, a_info.fields) |t_field, a_field| {
+        std.debug.assert(t_field.alignment == a_field.alignment);
+        std.debug.assert(t_field.is_comptime == a_field.is_comptime);
+        std.debug.assert(t_field.type == a_field.type);
+    }
+}
+
 /// Strips away generic information to make it easier to work with pointers to tensors
 /// with different shapes, dtypes, etc.
 /// By making anytensor and generic tensor extern structs, they are guaranteed to have
@@ -14,12 +28,13 @@ pub const anytensor = extern struct {
     offset: u64,
     record: *const record.Record,
 
-    pub fn TensorType(comptime self: anytensor) type {
+    pub fn Narrow(comptime self: anytensor) type {
         return tensor.Tensor(self.dtype, self.ndims, self.shape[0..self.ndims][0..].*);
     }
 
-    pub fn infer(comptime self: anytensor) TensorType(self) {
-        return @as(*const TensorType(self), @ptrCast(&self)).*;
+    /// Performs type narrowing to get back the shapetyped Tensor
+    pub fn narrow(comptime self: *const anytensor) *const Narrow(self.*) {
+        return @ptrCast(self);
     }
 
     pub const JsonFormat = struct {

@@ -2,50 +2,66 @@ const ops = @import("ops.zig");
 const anytensor = @import("anytensor.zig").anytensor;
 
 pub const Record = union(ops.OpTypes) {
-    const Input = struct {
-        tensor: *const anytensor,
-
-        pub fn jsonStringify(input: @This(), write_stream: anytype) !void {
-            try write_stream.write(@intFromPtr(input.tensor));
-        }
-    };
-
     UnaryOp: struct {
         op: ops.UnaryOp,
-        a: Input,
+        a: *const anytensor,
+
+        pub fn jsonStringify(self: @This(), write_stream: anytype) !void {
+            try write_stream.write(.{ .op = self.op, .a = @intFromPtr(self.a) });
+        }
     },
     BinaryOp: struct {
         op: ops.BinaryOp,
-        a: Input,
-        b: Input,
+        a: *const anytensor,
+        b: *const anytensor,
+
+        pub fn jsonStringify(self: @This(), write_stream: anytype) !void {
+            try write_stream.write(.{ .op = self.op, .a = @intFromPtr(self.a), .b = @intFromPtr(self.b) });
+        }
     },
     ReduceOp: struct {
         op: ops.ReduceOp,
-        a: Input,
+        a: *const anytensor,
         dims: []const bool,
+
+        pub fn jsonStringify(self: @This(), write_stream: anytype) !void {
+            try write_stream.write(.{ .op = self.op, .a = @intFromPtr(self.a), .dims = self.dims });
+        }
     },
-    DataOp: struct {
-        op: ops.DataOp,
-        a: Input,
+    ArrayOp: struct {
+        op: ops.ArrayOp,
+        a: *const anytensor,
+
+        pub fn jsonStringify(self: @This(), write_stream: anytype) !void {
+            try write_stream.write(.{ .op = self.op, .a = @intFromPtr(self.a) });
+        }
     },
     InitOp: struct {
         op: ops.InitOp,
         args: ops.InitOp.Args,
+
+        pub fn jsonStringify(self: @This(), write_stream: anytype) !void {
+            try write_stream.write(.{ .op = self.op, .args = @intFromPtr(self.args) });
+        }
     },
     TernaryOp: struct {
         op: ops.TernaryOp,
-        a: Input,
-        b: Input,
-        c: Input,
+        a: *const anytensor,
+        b: *const anytensor,
+        c: *const anytensor,
+
+        pub fn jsonStringify(self: @This(), write_stream: anytype) !void {
+            try write_stream.write(.{ .op = self.op, .a = @intFromPtr(self.a), .b = @intFromPtr(self.b), .c = @intFromPtr(self.c) });
+        }
     },
 
     pub fn init(
         comptime tag: ops.OpTypes,
-        op: @field(ops, @tagName(tag)),
+        comptime op: @field(ops, @tagName(tag)),
         inputs: switch (tag) {
             .TernaryOp => [3]*const anytensor,
             .BinaryOp => [2]*const anytensor,
-            .UnaryOp, .DataOp, .ReduceOp => [1]*const anytensor,
+            .UnaryOp, .ArrayOp, .ReduceOp => [1]*const anytensor,
             .InitOp => void,
         },
         args: switch (tag) {
@@ -57,23 +73,23 @@ pub const Record = union(ops.OpTypes) {
         return @unionInit(Record, @tagName(tag), switch (tag) {
             .TernaryOp => .{
                 .op = op,
-                .a = .{ .tensor = inputs[0] },
-                .b = .{ .tensor = inputs[1] },
-                .c = .{ .tensor = inputs[2] },
+                .a = inputs[0],
+                .b = inputs[1],
+                .c = inputs[2],
             },
             .BinaryOp => .{
                 .op = op,
-                .a = .{ .tensor = inputs[0] },
-                .b = .{ .tensor = inputs[1] },
+                .a = inputs[0],
+                .b = inputs[1],
             },
             .ReduceOp => .{
                 .op = op,
-                .a = .{ .tensor = inputs[0] },
+                .a = inputs[0],
                 .dims = args,
             },
-            .UnaryOp, .DataOp => .{
+            .UnaryOp, .ArrayOp => .{
                 .op = op,
-                .a = .{ .tensor = inputs[0] },
+                .a = inputs[0],
             },
             .InitOp => .{
                 .op = op,
@@ -101,7 +117,7 @@ pub const Record = union(ops.OpTypes) {
                 .dims = record.dims,
                 .out = @intFromPtr(out),
             } },
-            .DataOp => |record| .{ .DataOp = .{
+            .ArrayOp => |record| .{ .ArrayOp = .{
                 .op = record.op,
                 .a = record.a,
                 .out = @intFromPtr(out),
@@ -124,24 +140,24 @@ pub const Record = union(ops.OpTypes) {
     pub const JsonFormat = union(ops.OpTypes) {
         UnaryOp: struct {
             op: ops.UnaryOp,
-            a: Input,
+            a: *const anytensor,
             out: usize,
         },
         BinaryOp: struct {
             op: ops.BinaryOp,
-            a: Input,
-            b: Input,
+            a: *const anytensor,
+            b: *const anytensor,
             out: usize,
         },
         ReduceOp: struct {
             op: ops.ReduceOp,
-            a: Input,
+            a: *const anytensor,
             dims: []const bool,
             out: usize,
         },
-        DataOp: struct {
-            op: ops.DataOp,
-            a: Input,
+        ArrayOp: struct {
+            op: ops.ArrayOp,
+            a: *const anytensor,
             out: usize,
         },
         InitOp: struct {
@@ -151,9 +167,9 @@ pub const Record = union(ops.OpTypes) {
         },
         TernaryOp: struct {
             op: ops.TernaryOp,
-            a: Input,
-            b: Input,
-            c: Input,
+            a: *const anytensor,
+            b: *const anytensor,
+            c: *const anytensor,
             out: usize,
         },
     };
