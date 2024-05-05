@@ -120,17 +120,19 @@ pub fn dataflowViz(entrypoints: []const *const anytensor, writer: anytype, alloc
             .ArrayOp => |rec| {
                 try switch (rec.op) {
                     .Cast => writer.print(
-                        \\    {[op]s}_{[out]x}[label="{[op]s}\n({[data]s})"];
+                        \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\n({[data]s})"];
                         \\
                     , .{
+                        .op_type = @typeName(@TypeOf(rec.op)),
                         .op = @tagName(rec.op),
                         .out = @intFromPtr(tensor),
                         .data = @tagName(tensor.dtype),
                     }),
                     .View => writer.print(
-                        \\    {[op]s}_{[out]x}[label="{[op]s}\n{[data]any}"];
+                        \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\n{[data]any}"];
                         \\
                     , .{
+                        .op_type = @typeName(@TypeOf(rec.op)),
                         .op = @tagName(rec.op),
                         .out = @intFromPtr(tensor),
                         .data = .{
@@ -140,24 +142,34 @@ pub fn dataflowViz(entrypoints: []const *const anytensor, writer: anytype, alloc
                         },
                     }),
                     else => writer.print(
-                        \\    {[op]s}_{[out]x}[label="{[op]s}\n{[data]any}"];
+                        \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\n{[data]any}"];
                         \\
                     , .{
+                        .op_type = @typeName(@TypeOf(rec.op)),
                         .op = @tagName(rec.op),
                         .out = @intFromPtr(tensor),
                         .data = tensor.shape[0..tensor.ndims],
                     }),
                 };
             },
-            inline else => |rec| {
-                try writer.print(
-                    \\    {[op]s}_{[out]x}[label="{[op]s}\n"];
-                    \\
-                , .{
-                    .op = @tagName(rec.op),
-                    .out = @intFromPtr(tensor),
-                });
-            },
+            .ReduceOp => |rec| try writer.print(
+                \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\n{[data]any}"];
+                \\
+            , .{
+                .op_type = @typeName(@TypeOf(rec.op)),
+                .op = @tagName(rec.op),
+                .out = @intFromPtr(tensor),
+                .data = rec.dims,
+            }),
+            .CustomOp => unreachable,
+            inline else => |rec| try writer.print(
+                \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\n"];
+                \\
+            , .{
+                .op_type = @typeName(@TypeOf(rec.op)),
+                .op = @tagName(rec.op),
+                .out = @intFromPtr(tensor),
+            }),
         }
 
         switch (tensor.record.*) {
@@ -217,6 +229,7 @@ pub fn dataflowViz(entrypoints: []const *const anytensor, writer: anytype, alloc
                     .out_shape = tensor.shape[0..tensor.ndims],
                 });
             },
+            .CustomOp => unreachable,
             inline else => |rec| {
                 try writer.print(
                     \\    T_{[a]x}->{[op]s}_{[out]x}[label="{[a_dtype]s}{[a_shape]any}"];
@@ -246,6 +259,7 @@ pub fn dataflowViz(entrypoints: []const *const anytensor, writer: anytype, alloc
                 try queue.append(rec.b);
             },
             .InitOp => {},
+            .CustomOp => unreachable,
             inline else => |rec| {
                 try queue.append(rec.a);
             },

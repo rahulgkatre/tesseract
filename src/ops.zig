@@ -39,5 +39,4 @@ pub const InitOp = enum {
     Rand,
     Range,
 };
-// Terna
-pub const OpTypes = enum { UnaryOp, BinaryOp, ReduceOp, ArrayOp, InitOp, TernaryOp };
+pub const OpTypes = enum { UnaryOp, BinaryOp, ReduceOp, ArrayOp, InitOp, TernaryOp, CustomOp };

@@ -1,49 +1,16 @@
 const std = @import("std");
 const comptimePrint = std.fmt.comptimePrint;
-
+const anytensor = @import("anytensor.zig").anytensor;
 const utils = @import("utils.zig");
 const ops = @import("ops.zig");
 const dtypes = @import("dtypes.zig");
 const Record = @import("record.zig").Record;
 
-pub fn TensorType(comptime val: anytype) type {
+pub fn AsTensor(comptime val: anytype) type {
     if (isTensor(@TypeOf(val))) {
         return Tensor(val.dtype, val.ndims, val.shape[0..val.ndims].*);
     } else {
-        const default = dtypes.default;
-        const inferred = dtypes.inferDType(val);
-        if ((dtypes.isBool(inferred) and dtypes.isBool(default)) or (dtypes.isInt(inferred) and dtypes.isInt(default)) or (dtypes.isFloat(inferred) and dtypes.isFloat(default))) {
-            return Scalar(default);
-        } else {
-            return Scalar(inferred);
-        }
-    }
-}
-
-pub fn FloatTensor(comptime TT: type) type {
-    std.debug.assert(isTensor(TT));
-    if (!dtypes.isFloat(TT.dtype)) {
-        return TT.AsType(dtypes.default);
-    } else {
-        return TT;
-    }
-}
-
-pub fn BoolTensor(comptime TT: type) type {
-    std.debug.assert(isTensor(TT));
-    if (!dtypes.isBool(TT.dtype)) {
-        @compileError("Must be bool datatype");
-    } else {
-        return TT;
-    }
-}
-
-pub fn IntTensor(comptime TT: type) type {
-    std.debug.assert(isTensor(TT));
-    if (!dtypes.isInt(TT.dtype)) {
-        @compileError("Must cast to int datatype first");
-    } else {
-        return TT;
+        return Scalar(dtypes.inferDType(val));
     }
 }
 
@@ -70,8 +37,8 @@ pub fn isTensor(comptime T: type) bool {
 }
 
 /// Used for wrapping immediate values in single size tensors with the same dtype as the current tensor
-pub fn tensorOf(comptime val: anytype) TensorType(val) {
-    return if (!isTensor(@TypeOf(val))) TensorType(val).full(val) else val;
+pub fn asTensor(comptime val: anytype) AsTensor(val) {
+    return if (!isTensor(@TypeOf(val))) AsTensor(val).full(val) else val;
 }
 
 pub fn randLike(comptime other: anytype) @TypeOf(other) {
@@ -96,6 +63,7 @@ pub fn Tensor(
 ) type {
     return extern struct {
         const Self = @This();
+        const shaper = @import("zig").Shaper(Self);
 
         // All the functions for operations are implemented separately
         pub usingnamespace @import("functions.zig").Functions(Self);
@@ -114,11 +82,23 @@ pub fn Tensor(
         offset: u64 = 0,
         record: *const Record = &Record.init(.InitOp, .Empty, {}, .{ .Empty = {} }),
 
-        pub fn widen(comptime self: Self) @import("anytensor.zig").anytensor {
-            return @as(*const @import("anytensor.zig").anytensor, @ptrCast(&self)).*;
+        pub fn widen(comptime self: Self) anytensor {
+            return @as(*const anytensor, @ptrCast(&self)).*;
         }
 
-        /// Determine if the stride pattern of the tensor defines a contiguous section of memory at runtime
+        /// Allows for negative dimension indexing to work by normalizing it to ndims
+        pub fn normalize(dim: i16) u8 {
+            const normalized = if (dim < 0) ndims + dim else dim;
+            if (normalized < 0 or normalized > ndims) {
+                @compileError(comptimePrint(
+                    "Dimension index {d} is out of bounds {d}",
+                    .{ normalized, ndims },
+                ));
+            }
+            return @intCast(normalized);
+        }
+
+        /// Determine if the stride pattern of the tensor defines a fully contiguous section of memory at runtime
         pub fn isContiguous(self: Self) bool {
             // Strides need to be decreasing unless its a broadcasted stride (0)
             var prev: u64 = std.math.maxInt(u64);
@@ -142,10 +122,9 @@ pub fn Tensor(
             // but the underlying memory has not increased in size
             // shape[d] - 1 is the last index in dimension d
             // Also incorporate the storage offset
-            const strides = self.strides;
             var _size: u128 = self.offset + 1;
             for (0..ndims) |d| {
-                _size += (shape[d] - 1) * strides[d];
+                _size += (shape[d] - 1) * self.strides[d];
             }
             // The result is the size of the storage needed to visit all indices of the tensor
             return _size;
@@ -153,18 +132,6 @@ pub fn Tensor(
 
         pub fn size(_: Self) u128 {
             return num_entries;
-        }
-
-        /// Allows for negative dimension indexing to work by normalizing it to ndims
-        pub fn normalize(dim: i16) u8 {
-            const normalized = if (dim < 0) ndims + dim else dim;
-            if (normalized < 0 or normalized > ndims) {
-                @compileError(comptimePrint(
-                    "Dimension index {d} is out of bounds {d}",
-                    .{ normalized, ndims },
-                ));
-            }
-            return @intCast(normalized);
         }
 
         /// Supports negative indexing sugar (e.g. -1 = ndims - 1)
@@ -218,8 +185,9 @@ pub fn Tensor(
         /// Fill a tensor with random generated numbers
         /// By default, random tensors will be constant folded in codegen
         /// unless they are marked as requires_grad
-        /// Do not use this for random initialization of parameters
-        pub fn rand() Self {
+        /// Do not use this for random initialization of parameters!
+        /// Note that some device backends do not support this
+        pub fn random() Self {
             std.debug.assert(dtypes.isFloat(dtype));
             return .{ .record = &Record.init(
                 .InitOp,
@@ -229,12 +197,12 @@ pub fn Tensor(
             ) };
         }
 
-        fn Permute(comptime perm: [ndims]u8) type {
+        pub fn Permute(comptime perm: [ndims]u8) type {
             return Reshape(utils.arrayPermute(u64, ndims, shape, perm));
         }
         /// Permute the dimensions of the tensor. A valid permutation must contain
         /// values from 0 to ndims and each value must appear exactly once.
-        pub fn permute(comptime a: Self, comptime perm: [ndims]u8) Permute(perm) {
+        pub fn permute(comptime a: Self, comptime perm: [ndims]u8) (Permute(perm)) {
             return a.view(
                 Permute(perm).shape,
                 utils.arrayPermute(u64, ndims, a.strides[0..ndims].*, perm),
@@ -251,7 +219,7 @@ pub fn Tensor(
             return Reshape(new_shape);
         }
         /// Transpose two dimensions of the tensor. Similar to permute, but only for two dimensions.
-        pub fn transpose(comptime a: Self, comptime dim1: i16, comptime dim2: i16) Transpose(dim1, dim2) {
+        pub fn transpose(comptime a: Self, comptime dim1: i16, comptime dim2: i16) (Transpose(dim1, dim2)) {
             const norm1 = normalize(dim1);
             const norm2 = normalize(dim2);
             if (norm1 != norm2) {
@@ -269,7 +237,7 @@ pub fn Tensor(
         }
 
         /// Shorthand for transposing rightmost dimensions of tensor
-        pub fn T(comptime a: Self) Transpose(-2, -1) {
+        pub fn T(comptime a: Self) (Transpose(-2, -1)) {
             return a.transpose(-2, -1);
         }
 
@@ -277,14 +245,14 @@ pub fn Tensor(
             return tensor(dtype, new_shape);
         }
         /// Change the shape of the tensor. This changes the type too.
-        pub fn reshape(comptime a: Self, comptime new_shape: anytype) Reshape(new_shape) {
+        pub fn reshape(comptime a: Self, comptime new_shape: anytype) (Reshape(new_shape)) {
             if (!isContiguous(a)) {
-                return a.copy().reshape(new_shape);
+                return a.contiguous().reshape(new_shape);
             } else {
                 return a.view(new_shape, Reshape(new_shape).contiguous_strides, a.offset);
             }
         }
-        pub fn copy(comptime a: Self) Self {
+        pub fn contiguous(comptime a: Self) Self {
             return a.id();
         }
 
@@ -292,7 +260,7 @@ pub fn Tensor(
             const norm_start = normalize(start_dim);
             const norm_end = normalize(end_dim);
             if (norm_start == norm_end) {
-                return Self;
+                return @This();
             } else {
                 var new_shape: [ndims - (norm_end - norm_start)]u64 = undefined;
                 new_shape[norm_start] = 1;
@@ -306,13 +274,11 @@ pub fn Tensor(
                 return Reshape(new_shape);
             }
         }
-
-        pub fn flattenPartial(comptime a: Self, comptime start_dim: i16, comptime end_dim: i16) Flatten(start_dim, end_dim) {
-            return a.reshape(Flatten(start_dim, end_dim).shape);
-        }
-
-        pub fn flatten(comptime a: Self) Flatten(0, -1) {
-            return a.reshape(Flatten(0, -1).shape);
+        pub fn flatten(comptime a: Self, comptime start_end_dims: struct {
+            start_dim: i16 = 0,
+            end_dim: i16 = -1,
+        }) Flatten(start_end_dims.start_dim, start_end_dims.end_dim) {
+            return a.reshape(Flatten(start_end_dims.start_dim, start_end_dims.end_dim).shape);
         }
 
         pub fn Unsqueeze(comptime dim: i16) type {
@@ -345,7 +311,7 @@ pub fn Tensor(
         /// Changes the shape and stride of the tensor to change how the underlying memory is accessed.
         /// Powerful enough to be used to implement any reshaping or windowing operation on a tensor.
         /// There are guardrails to prevent out of bounds access into underlying memory!
-        pub fn view(comptime a: Self, comptime new_shape: anytype, comptime new_strides: [new_shape.len]u64, new_offset: u64) Reshape(new_shape) {
+        pub fn view(comptime a: Self, comptime new_shape: anytype, comptime new_strides: [new_shape.len]u64, new_offset: u64) (Reshape(new_shape)) {
             var out = Reshape(new_shape){
                 .record = &Record.init(.ArrayOp, .View, .{&a.widen()}, {}),
                 .strides = &new_strides,
@@ -376,12 +342,13 @@ pub fn Tensor(
             return out;
         }
 
-        pub fn Cast(comptime new_dtype: dtypes.DType) type {
-            return tensor(new_dtype, shape);
-        }
         ///Cast an array of a datatype to another datatype
-        pub fn cast(comptime a: Self, comptime new_dtype: dtypes.DType) Cast(new_dtype) {
-            return tensor(new_dtype, shape){ .record = &Record.init(.ArrayOp, .Cast, .{&a.widen()}, {}) };
+        pub fn cast(comptime a: Self, comptime new_dtype: dtypes.DType) tensor(new_dtype, shape) {
+            if (new_dtype != a.dtype) {
+                return .{ .record = &Record.init(.ArrayOp, .Cast, .{&a.widen()}, {}), .strides = a.strides };
+            } else {
+                return a;
+            }
         }
 
         ///Apply an elementwise unary operation
@@ -389,31 +356,9 @@ pub fn Tensor(
             return .{ .record = &Record.init(.UnaryOp, op, .{&a.widen()}, {}), .strides = a.strides };
         }
 
-        pub fn Broadcast(comptime other_shape: anytype) type {
-            if (std.mem.eql(u64, &shape, &other_shape)) {
-                return Self;
-            }
-            const bc_ndims = @max(ndims, other_shape.len);
-            var bc_shape: [bc_ndims]u64 = undefined;
-            for (0..bc_ndims) |i| {
-                const dim1 = if (i >= ndims) 1 else shape[ndims - i - 1];
-                const dim2 = if (i >= other_shape.len) 1 else other_shape[other_shape.len - i - 1]; // orelse dim1;
-                if (dim1 != 1 and dim2 != 1 and dim1 != dim2) {
-                    @compileError(comptimePrint(
-                        \\Tensor shapes are not comaptible for broadcasting
-                        \\Tensor A shape: {any}
-                        \\Tensor B shape: {any}
-                    ,
-                        .{ shape, other_shape },
-                    ));
-                }
-                bc_shape[bc_ndims - i - 1] = if (dim1 == dim2 or dim2 == 1) dim1 else dim2;
-            }
-            return Reshape(bc_shape);
-        }
         /// Expand a tensor along 1 or more dimensions with size 1 and stride 0
         /// The new shape must broadcast with the old shape
-        pub fn expand(comptime a: Self, comptime new_shape: anytype) Broadcast(new_shape) {
+        pub fn expand(comptime a: Self, comptime new_shape: anytype) (Broadcast(new_shape)) {
             const Out = Broadcast(new_shape);
             if (Self == Out) {
                 return a;
@@ -433,23 +378,45 @@ pub fn Tensor(
             };
         }
 
-        pub fn BinaryFnResult(comptime Other: type, comptime op: ops.BinaryOp) type {
-            std.debug.assert(isTensor(Other));
-            const bc_shape = Broadcast(Other.shape).shape;
+        pub fn Broadcast(comptime other_ndims: u8, comptime other_shape: [other_ndims]u64) type {
+            if (std.mem.eql(u64, &shape, &other_shape)) {
+                return @This();
+            }
+            const bc_ndims = @max(ndims, other_shape.len);
+            var bc_shape: [bc_ndims]u64 = undefined;
+            for (0..bc_ndims) |i| {
+                const dim1 = if (i >= ndims) 1 else shape[ndims - i - 1];
+                const dim2 = if (i >= other_shape.len) 1 else other_shape[other_shape.len - i - 1]; // orelse dim1;
+                if (dim1 != 1 and dim2 != 1 and dim1 != dim2) {
+                    @compileError(comptimePrint(
+                        \\Tensor shapes are not comaptible for broadcasting
+                        \\Tensor A shape: {any}
+                        \\Tensor B shape: {any}
+                    ,
+                        .{ shape, other_shape },
+                    ));
+                }
+                bc_shape[bc_ndims - i - 1] = if (dim1 == dim2 or dim2 == 1) dim1 else dim2;
+            }
+            return Reshape(bc_shape);
+        }
+
+        pub fn BinaryFnResult(comptime other: anytype, comptime op: ops.BinaryOp) type {
+            const OtherTensor: type = AsTensor(other);
+            const bc_shape = Broadcast(OtherTensor.ndims, OtherTensor.shape).shape;
             const new_dtype: dtypes.DType = switch (op) {
                 .Eq, .Lt => .bool,
                 else => dtypes.resultDType(
                     Self.dtype,
-                    Other.dtype,
+                    OtherTensor.dtype,
                 ),
             };
             return tensor(new_dtype, bc_shape);
         }
-
         /// Apply an elementwise binary operation on two arrays, with broadcasting
-        pub fn binaryFn(comptime a: Self, b: anytype, comptime op: ops.BinaryOp) BinaryFnResult(TensorType(b), op) {
-            const b_tensor = comptime tensorOf(b);
-            return BinaryFnResult(TensorType(b), op){ .record = &Record.init(
+        pub fn binaryFn(comptime a: Self, b: anytype, comptime op: ops.BinaryOp) BinaryFnResult(b, op) {
+            const b_tensor = comptime asTensor(b);
+            return BinaryFnResult(b, op){ .record = &Record.init(
                 .BinaryOp,
                 op,
                 .{ &a.widen(), &b_tensor.widen() },
@@ -498,7 +465,7 @@ pub fn Tensor(
             a: Self,
             comptime op: ops.ReduceOp,
             comptime reduce_dims: anytype,
-        ) ReduceFnResult(reduce_dims) {
+        ) (ReduceFnResult(reduce_dims)) {
             const reduce_dim_mask: [ndims]bool = switch (@typeInfo(@TypeOf(reduce_dims))) {
                 .ComptimeInt, .Int => blk: {
                     var tmp_mask: [ndims]bool = [_]bool{false} ** ndims;
@@ -566,8 +533,8 @@ pub fn Tensor(
         }
 
         pub fn Where(comptime true_value: anytype, comptime false_value: anytype) type {
-            const true_tensor = tensorOf(true_value);
-            const false_tensor = tensorOf(false_value);
+            const true_tensor = asTensor(true_value);
+            const false_tensor = asTensor(false_value);
             std.debug.assert(true_tensor.dtype == false_tensor.dtype);
             std.debug.assert(dtypes.isBool(Self.dtype));
             const True = @TypeOf(true_tensor);
@@ -578,11 +545,11 @@ pub fn Tensor(
         /// Conditional elementwise operator
         /// out[i] = if (mask[i]) true_value[i] else false_value[i]
         /// Supports broadcasting between all 3 tensors, but true value and false value are broadcasted together first and must also have the same dtype
-        pub fn where(mask: Self, true_value: anytype, false_value: anytype) Where(true_value, false_value) {
+        pub fn where(mask: Self, true_value: anytype, false_value: anytype) (Where(true_value, false_value)) {
             const Out = Where(true_value, false_value);
             const mask_expand = mask.expand(Out.shape);
-            const true_expand = tensorOf(true_value).expand(Out.shape);
-            const false_expand = tensorOf(false_value).expand(Out.shape);
+            const true_expand = asTensor(true_value).expand(Out.shape);
+            const false_expand = asTensor(false_value).expand(Out.shape);
             return .{ .record = &Record.init(.TernaryOp, .Where, .{ mask_expand.widen(), true_expand.widen(), false_expand.widen() }, {}) };
         }
 
@@ -761,4 +728,10 @@ test "transpose" {
     try std.testing.expectEqualDeep(tensor2, comptime tensor1.transpose(-2, -1));
     try std.testing.expectEqualDeep(tensor1.shape[0..ndims], comptime tensor2.T().shape[0..ndims]);
     try std.testing.expectEqualDeep(tensor1.strides[0..ndims], comptime tensor2.T().strides[0..ndims]);
+}
+
+test "runtime" {
+    const tensor1 = comptime tensor(.i32, .{ 2, 1, 4 }).full(1);
+    const tensor2 = comptime tensor1.T();
+    _ = tensor2;
 }

@@ -1,10 +1,10 @@
 const dtypes = @import("dtypes.zig");
 const record = @import("record.zig");
 const tensor = @import("tensor.zig");
+const std = @import("std");
 
 // anytensor and tensor need to have the exact same runtime layout for @ptrCast tricks to work
 comptime {
-    const std = @import("std");
     const t_info = @typeInfo(tensor.tensor(.bool, .{1})).Struct;
     const a_info = @typeInfo(anytensor).Struct;
     std.debug.assert(t_info.layout == .@"extern");

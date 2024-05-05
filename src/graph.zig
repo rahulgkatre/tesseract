@@ -1,4 +1,5 @@
 const std = @import("std");
+const dtypes = @import("dtypes.zig");
 const anytensor = @import("anytensor.zig").anytensor;
 
 pub const ComputeNode = struct {
@@ -12,7 +13,7 @@ pub const ComputeNode = struct {
     const ComputeLocation = union(enum) {
         Root: void,
         At: *const DataNode,
-        Inline: *const DataNode,
+        Inline: void,
     };
 };
 
@@ -43,7 +44,7 @@ pub const Graph = struct {
         graph.arena.deinit();
     }
 
-    fn add_consumer(graph: *Graph, producer: *const anytensor, consumer: *const anytensor) !void {
+    fn addConsumer(graph: *Graph, producer: *const anytensor, consumer: *const anytensor) !void {
         if (graph.node_consumers.getPtr(producer)) |consumers| {
             try consumers.put(consumer, {});
         } else {
@@ -61,38 +62,39 @@ pub const Graph = struct {
         try graph.ordinals.putNoClobber(tensor, graph.ordinals.count());
         const data_node: DataNode = .{ .tensor = tensor };
         try graph.data_nodes.putNoClobber(tensor, data_node);
-        const comp_node: ComputeNode = .{ .output_node = graph.data_nodes.getPtr(tensor).? };
+        // Inline the computation if it is a literal (comptime int/float)
+        const comp_node: ComputeNode = .{ .output_node = graph.data_nodes.getPtr(tensor).?, .compute_location = if (dtypes.isComptime(tensor.dtype)) .Inline else .Root };
         try graph.comp_nodes.putNoClobber(tensor, comp_node);
 
         switch (tensor.record.*) {
             .TernaryOp => |rec| {
                 try graph.trace(rec.a);
-                try graph.add_consumer(rec.a, tensor);
+                try graph.addConsumer(rec.a, tensor);
                 try graph.trace(rec.b);
-                try graph.add_consumer(rec.b, tensor);
+                try graph.addConsumer(rec.b, tensor);
                 try graph.trace(rec.c);
-                try graph.add_consumer(rec.c, tensor);
+                try graph.addConsumer(rec.c, tensor);
             },
             .BinaryOp => |rec| {
                 try graph.trace(rec.a);
-                try graph.add_consumer(rec.a, tensor);
+                try graph.addConsumer(rec.a, tensor);
                 try graph.trace(rec.b);
-                try graph.add_consumer(rec.b, tensor);
+                try graph.addConsumer(rec.b, tensor);
             },
             .InitOp => {},
+            .CustomOp => unreachable,
             inline else => |rec| {
                 try graph.trace(rec.a);
-                try graph.add_consumer(rec.a, tensor);
+                try graph.addConsumer(rec.a, tensor);
             },
         }
     }
 
-    /// Tensors with exactly 1 consumer will be inlined
+    /// Tensors with exactly 1 consumer will be inlined every
     pub fn inlineSingleConsumers(graph: *Graph) void {
         for (graph.node_consumers.keys()) |producer| {
             if (graph.node_consumers.get(producer).?.keys().len == 1) {
-                const consumer = graph.node_consumers.get(producer).?.keys()[0];
-                graph.comp_nodes.getPtr(producer).?.compute_location = .{ .Inline = graph.data_nodes.getPtr(consumer).? };
+                graph.comp_nodes.getPtr(producer).?.compute_location = .{ .Inline = {} };
             }
         }
     }
