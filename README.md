@@ -10,40 +10,40 @@ Generated code comes in the form of a .so that follows the C ABI in order to be 
 
 ### Verification During Compilation
 
-- Use type system to track shapes and strides of tensors
-- Verify that all shapes and dtypes for inputs/outputs are valid
-- Trace all operations to build the computation graph, no manual graph calls needed
-- Invalid operations will fail to compile and provide nice error messages
+- Use type system to keep track of dtype and shape of tensors
+- Verify that dtype and shape for inputs are valid
+- Invalid operations will fail to compile and provide helpful error messages
 
-### Aggressive Optimization
+### Optimized Code Generation
 
-- Avoid heap allocation entirely through predetermined array sizes
-- Use bump arena allocators when an allocator is needed (e.g. GPU)
-- Minimize usage of slower memory, automatically inline ops
-- Optimize loops for maximum throughput
+- Create pseudo define-by-run computation graph
+- Apply graph optimizations such as operator fusion
+- Apply memory access pattern optimization such as loop tiling, skewing, unrolling
+- Apply hardware intrinsic usage such as vectorization, MMA intrinsics
+- No heap memory, everything should be statically allocated
+- Generate code (compiled to .so or .dll) or IR (e.g. LLVM IR)
 
-### Minimal Dependencies, Fast Compilation
-- Minimize dependencies by using only Zig compiler
-- Small codebase for better maintainability
-- Use codegen or compiler APIs to generate device specific code
-- Keep compile times low so that future JIT compilation is fast
+### Minimal Dependencies, Small Footprint
+
+- Minimize compile dependencies by only using the Zig compiler (as the language develops, use it more)
+- Minimize executable dependencies (including standard library)
+- Avoid usage of handwritten kernel libraries
 
 ## Internals
 
 ### How it works
 
-- Developer has access to a set of operations (`functions.zig` and `tensor.zig`) for tensor manipulation and computation
-- Developer defines tensors and operations in comptime blocks or functions
-- For each new tensor, a runtime callback is created to add the operation and tensor to the graph
-- The runtime callback is recursively called to build the entire graph
-- Backwards graph is built in a similar way with a backwards callback
-- The graph is progressively lowered and eventually compiled to executable code
+- Use a Torch-like API to create Tensors (actually LazyTensors) and define operations on tensors at compile time
+- Computation graph is implicitly created which can be used to create the backwards graph for training
+- Computation graph is converted to a schedule graph where Halide-like API is used to define optimizations (which will be autotunable)
+- Optimized schedule graph is lowered and compiled to a .so or .dll file
+- To run, the caller passes buffers (e.g. NumPy) containing input data, model parameters, and pre-allocated output buffer to t
 
 ## Roadmap
 
 ### MVP Feature Checklist
 
-- Compile time shapes/strides
+- Shape-based types
     - [x] Broadcasting, reduction
     - [x] Reshaping, re-striding
     - [x] Matrix multiplication
@@ -51,7 +51,8 @@ Generated code comes in the form of a .so that follows the C ABI in order to be 
     - [ ] Symbolic shapes and strides
 - Computation graph 
     - [x] Building up the compute graph
-    - [x] Generating code to evaluate the compute graph
+    - [ ] Operator fusion
+    - [ ] Generating code to evaluate the compute graph
     - [ ] Automatic differentiation, backwards compute graph
 - Optimization passes
     - [x] Fusing of map, zip, reduce ops where possible and optimal
@@ -63,18 +64,17 @@ Generated code comes in the form of a .so that follows the C ABI in order to be 
 
 - Support for accelerator frameworks like CUDA, HIP/ROCm, Metal, WebGPU, etc.
     - Use codegen or LLVM targets to generate device specific code
-    - Target as many platform specific instructions/functions as possible (e.g. fused muladd / WMMA)
-- Support for other deep learning compiler IRs like StableHLO, MLIR, Triton-IR
-    - Take advantage of optimizations implemented by teams developing XLA, etc.
-    - Be able to run Tesseract on closed-source hardware (e.g. TPU)
-- Python/C interface
-    - Use JIT compilation to take advantage of type guards in this library
-    - Load and unload data from NumPy / C array to support existing codebases and pipelines
+    - Target as many platform specific instructions/functions as possible (e.g. SIMD, FMA, MMA)
 - Nerual network library
     - Module architecture
     - Drop-in replacement for PyTorch (the nn namespace)
     - Support existing neural network formats like ONNX, PyTorch
     - Convert files to Tesseract tensor definitions
+- Python/C interface
+    - Use JIT compilation to take advantage of type guards in this library
+    - Load and unload data from NumPy / C array to support existing codebases and pipelines
+- Support for other deep learning compiler IRs like StableHLO, MLIR, Triton-IR
+    - Be able to run Tesseract on closed-source hardware (e.g. TPU)
 - Distributed computing
     - Multiple GPUs
     - Multiple computers with multiple GPUs
