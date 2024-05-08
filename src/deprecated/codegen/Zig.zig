@@ -73,38 +73,38 @@ fn loopCode(program: *const Program, loop: *Program.Loop, writer: anytype) std.m
     }
 }
 
-fn mapOpCode(op: ops.MapOp, dtype: dtypes.DType, x: []const u8) ![]const u8 {
+fn mapOpCode(op: ops.UnaryOp, dtype: dtypes.DType, x: []const u8) ![]const u8 {
     return try switch (op) {
-        .Id => std.fmt.allocPrint(allocator, "{s}", .{x}),
+        .Copy => std.fmt.allocPrint(allocator, "{s}", .{x}),
         .Neg => if (dtypes.isBool(dtype)) std.fmt.allocPrint(allocator, "!({s})", .{x}) else std.fmt.allocPrint(allocator, "-({s})", .{x}),
         .Log => std.fmt.allocPrint(allocator, "@log({s})", .{x}),
         .Exp => std.fmt.allocPrint(allocator, "@exp({s})", .{x}),
         .Sqrt => std.fmt.allocPrint(allocator, "@sqrt({s})", .{x}),
-        .Recip => if (dtypes.isFloat(dtype)) std.fmt.allocPrint(allocator, "1.0 / ({s})", .{x}) else if (dtypes.isInt(dtype)) std.fmt.allocPrint(allocator, "@divFloor(1, {s})", .{x}) else unreachable,
+        .Rcp => if (dtypes.isFloat(dtype)) std.fmt.allocPrint(allocator, "1.0 / ({s})", .{x}) else if (dtypes.isInt(dtype)) std.fmt.allocPrint(allocator, "@divFloor(1, {s})", .{x}) else unreachable,
         else => unreachable,
     };
 }
 
 fn zipOpCode(
-    op: ops.ZipOp,
+    op: ops.BinaryOp,
     a: []const u8,
     b: []const u8,
 ) ![]const u8 {
     return try switch (op) {
         .Add => std.fmt.allocPrint(allocator, "({s}) + ({s})", .{ a, b }),
         .Mul => std.fmt.allocPrint(allocator, "({s}) * ({s})", .{ a, b }),
-        .Maximum => std.fmt.allocPrint(allocator, "@max({s}, {s})", .{ a, b }),
-        .LessThan => std.fmt.allocPrint(allocator, "({s}) < ({s})", .{ a, b }),
-        .Equals => std.fmt.allocPrint(allocator, "({s}) == ({s})", .{ a, b }),
+        .Max => std.fmt.allocPrint(allocator, "@max({s}, {s})", .{ a, b }),
+        .Lt => std.fmt.allocPrint(allocator, "({s}) < ({s})", .{ a, b }),
+        .Eq => std.fmt.allocPrint(allocator, "({s}) == ({s})", .{ a, b }),
         .Xor => std.fmt.allocPrint(allocator, "({s}) ^ ({s})", .{ a, b }),
         else => unreachable,
     };
 }
 
 fn reduceOpCode(op: ops.ReduceOp, x: []const u8, out_id: usize) ![]const u8 {
-    const zip_op: ops.ZipOp = switch (op) {
+    const zip_op: ops.BinaryOp = switch (op) {
         .Sum => .Add,
-        .Max => .Maximum,
+        .Max => .Max,
     };
     const acc = try std.fmt.allocPrint(allocator, "acc{d}", .{out_id});
     return zipOpCode(
@@ -132,14 +132,14 @@ fn expressionCode(statement: *const Program.Statement, expression: ?*const Progr
         return null;
     }
     switch (expression.?.*) {
-        .MapOp => |expr| {
+        .UnaryOp => |expr| {
             const inner_x = try expressionCode(statement, expr.x.inner) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
                 expr.x.tensor.memId(),
                 try codegen.unravelCode(allocator, expr.x.node),
             });
             return try mapOpCode(expr.op, expr.x.tensor.tensor.dtype, inner_x);
         },
-        .ZipOp => |expr| {
+        .BinaryOp => |expr| {
             const inner_a = try expressionCode(statement, expr.a.inner) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
                 expr.a.tensor.memId(),
                 try codegen.broadcastedUnravelCode(allocator, expr.a.node, statement.out),
@@ -169,7 +169,7 @@ fn expressionCode(statement: *const Program.Statement, expression: ?*const Progr
                 return null;
             }
         },
-        .TypeOp => |expr| {
+        .ArrayOp => |expr| {
             if (expr.op == .AsType) {
                 const inner_x = try expressionCode(statement, expr.x.inner) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
                     expr.x.tensor.memId(),

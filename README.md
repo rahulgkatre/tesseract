@@ -1,18 +1,18 @@
 # Tesseract
 
-Tesseract is a tensor library written in Zig. Its defining feature is that it can verify the validity of tensor operations (broadcasting, matrix multiplciation) at compile time, and generated optimized code using ahead-of-time knowledge of tensor shapes. Zig was chosen specifically for this purpose due to its compile time type functions, which Tesseract makes heavy use of to reason about the shapes and strides of tensors at compile time to provide memory safety and compile time checks. 
+Tesseract is a tensor library / embedded domain specific language (eDSL). Its defining feature is that it can verify the validity of tensor operations (broadcasting, matrix multiplciation) at compile time, and generated optimized code using ahead-of-time knowledge of tensor shapes. Zig was chosen specifically for this purpose due to its compile time type functions, which Tesseract makes heavy use of to reason about the shapes and strides of tensors at compile time to provide memory safety and compile time checks. 
 
 Tesseract is somewhere between an n-dimensional array library like NumPy, ArrayFire, PyTorch, Tinygrad, etc. and an array processing domain-specific language (DSL) like Halide, TVM, Tiramisu, etc. which has an optimizing compiler. Tesseract code does not get executed, but is instead lowered to a compute graph, then a loop or tile based IR, and finally source code or a compiler specific IR. 
 
-Generated code comes in the form of a library (.so) follows the C ABI in order to be called from any language, enhancing the ability to incorporate Tesseract code into existing codebases that use other languages via FFI / C interfaces. The end goal of Tesseract is to run differentiable tensor operations on a variety of processors/accelerators and to power a high performance deep learning framework.
+Generated code comes in the form of a .so that follows the C ABI in order to be called from any language, enhancing the ability to incorporate Tesseract code into existing codebases via FFI / C interfaces. The end goal of Tesseract is to run differentiable tensor operations with full utilization of a variety processors/accelerators features and power a high performance deep learning framework for training and inference.
 
 ## Core Principles
 
 ### Verification During Compilation
 
-- Trace all operations to build the computation graph
-- Dynamic computation graph, no manual graph calls needed
+- Use type system to track shapes and strides of tensors
 - Verify that all shapes and dtypes for inputs/outputs are valid
+- Trace all operations to build the computation graph, no manual graph calls needed
 - Invalid operations will fail to compile and provide nice error messages
 
 ### Aggressive Optimization
@@ -23,11 +23,10 @@ Generated code comes in the form of a library (.so) follows the C ABI in order t
 - Optimize loops for maximum throughput
 
 ### Minimal Dependencies, Fast Compilation
-- Minimize dependencies by using only Zig compiler including self-hosted
-- Access other compilers via C API or build commands
+- Minimize dependencies by using only Zig compiler
 - Small codebase for better maintainability
 - Use codegen or compiler APIs to generate device specific code
-- Keep compile times low so that external JIT compilation is fast
+- Keep compile times low so that future JIT compilation is fast
 
 ## Internals
 

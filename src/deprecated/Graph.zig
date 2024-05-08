@@ -1,221 +1,16 @@
-const std = @import("std");
-const ops = @import("ops.zig");
-const utils = @import("utils.zig");
-const Graph = @This();
-const dtypes = @import("dtypes.zig");
-
-var gpa: std.heap.GeneralPurposeAllocator(.{}) = undefined;
-var arena: std.heap.ArenaAllocator = undefined;
-var tensors: std.AutoHashMap(usize, *TensorNode) = undefined;
-var reduction_groups: std.AutoHashMap(usize, bool) = undefined;
-var dag_sinks: std.AutoArrayHashMap(usize, *TensorNode) = undefined;
-
-pub fn dagSinks() []*TensorNode {
-    return dag_sinks.values();
-}
-
-pub fn init() void {
-    gpa = .{};
-    arena = std.heap.ArenaAllocator.init(gpa.allocator());
-    tensors = std.AutoHashMap(usize, *TensorNode).init(arena.allocator());
-    reduction_groups = std.AutoHashMap(usize, bool).init(arena.allocator());
-    dag_sinks = std.AutoArrayHashMap(usize, *TensorNode).init(arena.allocator());
-}
-
-pub fn deinit() void {
-    arena.deinit();
-}
-
-/// Build the computation graph for a tensor.
-/// Any new nodes are added to the global computation graph
-/// by recursively calling each tensor's `trace_fn` callback.
-pub fn trace(tensor: anytype) void {
-    switch (@typeInfo(@TypeOf(tensor))) {
-        .Pointer => tensor.trace_fn(tensor),
-        else => @compileError("Must pass a tensor pointer to Graph.trace()"),
-    }
-    const key = @intFromPtr(tensor);
-    const node = TensorNode.get(key);
-    node.global = true;
-    dag_sinks.putNoClobber(key, node) catch unreachable;
-}
-
-/// Each tensor trace callback uses this function to add its dependencies (input), operation (op), and result (output)
-/// to the computation graph
-pub fn addOp(comptime op: ops.GraphOp, input: anytype, output: anytype, comptime args: anytype) void {
-    _ = OpNode.init(op, input, output, args);
-}
-
-pub const OpNode = union(ops.OpTypes) {
-    pub const Input = struct {
-        tensor: *TensorNode,
-        fused: bool = false,
-
-        fn init(ptr: anytype) Input {
-            const tensor = TensorNode.get(ptr);
-            tensor.consumer_count += 1;
-            return .{
-                .tensor = TensorNode.get(ptr),
-            };
-        }
-    };
-    pub const Output = struct {
-        tensor: *TensorNode,
-        fn init(ptr: anytype) Output {
-            return .{
-                .tensor = TensorNode.get(ptr),
-            };
-        }
-    };
-    pub const MapOp = struct {
-        op: ops.MapOp,
-        x: Input,
-        out: Output,
-        label: []const u8,
-    };
-    pub const ZipOp = struct {
-        op: ops.ZipOp,
-        a: Input,
-        b: Input,
-        out: Output,
-        label: []const u8,
-    };
-    pub const ReduceOp = struct {
-        op: ops.ReduceOp,
-        x: Input,
-        dims: []const bool,
-        out: Output,
-        label: []const u8,
-    };
-    pub const TypeOp = struct {
-        op: ops.TypeOp,
-        x: Input,
-        out: Output,
-        label: []const u8,
-    };
-    pub const InitOp = struct {
-        op: ops.InitOp,
-        args: ops.InitOp.Args,
-        out: Output,
-        label: []const u8,
-    };
-    MapOp: MapOp,
-    ZipOp: ZipOp,
-    ReduceOp: ReduceOp,
-    TypeOp: TypeOp,
-    InitOp: InitOp,
-
-    fn init(comptime op: ops.GraphOp, input: anytype, output: anytype, comptime args: anytype) OpNode {
-        const Out = @TypeOf(output.*);
-        switch (op) {
-            .MapOp, .TypeOp, .ReduceOp => {
-                if (!tensors.contains(@intFromPtr(input.x))) input.x.trace_fn(input.x);
-                TensorNode.create(input.x);
-                TensorNode.create(output);
-            },
-            .ZipOp => {
-                if (!tensors.contains(@intFromPtr(input.a))) input.a.trace_fn(input.a);
-                if (!tensors.contains(@intFromPtr(input.b))) input.b.trace_fn(input.b);
-                TensorNode.create(input.a);
-                TensorNode.create(input.b);
-                TensorNode.create(output);
-            },
-            else => {
-                TensorNode.create(output);
-            },
-        }
-        const out = TensorNode.get(output);
-        out.op_node = switch (op) {
-            .MapOp => |map_op| @unionInit(OpNode, @tagName(op), .{
-                .op = map_op,
-                .x = Input.init(input.x),
-                .out = Output.init(output),
-                .label = std.fmt.comptimePrint("{s}", .{@tagName(map_op)}),
-            }),
-            .ZipOp => |zip_op| @unionInit(OpNode, @tagName(op), .{
-                .op = zip_op,
-                .a = Input.init(input.a),
-                .b = Input.init(input.b),
-                .out = Output.init(output),
-                .label = std.fmt.comptimePrint("{s}", .{@tagName(zip_op)}),
-            }),
-            .ReduceOp => |reduce_op| blk: {
-                reduction_groups.put(out.group.?, true) catch unreachable;
-                break :blk @unionInit(OpNode, @tagName(op), .{
-                    .op = reduce_op,
-                    .x = Input.init(input.x),
-                    .out = Output.init(output),
-                    .dims = args.dims,
-                    .label = std.fmt.comptimePrint("{s}{any}", .{ @tagName(reduce_op), @as([]const bool, args.dims) }),
-                });
-            },
-            .TypeOp => |type_op| @unionInit(OpNode, @tagName(op), .{
-                .op = type_op,
-                .x = Input.init(input.x),
-                .label = switch (type_op) {
-                    .AsType => std.fmt.comptimePrint("{s}{any}", .{ @tagName(type_op), Out.dtype }),
-                    .View, .Broadcast => std.fmt.comptimePrint("{s}{any}", .{ @tagName(type_op), Out.shape }),
-                    .AsStrided => std.fmt.comptimePrint("{s}{{{any},{any}}}", .{ @tagName(type_op), Out.shape, Out.strides }),
-                },
-                .out = Output.init(output),
-            }),
-            .InitOp => |init_op| blk: {
-                if (init_op == .Input) {
-                    out.group = null;
-                    out.global = true;
-                }
-                break :blk @unionInit(OpNode, @tagName(op), .{
-                    .op = init_op,
-                    .args = args,
-                    .out = Output.init(output),
-                    .label = std.fmt.comptimePrint("{s}", .{@tagName(init_op)}),
-                });
-            },
-        };
-        return out.op_node;
-    }
-};
-
 pub const TensorNode = struct {
     ptr: usize,
     dtype: dtypes.DType,
     ndims: u8,
-    shape: []const u64,
-    strides: []const u64,
+    shape: []const Dim,
+    strides: []const Dim,
 
-    label: []const u8,
+    // label: []const u8,
     uid: u64,
     group: ?u64 = null,
     consumer_count: u16 = 0,
     global: bool = false,
     op_node: OpNode = undefined,
-
-    const JsonCompatibleTensorNode = struct {
-        dtype: dtypes.DType,
-        ndims: u8,
-        shape: []const u64,
-        strides: []const u64,
-        uid: u64,
-        mem_id: u64,
-        group: ?usize = null,
-        cached: bool = false,
-        global: bool = false,
-    };
-
-    pub fn jsonStringify(self: *const TensorNode, write_stream: anytype) !void {
-        const compatible: JsonCompatibleTensorNode = .{
-            .dtype = self.dtype,
-            .ndims = self.ndims,
-            .shape = self.shape,
-            .strides = self.strides,
-            .uid = self.uid,
-            .mem_id = self.memoryView(),
-            .group = self.group,
-            .cached = self.isCached(),
-            .global = self.global,
-        };
-        try write_stream.write(compatible);
-    }
 
     pub fn isCached(tensor: *const TensorNode) bool {
         return (tensor.consumer_count > 1 and tensor.group != tensor.uid);
@@ -224,7 +19,7 @@ pub const TensorNode = struct {
     pub fn memoryView(self: *const TensorNode) u64 {
         switch (self.op_node) {
             .InitOp => return self.uid,
-            .ZipOp => |op_node| {
+            .BinaryOp => |op_node| {
                 if (!op_node.a.fused and !op_node.b.fused) {
                     return self.uid;
                 }
@@ -253,19 +48,20 @@ pub const TensorNode = struct {
     }
 
     fn create(tensor: anytype) void {
-        const Tensor = @TypeOf(tensor.*);
+        // const Tensor = @TypeOf(tensor.*);
+        // const fields = @typeInfo
         const ptr = @intFromPtr(tensor);
         if (!tensors.contains(ptr)) {
             const tensor_node = arena.allocator().create(TensorNode) catch unreachable;
             tensor_node.* = .{
                 .ptr = ptr,
-                .dtype = Tensor.dtype,
-                .ndims = Tensor.ndims,
-                .shape = Tensor.shape[0..Tensor.ndims],
-                .strides = Tensor.strides[0 .. Tensor.ndims + 1],
+                .dtype = tensor.dtype,
+                .ndims = tensor.ndims,
+                .shape = tensor.shape[0..tensor.ndims],
+                .strides = tensor.strides[0 .. tensor.ndims + 1],
                 .group = tensors.count(),
                 .uid = tensors.count(),
-                .label = std.fmt.comptimePrint("{s}{any}", .{ @tagName(Tensor.dtype), Tensor.shape }),
+                // .label = std.fmt.comptimePrint("{s}{any}", .{ @tagName(tensor.dtype), tensor.shape }),
             };
             tensors.putNoClobber(ptr, tensor_node) catch unreachable;
         }
@@ -282,7 +78,7 @@ pub fn viz(writer: anytype) void {
             // Recursive calls
             switch (op_node) {
                 .InitOp => opNodeViz(op_node, visited), // the undefined tensor field is never accessed for an init op
-                .ZipOp => |binary_op_node| {
+                .BinaryOp => |binary_op_node| {
                     vizHelper(binary_op_node.a, visited);
                     opNodeViz(op_node, visited);
                     opNodeInputViz(op_node, binary_op_node.a, visited);
@@ -402,7 +198,7 @@ pub const Fusion = struct {
 
         switch (child.op_node) {
             .InitOp => unreachable, // Impossible as init op will only have a child (output) and no tensor input
-            .ZipOp => |*op_node| {
+            .BinaryOp => |*op_node| {
                 if (op_node.a.tensor.uid != parent.uid and op_node.b.tensor.uid != parent.uid) {
                     return FusionError.NotParentChild;
                 }
@@ -450,12 +246,12 @@ pub const Fusion = struct {
     /// (reductions) from being in the same kernel. This might change after further testing.
     fn greedyFusionHelper(node: *TensorNode) void {
         switch (node.op_node) {
-            .MapOp => |*op_node| {
+            .UnaryOp => |*op_node| {
                 verticalFusion(op_node.x.tensor, node) catch {};
                 greedyFusionHelper(op_node.x.tensor);
                 if (op_node.x.tensor.group != node.group) op_node.x.tensor.global = true;
             },
-            .ZipOp => |*op_node| {
+            .BinaryOp => |*op_node| {
                 // Process the temporally closer input first
                 const inputs: std.meta.Tuple(&[_]type{OpNode.Input} ** 2) = if (op_node.a.tensor.uid > op_node.b.tensor.uid) .{ op_node.a, op_node.b } else .{ op_node.b, op_node.a };
                 verticalFusion(inputs[0].tensor, node) catch {};
@@ -470,7 +266,7 @@ pub const Fusion = struct {
                 greedyFusionHelper(op_node.x.tensor);
                 if (op_node.x.tensor.group != node.group) op_node.x.tensor.global = true;
             },
-            .TypeOp => |*op_node| {
+            .ArrayOp => |*op_node| {
                 verticalFusion(op_node.x.tensor, node) catch {};
                 greedyFusionHelper(op_node.x.tensor);
                 if (op_node.x.tensor.group != node.group) op_node.x.tensor.global = true;
@@ -489,55 +285,3 @@ pub const Fusion = struct {
         for (dagSinks()) |entry| greedyFusionHelper(entry);
     }
 };
-
-fn softmax(x: anytype, comptime dim: u8) @TypeOf(x) {
-    const max = x.max(null);
-    const x_minus_max = x.sub(max);
-    const exp = x_minus_max.exp();
-    const sumexp = exp.sum(dim);
-    const sm = x_minus_max.div(sumexp);
-    return sm;
-}
-
-test "manual vertical fusion" {
-    // const x = comptime tensor.InferredStrides(.f32, .{ 2, 16 }).full(0);
-    // const sm = comptime softmax(x, 1);
-
-    // Graph.init(std.testing.arena.allocator());
-    // defer Graph.deinit();
-    // Graph.trace(&sm);
-
-    // const t9 = Graph.entry();
-    // const t8 = t9.op_node.ZipOp.b;
-    // try Fusion.verticalFusion(t8, t9);
-    // const t7 = t8.op_node.TypeOp.x.op_node.MapOp.x;
-    // const t6 = t7.op_node.ReduceOp.x;
-    // try Fusion.verticalFusion(t6, t7);
-    // const t5 = t6.op_node.MapOp.x;
-    // try Fusion.verticalFusion(t5, t6);
-
-    // const t3 = t9.op_node.ZipOp.a;
-    // try fuse(t3, t9);
-    // try fuse(t3, t5);
-    // const t2 = t3.op_node.ZipOp.b;
-    // try fuse(t2, t3);
-    // const t1 = t2.op_node.MapOp.x;
-    // try fuse(t1, t2);
-    // writer.print("\n", .{});
-    // Graph.viz(std.debug);
-}
-
-test "greedy fusion" {
-    const tensor = @import("tensor.zig");
-    const out = comptime blk: {
-        const a = tensor.InferredStrides(.f32, .{ 1024, 2048 }).full(2);
-        const b = tensor.InferredStrides(.f32, .{ 2048, 4096 }).full(3);
-        break :blk a.matmul(b);
-    };
-    Graph.init();
-    defer Graph.deinit();
-    Graph.trace(&out);
-    // Graph.Fusion.applyGreedyFusion();
-    // std.debug.print("\n", .{});
-    // try Graph.viz(std.debug);
-}
