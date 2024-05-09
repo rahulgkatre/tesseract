@@ -78,9 +78,10 @@ pub fn Tensor(
         dtype: dtypes.DType = dtype,
         ndims: u8 = ndims,
         shape: [*]const u64 = &shape,
-        strides: [*]const u64 = &contiguous_strides,
-        offset: u64 = 0,
+        strides: [*]const u64,
+        offset: u64,
         record: *const Record = &Record.init(.InitOp, .Empty, {}, .{ .Empty = {} }),
+        block_tracker: *const utils.BlockTracker,
 
         pub fn widen(comptime self: Self) anytensor {
             return @as(*const anytensor, @ptrCast(&self)).*;
@@ -144,15 +145,59 @@ pub fn Tensor(
             return self.strides[normalize(d)];
         }
 
+        /// This is used to determine which higher level function the tensor is part of
+        /// which is useful for finding a better gradient implementation if one exists
+        /// than the one that would be found through simple backtracking of the graph.
+        /// By default the block is null, so setting the block isn't necessary
+        /// for simple functions with trivial gradients (e.g subtraction)
+        pub fn startBlock(self: Self, block_name: []const u8) Self {
+            // Block will not modify the computation graph so pass through
+            // the other tensor fields unmodified
+            // @compileLog("Starting block", &self.block_tracker.enterBlock(block_name).next_block.?.name);
+            return .{
+                .record = self.record,
+                .strides = self.strides,
+                .offset = self.offset,
+                .block_tracker = &self.block_tracker.enterBlock(block_name),
+            };
+        }
+
+        pub fn joinBlock(self: Self, block: ?*const utils.BlockTracker.Block) Self {
+            // @compileLog("Joining block", other_block_tracker.next_block.?.name);
+            return .{
+                .record = self.record,
+                .strides = self.strides,
+                .offset = self.offset,
+                .block_tracker = &self.block_tracker.joinBlock(block),
+            };
+        }
+
+        /// End the current block by setting it to the outer block.
+        /// Compile error if the current block is null.
+        pub fn endBlock(self: *const Self) Self {
+            // @compileLog("Exiting block", &self.block_tracker.next_block.?.name);
+            return .{
+                .record = self.record,
+                .strides = self.strides,
+                .offset = self.offset,
+                .block_tracker = &self.block_tracker.exitBlock(),
+            };
+        }
+
         /// Used to mark a tensor as an input to a graph,
         /// codegen will make this an argument of the function
         pub fn input() Self {
-            return .{ .record = &Record.init(
-                .InitOp,
-                .Input,
-                {},
-                .{ .Input = {} },
-            ) };
+            return .{
+                .record = &Record.init(
+                    .InitOp,
+                    .Input,
+                    {},
+                    .{ .Input = {} },
+                ),
+                .strides = &contiguous_strides,
+                .offset = 0,
+                .block_tracker = &utils.BlockTracker{},
+            };
         }
 
         /// Used to mark a tensor as a learnable parameter,
@@ -160,12 +205,17 @@ pub fn Tensor(
         /// gradients can be accumulated for it,
         /// and optimizers can detect it,
         pub fn param() Self {
-            return .{ .record = &Record.init(
-                .InitOp,
-                .Parameter,
-                {},
-                .{ .Parameter = {} },
-            ) };
+            return .{
+                .record = &Record.init(
+                    .InitOp,
+                    .Parameter,
+                    {},
+                    .{ .Parameter = {} },
+                ),
+                .strides = &contiguous_strides,
+                .offset = 0,
+                .block_tracker = &utils.BlockTracker{},
+            };
         }
 
         /// Fill a tensor with a value
@@ -179,6 +229,9 @@ pub fn Tensor(
                     {},
                     .{ .Full = std.fmt.comptimePrint("{}", .{value}) },
                 ),
+                .strides = &contiguous_strides,
+                .offset = 0,
+                .block_tracker = &utils.BlockTracker{},
             };
         }
 
@@ -189,12 +242,17 @@ pub fn Tensor(
         /// Note that some device backends do not support this
         pub fn random() Self {
             std.debug.assert(dtypes.isFloat(dtype));
-            return .{ .record = &Record.init(
-                .InitOp,
-                .Rand,
-                {},
-                .{ .Rand = {} },
-            ) };
+            return .{
+                .record = &Record.init(
+                    .InitOp,
+                    .Rand,
+                    {},
+                    .{ .Rand = {} },
+                ),
+                .strides = &contiguous_strides,
+                .offset = 0,
+                .block_tracker = &utils.BlockTracker{},
+            };
         }
 
         pub fn Permute(comptime perm: [ndims]u8) type {
@@ -316,6 +374,7 @@ pub fn Tensor(
                 .record = &Record.init(.ArrayOp, .View, .{&a.widen()}, {}),
                 .strides = &new_strides,
                 .offset = new_offset,
+                .block_tracker = &a.block_tracker.update(),
             };
             if (out.storage() > a.storage()) {
                 @compileError(comptimePrint(
@@ -345,7 +404,12 @@ pub fn Tensor(
         ///Cast an array of a datatype to another datatype
         pub fn cast(comptime a: Self, comptime new_dtype: dtypes.DType) tensor(new_dtype, shape) {
             if (new_dtype != a.dtype) {
-                return .{ .record = &Record.init(.ArrayOp, .Cast, .{&a.widen()}, {}), .strides = a.strides };
+                return .{
+                    .record = &Record.init(.ArrayOp, .Cast, .{&a.widen()}, {}),
+                    .strides = a.strides,
+                    .offset = a.offset,
+                    .block_tracker = &a.block_tracker.update(),
+                };
             } else {
                 return a;
             }
@@ -353,13 +417,18 @@ pub fn Tensor(
 
         ///Apply an elementwise unary operation
         pub fn unaryFn(comptime a: Self, comptime op: ops.UnaryOp) Self {
-            return .{ .record = &Record.init(.UnaryOp, op, .{&a.widen()}, {}), .strides = a.strides };
+            return .{
+                .record = &Record.init(.UnaryOp, op, .{&a.widen()}, {}),
+                .strides = a.strides,
+                .offset = a.offset,
+                .block_tracker = &a.block_tracker.update(),
+            };
         }
 
         /// Expand a tensor along 1 or more dimensions with size 1 and stride 0
         /// The new shape must broadcast with the old shape
-        pub fn expand(comptime a: Self, comptime new_shape: anytype) (Broadcast(new_shape)) {
-            const Out = Broadcast(new_shape);
+        pub fn expand(comptime a: Self, comptime new_shape: anytype) (Broadcast(new_shape.len, new_shape)) {
+            const Out = Broadcast(new_shape.len, new_shape);
             if (Self == Out) {
                 return a;
             }
@@ -375,6 +444,7 @@ pub fn Tensor(
                     {},
                 ),
                 .strides = &bc_strides,
+                .block_tracker = &a.block_tracker.update(),
             };
         }
 
@@ -414,14 +484,20 @@ pub fn Tensor(
             return tensor(new_dtype, bc_shape);
         }
         /// Apply an elementwise binary operation on two arrays, with broadcasting
-        pub fn binaryFn(comptime a: Self, b: anytype, comptime op: ops.BinaryOp) BinaryFnResult(b, op) {
-            const b_tensor = comptime asTensor(b);
-            return BinaryFnResult(b, op){ .record = &Record.init(
-                .BinaryOp,
-                op,
-                .{ &a.widen(), &b_tensor.widen() },
-                {},
-            ) };
+        pub fn binaryFn(comptime a: Self, _b: anytype, comptime op: ops.BinaryOp) BinaryFnResult(_b, op) {
+            const b = (asTensor(_b)).joinBlock(a.block_tracker.next_block);
+            const Result = BinaryFnResult(b, op);
+            return Result{
+                .record = &Record.init(
+                    .BinaryOp,
+                    op,
+                    .{ &a.widen(), &b.widen() },
+                    {},
+                ),
+                .strides = &Result.contiguous_strides,
+                .offset = 0,
+                .block_tracker = &a.block_tracker.update(),
+            };
         }
 
         pub fn ReduceFnResult(comptime reduce_dims: anytype) type {
@@ -483,7 +559,13 @@ pub fn Tensor(
                 },
             };
 
-            return ReduceFnResult(reduce_dims){ .record = &Record.init(.ReduceOp, op, .{&a.widen()}, &reduce_dim_mask) };
+            const Result = ReduceFnResult(reduce_dims);
+            return Result{
+                .record = &Record.init(.ReduceOp, op, .{&a.widen()}, &reduce_dim_mask),
+                .strides = &Result.contiguous_strides,
+                .offset = 0,
+                .block_tracker = &a.block_tracker.update(),
+            };
         }
 
         pub fn MatMul(comptime other: anytype) type {
@@ -524,12 +606,14 @@ pub fn Tensor(
                 \\n = {d}, m = {d}, other_m = {d}, p = {d}
             , .{ shape, @TypeOf(other).shape, n, m, other_m, p }));
         }
-        pub fn matmul(comptime a: Self, comptime b: anytype) MatMul(b) {
-            return a
-                .unsqueeze(a.ndims - 1)
+        pub fn matmul(comptime _a: Self, comptime _b: anytype) MatMul(_b) {
+            const a = _a.startBlock("matmul");
+            const b = _b.joinBlock(a.block_tracker.next_block);
+            return a.unsqueeze(a.ndims - 1)
                 .mul(b.transpose(b.ndims - 2, b.ndims - 1).unsqueeze(b.ndims - 2))
                 .sum(a.ndims)
-                .squeeze(a.ndims);
+                .squeeze(a.ndims)
+                .endBlock();
         }
 
         pub fn Where(comptime true_value: anytype, comptime false_value: anytype) type {
@@ -539,8 +623,8 @@ pub fn Tensor(
             std.debug.assert(dtypes.isBool(Self.dtype));
             const True = @TypeOf(true_tensor);
             const False = @TypeOf(false_tensor);
-            const Bc = True.Expand(False.shape);
-            return tensor(Bc.dtype, Broadcast(Bc.shape).shape);
+            const Bc = True.Broadcast(False.ndims, False.shape);
+            return tensor(Bc.dtype, Broadcast(Bc.ndims, Bc.shape).shape);
         }
         /// Conditional elementwise operator
         /// out[i] = if (mask[i]) true_value[i] else false_value[i]
@@ -548,9 +632,14 @@ pub fn Tensor(
         pub fn where(mask: Self, true_value: anytype, false_value: anytype) (Where(true_value, false_value)) {
             const Out = Where(true_value, false_value);
             const mask_expand = mask.expand(Out.shape);
-            const true_expand = asTensor(true_value).expand(Out.shape);
-            const false_expand = asTensor(false_value).expand(Out.shape);
-            return .{ .record = &Record.init(.TernaryOp, .Where, .{ mask_expand.widen(), true_expand.widen(), false_expand.widen() }, {}) };
+            const true_expand = asTensor(true_value).joinBlock(mask.block_tracker.next_block).expand(Out.shape);
+            const false_expand = asTensor(false_value).joinBlock(mask.block_tracker.next_block).expand(Out.shape);
+            return .{
+                .record = &Record.init(.TernaryOp, .Where, .{ &mask_expand.widen(), &true_expand.widen(), &false_expand.widen() }, {}),
+                .strides = mask.strides,
+                .offset = mask.offset,
+                .block_tracker = &mask.block_tracker.update(),
+            };
         }
 
         // TODO: Need to implement padding to get conv2d to work

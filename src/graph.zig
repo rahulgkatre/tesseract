@@ -82,7 +82,6 @@ pub const Graph = struct {
                 try graph.addConsumer(rec.b, tensor);
             },
             .InitOp => {},
-            .CustomOp => unreachable,
             inline else => |rec| {
                 try graph.trace(rec.a);
                 try graph.addConsumer(rec.a, tensor);

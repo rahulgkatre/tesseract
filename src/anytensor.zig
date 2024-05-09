@@ -1,6 +1,7 @@
 const dtypes = @import("dtypes.zig");
 const record = @import("record.zig");
 const tensor = @import("tensor.zig");
+const utils = @import("utils.zig");
 const std = @import("std");
 
 // anytensor and tensor need to have the exact same runtime layout for @ptrCast tricks to work
@@ -27,6 +28,7 @@ pub const anytensor = extern struct {
     strides: [*]const u64,
     offset: u64,
     record: *const record.Record,
+    block_tracker: *const utils.BlockTracker,
 
     pub fn Narrow(comptime self: anytensor) type {
         return tensor.Tensor(self.dtype, self.ndims, self.shape[0..self.ndims][0..].*);

@@ -39,4 +39,4 @@ pub const InitOp = enum {
     Rand,
     Range,
 };
-pub const OpTypes = enum { UnaryOp, BinaryOp, ReduceOp, ArrayOp, InitOp, TernaryOp, CustomOp };
+pub const OpTypes = enum { UnaryOp, BinaryOp, ReduceOp, ArrayOp, InitOp, TernaryOp };

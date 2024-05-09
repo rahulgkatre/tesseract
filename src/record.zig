@@ -5,7 +5,7 @@ pub const Record = union(ops.OpTypes) {
     UnaryOp: struct {
         op: ops.UnaryOp,
         a: *const anytensor,
-        ctx: ?[]const u8 = null,
+        block: ?[]const u8 = null,
 
         pub fn jsonStringify(self: @This(), write_stream: anytype) !void {
             try write_stream.write(.{ .op = self.op, .a = @intFromPtr(self.a) });
@@ -15,7 +15,7 @@ pub const Record = union(ops.OpTypes) {
         op: ops.BinaryOp,
         a: *const anytensor,
         b: *const anytensor,
-        ctx: ?[]const u8 = null,
+        block: ?[]const u8 = null,
 
         pub fn jsonStringify(self: @This(), write_stream: anytype) !void {
             try write_stream.write(.{ .op = self.op, .a = @intFromPtr(self.a), .b = @intFromPtr(self.b) });
@@ -25,7 +25,7 @@ pub const Record = union(ops.OpTypes) {
         op: ops.ReduceOp,
         a: *const anytensor,
         dims: []const bool,
-        ctx: ?[]const u8 = null,
+        block: ?[]const u8 = null,
 
         pub fn jsonStringify(self: @This(), write_stream: anytype) !void {
             try write_stream.write(.{ .op = self.op, .a = @intFromPtr(self.a), .dims = self.dims });
@@ -34,7 +34,7 @@ pub const Record = union(ops.OpTypes) {
     ArrayOp: struct {
         op: ops.ArrayOp,
         a: *const anytensor,
-        ctx: ?[]const u8 = null,
+        block: ?[]const u8 = null,
 
         pub fn jsonStringify(self: @This(), write_stream: anytype) !void {
             try write_stream.write(.{ .op = self.op, .a = @intFromPtr(self.a) });
@@ -43,7 +43,7 @@ pub const Record = union(ops.OpTypes) {
     InitOp: struct {
         op: ops.InitOp,
         args: ops.InitOp.Args,
-        ctx: ?[]const u8 = null,
+        block: ?[]const u8 = null,
 
         pub fn jsonStringify(self: @This(), write_stream: anytype) !void {
             try write_stream.write(.{ .op = self.op, .args = @intFromPtr(self.args) });
@@ -54,22 +54,10 @@ pub const Record = union(ops.OpTypes) {
         a: *const anytensor,
         b: *const anytensor,
         c: *const anytensor,
-        ctx: ?[]const u8 = null,
+        block: ?[]const u8 = null,
 
         pub fn jsonStringify(self: @This(), write_stream: anytype) !void {
             try write_stream.write(.{ .op = self.op, .a = @intFromPtr(self.a), .b = @intFromPtr(self.b), .c = @intFromPtr(self.c) });
-        }
-    },
-    CustomOp: struct {
-        op_name: []const u8,
-        inputs: []const *const anytensor,
-
-        pub fn jsonStringify(self: @This(), write_stream: anytype) !void {
-            try write_stream.write(.{
-                .op_type = self.op_type,
-                .op_name = self.op_name,
-                .inputs = self.inputs,
-            });
         }
     },
 
@@ -81,12 +69,10 @@ pub const Record = union(ops.OpTypes) {
             .BinaryOp => [2]*const anytensor,
             .UnaryOp, .ArrayOp, .ReduceOp => [1]*const anytensor,
             .InitOp => void,
-            .CustomOp => []const *const anytensor,
         },
         args: switch (tag) {
             .ReduceOp => []const bool,
             .InitOp => ops.InitOp.Args,
-            .CustomOp => []const u8,
             else => void,
         },
     ) Record {
@@ -114,10 +100,6 @@ pub const Record = union(ops.OpTypes) {
             .InitOp => .{
                 .op = op,
                 .args = args,
-            },
-            .CustomOp => .{
-                .op_name = args,
-                .inputs = inputs,
             },
         });
     }
@@ -158,10 +140,6 @@ pub const Record = union(ops.OpTypes) {
                 .c = record.c,
                 .out = @intFromPtr(out),
             } },
-            .CustomOp => |record| .{ .CustomOp = .{
-                .op_name = record.op_name,
-                .inputs = record.inputs,
-            } },
         };
     }
 
@@ -198,11 +176,6 @@ pub const Record = union(ops.OpTypes) {
             a: *const anytensor,
             b: *const anytensor,
             c: *const anytensor,
-            out: usize,
-        },
-        CustomOp: struct {
-            op_name: []const u8,
-            inputs: []const *const anytensor,
             out: usize,
         },
     };
