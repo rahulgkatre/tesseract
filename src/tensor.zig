@@ -234,7 +234,7 @@ pub fn Tensor(
                     .InitOp,
                     .Full,
                     {},
-                    .{ .Full = std.fmt.comptimePrint("{}", .{value}) },
+                    .{ .Full = .{ .value = std.fmt.comptimePrint("{}", .{value}) } },
                 ),
                 .strides = &contiguous_strides,
                 .offset = 0,
@@ -379,7 +379,7 @@ pub fn Tensor(
         /// There are guardrails to prevent out of bounds access into underlying memory!
         pub fn view(comptime a: Self, comptime new_shape: anytype, comptime new_strides: [new_shape.len]u64, new_offset: u64) (Reshape(new_shape)) {
             var out = Reshape(new_shape){
-                .op_tracker = &OpTracker.init(.ArrayOp, .View, .{&a.widen()}, {}),
+                .op_tracker = &OpTracker.init(.BufferOp, .View, .{&a.widen()}, {}),
                 .strides = &new_strides,
                 .offset = new_offset,
                 .op_group_tracker = a.op_group_tracker.keepGroup(),
@@ -414,7 +414,7 @@ pub fn Tensor(
         pub fn cast(comptime a: Self, comptime new_dtype: dtypes.DType) tensor(new_dtype, shape) {
             if (new_dtype != a.dtype) {
                 return .{
-                    .op_tracker = &OpTracker.init(.ArrayOp, .Cast, .{&a.widen()}, {}),
+                    .op_tracker = &OpTracker.init(.BufferOp, .Cast, .{&a.widen()}, {}),
                     .strides = a.strides,
                     .offset = a.offset,
                     .op_group_tracker = a.op_group_tracker.keepGroup(),
@@ -449,7 +449,7 @@ pub fn Tensor(
             }
             return .{
                 .op_tracker = &OpTracker.init(
-                    .ArrayOp,
+                    .BufferOp,
                     .Expand,
                     .{&a.widen()},
                     {},
@@ -554,6 +554,12 @@ pub fn Tensor(
             comptime op: ops.ReduceOp,
             comptime reduce_dims: anytype,
         ) (ReduceFnResult(reduce_dims)) {
+            // Use u16 here because []const u8 shows up as a string
+            const reduce_dims_array: []const u16 = switch (@typeInfo(@TypeOf(reduce_dims))) {
+                .ComptimeInt, .Int => &[1]u16{normalize(reduce_dims)},
+                .Null, .Void => @as([ndims]u16, std.simd.iota(u16, ndims))[0..],
+                else => &reduce_dims,
+            };
             const reduce_dim_mask: [ndims]bool = switch (@typeInfo(@TypeOf(reduce_dims))) {
                 .ComptimeInt, .Int => blk: {
                     var tmp_mask: [ndims]bool = [_]bool{false} ** ndims;
@@ -573,7 +579,7 @@ pub fn Tensor(
 
             const Result = ReduceFnResult(reduce_dims);
             return Result{
-                .op_tracker = &OpTracker.init(.ReduceOp, op, .{&a.widen()}, &reduce_dim_mask),
+                .op_tracker = &OpTracker.init(.ReduceOp, op, .{&a.widen()}, .{ .dims = reduce_dims_array, .mask = &reduce_dim_mask }),
                 .strides = &Result.contiguous_strides,
                 .offset = 0,
                 .op_group_tracker = a.op_group_tracker.keepGroup(),

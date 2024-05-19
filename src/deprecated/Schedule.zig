@@ -263,7 +263,7 @@ pub const Statement = struct {
                         .ReduceOp => {
                             return .{ .local = target.tensor };
                         },
-                        .ArrayOp => |op_node| {
+                        .BufferOp => |op_node| {
                             if (op_node.op == .AsType) {
                                 return .{ .expression = &(try Statement.getOrInit(target)).expression };
                             } else {
@@ -303,8 +303,8 @@ pub const Statement = struct {
             op: ops.ReduceOp,
             x: Operand,
         },
-        ArrayOp: struct {
-            op: ops.ArrayOp,
+        BufferOp: struct {
+            op: ops.BufferOp,
             x: Operand,
         },
         InitOp: struct {
@@ -357,7 +357,7 @@ pub const Statement = struct {
                             .b = .{ .local = target.tensor },
                         },
                     },
-                    .ArrayOp => |op_node| if (op_node.op == .AsType) .{ .ArrayOp = .{
+                    .BufferOp => |op_node| if (op_node.op == .AsType) .{ .BufferOp = .{
                         .op = op_node.op,
                         .x = try Expression.Operand.init(op_node.x, target.tensor.group),
                     } } else {

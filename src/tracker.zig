@@ -3,85 +3,37 @@ const std = @import("std");
 const AnyTensor = @import("anytensor.zig").AnyTensor;
 
 pub const OpTracker = union(ops.OpTypes) {
-    UnaryOp: struct {
-        op: ops.UnaryOp,
-        a: *const AnyTensor,
-    },
-    BinaryOp: struct {
-        op: ops.BinaryOp,
-        a: *const AnyTensor,
-        b: *const AnyTensor,
-
-        pub fn jsonStringify(self: @This(), write_stream: anytype) !void {
-            try write_stream.write(.{ .op = self.op, .a = @intFromPtr(self.a), .b = @intFromPtr(self.b) });
-        }
-    },
-    ReduceOp: struct {
-        op: ops.ReduceOp,
-        a: *const AnyTensor,
-        dims: []const bool,
-    },
-    ArrayOp: struct {
-        op: ops.ArrayOp,
-        a: *const AnyTensor,
-        pub fn jsonStringify(self: @This(), write_stream: anytype) !void {
-            try write_stream.write(.{ .op = self.op, .a = @intFromPtr(self.a) });
-        }
-    },
-    InitOp: struct {
-        op: ops.InitOp,
-        args: ops.InitOp.Args,
-
-        pub fn jsonStringify(self: @This(), write_stream: anytype) !void {
-            try write_stream.write(.{ .op = self.op, .args = self.args });
-        }
-    },
-    TernaryOp: struct {
-        op: ops.TernaryOp,
-        a: *const AnyTensor,
-        b: *const AnyTensor,
-        c: *const AnyTensor,
-
-        pub fn jsonStringify(self: @This(), write_stream: anytype) !void {
-            try write_stream.write(.{ .op = self.op, .a = @intFromPtr(self.a), .b = @intFromPtr(self.b), .c = @intFromPtr(self.c) });
-        }
-    },
+    UnaryOp: ops.UnaryOp.Info,
+    BinaryOp: ops.BinaryOp.Info,
+    ReduceOp: ops.ReduceOp.Info,
+    BufferOp: ops.BufferOp.Info,
+    InitOp: ops.InitOp.Info,
+    TernaryOp: ops.TernaryOp.Info,
 
     pub fn init(
         comptime tag: ops.OpTypes,
         comptime op: @field(ops, @tagName(tag)),
-        inputs: switch (tag) {
+        in: switch (tag) {
             .TernaryOp => [3]*const AnyTensor,
             .BinaryOp => [2]*const AnyTensor,
-            .UnaryOp, .ArrayOp, .ReduceOp => [1]*const AnyTensor,
+            .UnaryOp, .BufferOp, .ReduceOp => [1]*const AnyTensor,
             .InitOp => void,
         },
-        args: switch (tag) {
-            .ReduceOp => []const bool,
-            .InitOp => ops.InitOp.Args,
-            else => void,
-        },
+        args: @field(@TypeOf(op), "Args"),
     ) OpTracker {
         return @unionInit(OpTracker, @tagName(tag), switch (tag) {
-            .TernaryOp => .{
+            .UnaryOp, .BinaryOp, .TernaryOp => .{
                 .op = op,
-                .a = inputs[0],
-                .b = inputs[1],
-                .c = inputs[2],
-            },
-            .BinaryOp => .{
-                .op = op,
-                .a = inputs[0],
-                .b = inputs[1],
+                .in = in,
             },
             .ReduceOp => .{
                 .op = op,
-                .a = inputs[0],
-                .dims = args,
+                .in = in,
+                .args = args,
             },
-            .UnaryOp, .ArrayOp => .{
+            .BufferOp => .{
                 .op = op,
-                .a = inputs[0],
+                .in = in,
             },
             .InitOp => .{
                 .op = op,
@@ -92,78 +44,47 @@ pub const OpTracker = union(ops.OpTypes) {
 
     pub fn toJsonFormat(self: *const OpTracker, out: *const AnyTensor) JsonFormat {
         return switch (self.*) {
-            .UnaryOp => |op_tracker| .{ .UnaryOp = .{
-                .op = op_tracker.op,
-                .a = @intFromPtr(op_tracker.a),
+            .UnaryOp => |info| .{ .UnaryOp = .{
+                .op = info.op,
+                .in = .{@intFromPtr(info.in[0])},
                 .out = @intFromPtr(out),
             } },
-            .BinaryOp => |op_tracker| .{ .BinaryOp = .{
-                .op = op_tracker.op,
-                .a = @intFromPtr(op_tracker.a),
-                .b = @intFromPtr(op_tracker.b),
+            .BinaryOp => |info| .{ .BinaryOp = .{
+                .op = info.op,
+                .in = .{ @intFromPtr(info.in[0]), @intFromPtr(info.in[1]) },
                 .out = @intFromPtr(out),
             } },
-            .ReduceOp => |op_tracker| .{ .ReduceOp = .{
-                .op = op_tracker.op,
-                .a = @intFromPtr(op_tracker.a),
-                .dims = op_tracker.dims,
+            .TernaryOp => |info| .{ .TernaryOp = .{
+                .op = info.op,
+                .in = .{ @intFromPtr(info.in[0]), @intFromPtr(info.in[1]), @intFromPtr(info.in[2]) },
                 .out = @intFromPtr(out),
             } },
-            .ArrayOp => |op_tracker| .{ .ArrayOp = .{
-                .op = op_tracker.op,
-                .a = @intFromPtr(op_tracker.a),
+            .ReduceOp => |info| .{ .ReduceOp = .{
+                .op = info.op,
+                .in = .{@intFromPtr(info.in[0])},
+                .args = info.args,
                 .out = @intFromPtr(out),
             } },
-            .InitOp => |op_tracker| .{ .InitOp = .{
-                .op = op_tracker.op,
-                .args = op_tracker.args,
+            .BufferOp => |info| .{ .BufferOp = .{
+                .op = info.op,
+                .in = .{@intFromPtr(info.in[0])},
                 .out = @intFromPtr(out),
             } },
-            .TernaryOp => |op_tracker| .{ .TernaryOp = .{
-                .op = op_tracker.op,
-                .a = @intFromPtr(op_tracker.a),
-                .b = @intFromPtr(op_tracker.b),
-                .c = @intFromPtr(op_tracker.c),
+            .InitOp => |info| .{ .InitOp = .{
+                .op = info.op,
+                .args = info.args,
                 .out = @intFromPtr(out),
             } },
         };
     }
 
     pub const JsonFormat = union(ops.OpTypes) {
-        UnaryOp: struct {
-            op: ops.UnaryOp,
-            a: usize,
-            out: usize,
-        },
-        BinaryOp: struct {
-            op: ops.BinaryOp,
-            a: usize,
-            b: usize,
-            out: usize,
-        },
-        ReduceOp: struct {
-            op: ops.ReduceOp,
-            a: usize,
-            dims: []const bool,
-            out: usize,
-        },
-        ArrayOp: struct {
-            op: ops.ArrayOp,
-            a: usize,
-            out: usize,
-        },
-        InitOp: struct {
-            op: ops.InitOp,
-            args: ops.InitOp.Args,
-            out: usize,
-        },
-        TernaryOp: struct {
-            op: ops.TernaryOp,
-            a: usize,
-            b: usize,
-            c: usize,
-            out: usize,
-        },
+        UnaryOp: ops.UnaryOp.Json,
+        BinaryOp: ops.BinaryOp.Json,
+        ReduceOp: ops.ReduceOp.Json,
+        BufferOp: ops.BufferOp.Json,
+        InitOp: ops.InitOp.Json,
+        TernaryOp: ops.TernaryOp.Json,
     };
 };
 

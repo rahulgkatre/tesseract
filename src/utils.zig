@@ -99,9 +99,9 @@ pub fn numEntries(comptime ndims: u8, shape: [ndims]u64) u128 {
 pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, allocator: std.mem.Allocator) !void {
     const Viz = struct {
         fn opGroupViz(curr: ?*const tracker.OpGroupTracker.OpGroup, viz_writer: anytype) !u32 {
-            if (curr) |op_group| {
-                const depth = try opGroupViz(op_group.outer, viz_writer);
-                try viz_writer.print("    subgraph cluster_{s}_{x} {{", .{ op_group.name, op_group.id });
+            if (curr) |group| {
+                const depth = try opGroupViz(group.outer, viz_writer);
+                try viz_writer.print("    subgraph cluster_{s}_{x} {{", .{ group.name, group.id });
                 // try viz_writer.print("    {{", .{});
 
                 return depth + 1;
@@ -116,7 +116,7 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
                 \\
             , .{
                 .op = switch (out.op_tracker.*) {
-                    inline else => |opt| @tagName(opt.op),
+                    inline else => |info| @tagName(info.op),
                 },
                 .out = @intFromPtr(out),
                 .in = @intFromPtr(in),
@@ -140,118 +140,111 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
         try queue.append(@ptrCast(entry));
     }
 
-    while (queue.popOrNull()) |tensor| {
-        if (written.contains(tensor)) {
+    while (queue.popOrNull()) |out| {
+        if (written.contains(out)) {
             continue;
         }
-        try written.putNoClobber(tensor, {});
+        try written.putNoClobber(out, {});
 
-        const depth: u32 = try Viz.opGroupViz(tensor.op_group_tracker.curr, writer);
+        const depth: u32 = try Viz.opGroupViz(out.op_group_tracker.curr, writer);
         try writer.print("\n", .{});
 
-        switch (tensor.op_tracker.*) {
-            .ArrayOp => |opt| {
-                try switch (opt.op) {
+        switch (out.op_tracker.*) {
+            .BufferOp => |info| {
+                try switch (info.op) {
                     .Cast => writer.print(
-                        \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nop_group: {[op_group]s}\ndtype: {[data]s}"];
+                        \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\ndtype: {[data]s}"];
                         \\
                     , .{
-                        .op_type = @typeName(@TypeOf(opt.op)),
-                        .op = @tagName(opt.op),
-                        .out = @intFromPtr(tensor),
-                        .data = @tagName(tensor.dtype),
-                        .op_group = @as([]const u8, if (tensor.op_group_tracker.curr) |op_group| op_group.name else "null"),
+                        .type = @typeName(@TypeOf(info.op)),
+                        .op = @tagName(info.op),
+                        .out = @intFromPtr(out),
+                        .data = @tagName(out.dtype),
+                        .group = @as([]const u8, if (out.op_group_tracker.curr) |group| group.name else "null"),
                     }),
                     .View => writer.print(
-                        \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nop_group: {[op_group]s}\nshape {[shape]any}\nstrides {[strides]any}\noffset {[offset]d}"];
+                        \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\nshape {[shape]any}\nstrides {[strides]any}\noffset {[offset]d}"];
                         \\
                     , .{
-                        .op_type = @typeName(@TypeOf(opt.op)),
-                        .op = @tagName(opt.op),
-                        .out = @intFromPtr(tensor),
-                        .shape = tensor.shape[0..tensor.ndims],
-                        .strides = tensor.strides[0..tensor.ndims],
-                        .offset = tensor.offset,
-                        .op_group = @as([]const u8, if (tensor.op_group_tracker.curr) |op_group| op_group.name else "null"),
+                        .type = @typeName(@TypeOf(info.op)),
+                        .op = @tagName(info.op),
+                        .out = @intFromPtr(out),
+                        .shape = out.shape[0..out.ndims],
+                        .strides = out.strides[0..out.ndims],
+                        .offset = out.offset,
+                        .group = @as([]const u8, if (out.op_group_tracker.curr) |group| group.name else "null"),
                     }),
                     else => writer.print(
-                        \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nop_group: {[op_group]s}\nshape: {[data]any}"];
+                        \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\nshape: {[data]any}"];
                         \\
                     , .{
-                        .op_type = @typeName(@TypeOf(opt.op)),
-                        .op = @tagName(opt.op),
-                        .out = @intFromPtr(tensor),
-                        .data = tensor.shape[0..tensor.ndims],
-                        .op_group = @as([]const u8, if (tensor.op_group_tracker.curr) |op_group| op_group.name else "null"),
+                        .type = @typeName(@TypeOf(info.op)),
+                        .op = @tagName(info.op),
+                        .out = @intFromPtr(out),
+                        .data = out.shape[0..out.ndims],
+                        .group = @as([]const u8, if (out.op_group_tracker.curr) |group| group.name else "null"),
                     }),
                 };
             },
-            .ReduceOp => |opt| try writer.print(
-                \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nop_group: {[op_group]s}\n{[data]any}"];
+            .ReduceOp => |info| try writer.print(
+                \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\n{[args]any}"];
                 \\
             , .{
-                .op_type = @typeName(@TypeOf(opt.op)),
-                .op = @tagName(opt.op),
-                .out = @intFromPtr(tensor),
-                .data = opt.dims,
-                .op_group = @as([]const u8, if (tensor.op_group_tracker.curr) |op_group| op_group.name else "null"),
+                .type = @typeName(@TypeOf(info.op)),
+                .op = @tagName(info.op),
+                .out = @intFromPtr(out),
+                .args = info.args,
+                .group = @as([]const u8, if (out.op_group_tracker.curr) |group| group.name else "null"),
             }),
-            .InitOp => |opt| try switch (opt.op) {
+            .InitOp => |info| try switch (info.op) {
                 .Full => writer.print(
-                    \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nop_group: {[op_group]s}\nvalue: {[value]s}"];
+                    \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\nvalue: {[value]s}"];
                     \\
                 , .{
-                    .op_type = @typeName(@TypeOf(opt.op)),
-                    .op = @tagName(opt.op),
-                    .out = @intFromPtr(tensor),
-                    .op_group = @as([]const u8, if (tensor.op_group_tracker.curr) |op_group| op_group.name else "null"),
-                    .value = opt.args.Full,
+                    .type = @typeName(@TypeOf(info.op)),
+                    .op = @tagName(info.op),
+                    .out = @intFromPtr(out),
+                    .group = @as([]const u8, if (out.op_group_tracker.curr) |group| group.name else "null"),
+                    .value = info.args.Full.value,
                 }),
                 .Range => writer.print(
-                    \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nop_group: {[op_group]s}\nstart: {[start]s}, stop: {[stop]s}"];
+                    \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\nstart: {[start]s}, stop: {[stop]s}"];
                     \\
                 , .{
-                    .op_type = @typeName(@TypeOf(opt.op)),
-                    .op = @tagName(opt.op),
-                    .out = @intFromPtr(tensor),
-                    .op_group = @as([]const u8, if (tensor.op_group_tracker.curr) |op_group| op_group.name else "null"),
-                    .start = opt.args.Range.start,
-                    .stop = opt.args.Range.stop,
+                    .type = @typeName(@TypeOf(info.op)),
+                    .op = @tagName(info.op),
+                    .out = @intFromPtr(out),
+                    .group = @as([]const u8, if (out.op_group_tracker.curr) |group| group.name else "null"),
+                    .start = info.args.Range.start,
+                    .stop = info.args.Range.stop,
                 }),
                 else => writer.print(
-                    \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nop_group: {[op_group]s}"];
+                    \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}"];
                     \\
                 , .{
-                    .op_type = @typeName(@TypeOf(opt.op)),
-                    .op = @tagName(opt.op),
-                    .out = @intFromPtr(tensor),
-                    .op_group = @as([]const u8, if (tensor.op_group_tracker.curr) |op_group| op_group.name else "null"),
+                    .type = @typeName(@TypeOf(info.op)),
+                    .op = @tagName(info.op),
+                    .out = @intFromPtr(out),
+                    .group = @as([]const u8, if (out.op_group_tracker.curr) |group| group.name else "null"),
                 }),
             },
-            inline else => |opt| try writer.print(
-                \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nop_group: {[op_group]s}"];
+            inline else => |info| try writer.print(
+                \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}"];
                 \\
             , .{
-                .op_type = @typeName(@TypeOf(opt.op)),
-                .op = @tagName(opt.op),
-                .out = @intFromPtr(tensor),
-                .op_group = @as([]const u8, if (tensor.op_group_tracker.curr) |op_group| op_group.name else "null"),
+                .type = @typeName(@TypeOf(info.op)),
+                .op = @tagName(info.op),
+                .out = @intFromPtr(out),
+                .group = @as([]const u8, if (out.op_group_tracker.curr) |group| group.name else "null"),
             }),
         }
 
-        switch (tensor.op_tracker.*) {
-            .TernaryOp => |opt| {
-                try Viz.inputViz(opt.a, tensor, writer);
-                try Viz.inputViz(opt.b, tensor, writer);
-                try Viz.inputViz(opt.c, tensor, writer);
-            },
-            .BinaryOp => |opt| {
-                try Viz.inputViz(opt.a, tensor, writer);
-                try Viz.inputViz(opt.b, tensor, writer);
-            },
+        switch (out.op_tracker.*) {
             .InitOp => {},
-            inline else => |opt| {
-                try Viz.inputViz(opt.a, tensor, writer);
+            inline else => |info| {
+                for (info.in) |in| {
+                    try Viz.inputViz(in, out, writer);
+                }
             },
         }
 
@@ -261,37 +254,30 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
 
         try writer.print("\n", .{});
 
-        switch (tensor.op_tracker.*) {
-            inline else => |opt| {
+        switch (out.op_tracker.*) {
+            inline else => |info| {
                 try writer.print(
                     \\    T_{[out]x}[label="dtype {[dtype]s}\nshape {[shape]any}\nstrides {[strides]any}\noffset {[offset]d}\nfolded_constant {[fc]}"shape=box];
                     \\    {[op]s}_{[out]x}->T_{[out]x}[label="{[dtype]s}{[shape]any}"];
                     \\
                 , .{
-                    .op = @tagName(opt.op),
-                    .out = @intFromPtr(tensor),
-                    .dtype = @tagName(tensor.dtype),
-                    .shape = tensor.shape[0..tensor.ndims],
-                    .strides = tensor.strides[0..tensor.ndims],
-                    .offset = tensor.offset,
-                    .fc = tensor.folded_constant,
+                    .op = @tagName(info.op),
+                    .out = @intFromPtr(out),
+                    .dtype = @tagName(out.dtype),
+                    .shape = out.shape[0..out.ndims],
+                    .strides = out.strides[0..out.ndims],
+                    .offset = out.offset,
+                    .fc = out.folded_constant,
                 });
             },
         }
 
-        switch (tensor.op_tracker.*) {
-            .TernaryOp => |opt| {
-                try queue.append(opt.a);
-                try queue.append(opt.b);
-                try queue.append(opt.c);
-            },
-            .BinaryOp => |opt| {
-                try queue.append(opt.a);
-                try queue.append(opt.b);
-            },
+        switch (out.op_tracker.*) {
             .InitOp => {},
-            inline else => |opt| {
-                try queue.append(opt.a);
+            inline else => |info| {
+                for (info.in) |in| {
+                    try queue.append(in);
+                }
             },
         }
     }
@@ -316,25 +302,18 @@ pub fn dataflowJson(entrypoints: []const *const AnyTensor, writer: anytype, allo
         try queue.append(@ptrCast(entry));
     }
 
-    while (queue.popOrNull()) |tensor| {
-        if (tensors_json.contains(tensor)) {
+    while (queue.popOrNull()) |out| {
+        if (tensors_json.contains(out)) {
             continue;
         }
-        try tensors_json.put(tensor, tensor.toJsonFormat());
-        try op_trackers_json.append(tensor.op_tracker.toJsonFormat(tensor));
-        switch (tensor.op_tracker.*) {
-            .TernaryOp => |opt| {
-                try queue.append(opt.a);
-                try queue.append(opt.b);
-                try queue.append(opt.c);
-            },
-            .BinaryOp => |opt| {
-                try queue.append(opt.a);
-                try queue.append(opt.b);
-            },
+        try tensors_json.put(out, out.toJsonFormat());
+        try op_trackers_json.append(out.op_tracker.toJsonFormat(out));
+        switch (out.op_tracker.*) {
             .InitOp => {},
-            inline else => |opt| {
-                try queue.append(opt.a);
+            inline else => |info| {
+                for (info.in) |in| {
+                    try queue.append(in);
+                }
             },
         }
     }

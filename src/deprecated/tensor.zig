@@ -240,7 +240,7 @@ fn Tensor(
         /// View the tensor as a different shape.
         pub fn view(x: *const Self, comptime new_shape: anytype) UserTensor(tensor_dtype, new_shape) {
             const Out = UserTensor(tensor_dtype, new_shape);
-            return Out.init(.{ .ArrayOp = .{ .op = .AsStrided, .x = &x.ref } });
+            return Out.init(.{ .BufferOp = .{ .op = .AsStrided, .x = &x.ref } });
         }
 
         fn Unsqueeze(comptime dim: u8) type {
@@ -326,18 +326,18 @@ fn Tensor(
         /// There are guiderails to prevent out of bounds access into underlying memory.
         pub fn asStrided(comptime x: *const Self, comptime new_shape: anytype, comptime new_strides: anytype) AsStrided(new_shape, new_strides) {
             const Out = AsStrided(new_shape, new_strides);
-            return Out.init(.{ .ArrayOp = .{ .op = .AsStrided, .x = &x.ref } });
+            return Out.init(.{ .BufferOp = .{ .op = .AsStrided, .x = &x.ref } });
         }
 
         fn asStridedSymbolic(comptime x: *const Self, comptime new_ndims: u8, comptime new_shape: [new_ndims]Dim, comptime new_strides: [new_ndims + 1]Dim) AsStridedSymbolic(new_ndims, new_shape, new_strides) {
             const Out = AsStridedSymbolic(new_ndims, new_shape, new_strides);
-            return Out.init(.{ .ArrayOp = .{ .op = .AsStrided, .x = &x.ref } });
+            return Out.init(.{ .BufferOp = .{ .op = .AsStrided, .x = &x.ref } });
         }
 
         ///Cast an array of a datatype to another datatype
         pub fn asType(comptime x: *const Self, comptime new_dtype: dtypes.DType) Tensor(new_dtype, tensor_ndims, tensor_shape, tensor_strides) {
             const Out = Tensor(new_dtype, tensor_ndims, tensor_shape, tensor_strides);
-            return Out.init(.{ .ArrayOp = .{ .op = .AsType, .x = &x.ref } });
+            return Out.init(.{ .BufferOp = .{ .op = .AsType, .x = &x.ref } });
         }
 
         ///Apply an elementwise unaryFn operation
@@ -371,7 +371,7 @@ fn Tensor(
             if (Self == Out) {
                 return x.*;
             }
-            return Out.init(.{ .ArrayOp = .{ .op = .AsStrided, .x = &x.ref } });
+            return Out.init(.{ .BufferOp = .{ .op = .AsStrided, .x = &x.ref } });
         }
 
         fn Zip(comptime op: ops.BinaryOp, comptime other: anytype) type {
@@ -599,8 +599,8 @@ test "binaryFn" {
     defer Graph.deinit();
     tensor3.trace();
     try std.testing.expect(Graph.AnyTensor.get((&tensor3)).last_op.BinaryOp.op == .Add);
-    try std.testing.expect(Graph.AnyTensor.get((&tensor3)).last_op.BinaryOp.a.last_op.ArrayOp.x == Graph.AnyTensor.get((&tensor1)));
-    try std.testing.expect(Graph.AnyTensor.get((&tensor3)).last_op.BinaryOp.b.last_op.ArrayOp.x == Graph.AnyTensor.get((&tensor2)));
+    try std.testing.expect(Graph.AnyTensor.get((&tensor3)).last_op.BinaryOp.a.last_op.BufferOp.x == Graph.AnyTensor.get((&tensor1)));
+    try std.testing.expect(Graph.AnyTensor.get((&tensor3)).last_op.BinaryOp.b.last_op.BufferOp.x == Graph.AnyTensor.get((&tensor2)));
 }
 
 test "reduce" {
@@ -638,8 +638,8 @@ test "binaryFn reduce" {
     try std.testing.expect(Graph.AnyTensor.get((&tensor3)).last_op.ReduceOp.op == .Sum);
     // Anonymous intermediate tensor that stores tensor1 + tensor2
     const anon = Graph.AnyTensor.get((&tensor3)).last_op.ReduceOp.x;
-    try std.testing.expect(anon.last_op.BinaryOp.a.last_op.ArrayOp.x == Graph.AnyTensor.get((&tensor1)));
-    try std.testing.expect(anon.last_op.BinaryOp.b.last_op.ArrayOp.x == Graph.AnyTensor.get((&tensor2)));
+    try std.testing.expect(anon.last_op.BinaryOp.a.last_op.BufferOp.x == Graph.AnyTensor.get((&tensor1)));
+    try std.testing.expect(anon.last_op.BinaryOp.b.last_op.BufferOp.x == Graph.AnyTensor.get((&tensor2)));
 }
 
 test "as_type" {

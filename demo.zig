@@ -25,9 +25,9 @@ pub fn main() !void {
     const writer = std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write){ .context = std.io.getStdOut() };
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
-    // try tesseract.utils.dataflowViz(&[_]*const tesseract.AnyTensor{
-    //     @ptrCast(&out),
-    // }, writer, gpa.allocator());
+    try tesseract.utils.dataflowViz(&[_]*const tesseract.AnyTensor{
+        @ptrCast(&out),
+    }, writer, gpa.allocator());
     try tesseract.utils.dataflowJson(&[_]*const tesseract.AnyTensor{@ptrCast(&out)}, writer, gpa.allocator());
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);

@@ -67,24 +67,24 @@ pub const Graph = struct {
         try graph.comp_nodes.putNoClobber(tensor, comp_node);
 
         switch (tensor.op_tracker.*) {
-            .TernaryOp => |rec| {
-                try graph.trace(rec.a);
-                try graph.addConsumer(rec.a, tensor);
-                try graph.trace(rec.b);
-                try graph.addConsumer(rec.b, tensor);
-                try graph.trace(rec.c);
-                try graph.addConsumer(rec.c, tensor);
+            .TernaryOp => |opt| {
+                try graph.trace(opt.in[0]);
+                try graph.addConsumer(opt.in[0], tensor);
+                try graph.trace(opt.in[1]);
+                try graph.addConsumer(opt.in[1], tensor);
+                try graph.trace(opt.in[2]);
+                try graph.addConsumer(opt.in[2], tensor);
             },
-            .BinaryOp => |rec| {
-                try graph.trace(rec.a);
-                try graph.addConsumer(rec.a, tensor);
-                try graph.trace(rec.b);
-                try graph.addConsumer(rec.b, tensor);
+            .BinaryOp => |opt| {
+                try graph.trace(opt.in[0]);
+                try graph.addConsumer(opt.in[0], tensor);
+                try graph.trace(opt.in[1]);
+                try graph.addConsumer(opt.in[1], tensor);
             },
             .InitOp => {},
-            inline else => |rec| {
-                try graph.trace(rec.a);
-                try graph.addConsumer(rec.a, tensor);
+            inline else => |opt| {
+                try graph.trace(opt.in[0]);
+                try graph.addConsumer(opt.in[0], tensor);
             },
         }
     }
