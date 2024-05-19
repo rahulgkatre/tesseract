@@ -5,7 +5,7 @@ const utils = @import("utils.zig");
 const ops = @import("ops.zig");
 const dtypes = @import("dtypes.zig");
 const OpTracker = @import("tracker.zig").OpTracker;
-const BlockTracker = @import("tracker.zig").BlockTracker;
+const OpGroupTracker = @import("tracker.zig").OpGroupTracker;
 
 pub fn AsTensor(comptime val: anytype) type {
     if (isTensor(@TypeOf(val))) {
@@ -82,7 +82,7 @@ pub fn Tensor(
         strides: [*]const u64,
         offset: u64,
         op_tracker: *const OpTracker = &OpTracker.init(.InitOp, .Empty, {}, .{ .Empty = {} }),
-        block_tracker: BlockTracker,
+        op_group_tracker: OpGroupTracker,
         folded_constant: bool,
 
         pub fn widen(comptime self: Self) AnyTensor {
@@ -150,41 +150,41 @@ pub fn Tensor(
         /// This is used to determine which higher level function the tensor is part of
         /// which is useful for finding a better gradient implementation if one exists
         /// than the one that would be found through simple backtracking of the graph.
-        /// By default the block is null, so setting the block isn't necessary
-        /// for simple functions with trivial gradients (e.g subtraction)
-        pub fn enter(self: Self, block_name: []const u8) Self {
-            // Block will not modify the computation graph so pass through
+        /// By default the op_group is null, so setting the op_group isn't necessary
+        /// for simple functions with trivial gradients (e.g suogtraction)
+        pub fn startGroup(self: Self, op_group_name: []const u8) Self {
+            // OpGroup will not modify the computation graph so pass through
             // the other tensor fields unmodified
-            // @compileLog("Starting block", &self.block_tracker.enterBlock(block_name).next_block.?.name);
+            // @compileLog("Starting op_group", &self.op_group_tracker.startGroupOpGroup(op_group_name).next.?.name);
             return .{
                 .op_tracker = self.op_tracker,
                 .strides = self.strides,
                 .offset = self.offset,
-                .block_tracker = self.block_tracker.enter(block_name),
+                .op_group_tracker = self.op_group_tracker.startGroup(op_group_name),
                 .folded_constant = self.folded_constant,
             };
         }
 
-        pub fn join(self: Self, block: ?*const BlockTracker.Block) Self {
-            // @compileLog("Joining block", other_block_tracker.next_block.?.name);
+        pub fn joinGroup(self: Self, op_group: ?*const OpGroupTracker.OpGroup) Self {
+            // @compileLog("Joining op_group", other_op_group_tracker.next.?.name);
             return .{
                 .op_tracker = self.op_tracker,
                 .strides = self.strides,
                 .offset = self.offset,
-                .block_tracker = self.block_tracker.join(block),
+                .op_group_tracker = self.op_group_tracker.joinGroup(op_group),
                 .folded_constant = self.folded_constant,
             };
         }
 
-        /// End the current block by setting it to the outer block.
-        /// Compile error if the current block is null.
-        pub fn leave(self: *const Self) Self {
-            // @compileLog("Exiting block", &self.block_tracker.next_block.?.name);
+        /// End the current op_group by setting it to the outer op_group.
+        /// Compile error if the current op_group is null.
+        pub fn endGroup(self: *const Self) Self {
+            // @compileLog("Exiting op_group", &self.op_group_tracker.next.?.name);
             return .{
                 .op_tracker = self.op_tracker,
                 .strides = self.strides,
                 .offset = self.offset,
-                .block_tracker = self.block_tracker.leave(),
+                .op_group_tracker = self.op_group_tracker.endGroup(),
                 .folded_constant = self.folded_constant,
             };
         }
@@ -201,7 +201,7 @@ pub fn Tensor(
                 ),
                 .strides = &contiguous_strides,
                 .offset = 0,
-                .block_tracker = BlockTracker{},
+                .op_group_tracker = OpGroupTracker{},
                 .folded_constant = false,
             };
         }
@@ -220,7 +220,7 @@ pub fn Tensor(
                 ),
                 .strides = &contiguous_strides,
                 .offset = 0,
-                .block_tracker = BlockTracker{},
+                .op_group_tracker = OpGroupTracker{},
                 .folded_constant = false,
             };
         }
@@ -238,7 +238,7 @@ pub fn Tensor(
                 ),
                 .strides = &contiguous_strides,
                 .offset = 0,
-                .block_tracker = BlockTracker{},
+                .op_group_tracker = OpGroupTracker{},
                 .folded_constant = true,
             };
         }
@@ -259,7 +259,7 @@ pub fn Tensor(
                 ),
                 .strides = &contiguous_strides,
                 .offset = 0,
-                .block_tracker = BlockTracker{},
+                .op_group_tracker = OpGroupTracker{},
             };
         }
 
@@ -382,7 +382,7 @@ pub fn Tensor(
                 .op_tracker = &OpTracker.init(.ArrayOp, .View, .{&a.widen()}, {}),
                 .strides = &new_strides,
                 .offset = new_offset,
-                .block_tracker = a.block_tracker.update(),
+                .op_group_tracker = a.op_group_tracker.keepGroup(),
                 .folded_constant = a.folded_constant,
             };
             if (out.storage() > a.storage()) {
@@ -417,7 +417,7 @@ pub fn Tensor(
                     .op_tracker = &OpTracker.init(.ArrayOp, .Cast, .{&a.widen()}, {}),
                     .strides = a.strides,
                     .offset = a.offset,
-                    .block_tracker = a.block_tracker.update(),
+                    .op_group_tracker = a.op_group_tracker.keepGroup(),
                     .folded_constant = a.folded_constant,
                 };
             } else {
@@ -431,7 +431,7 @@ pub fn Tensor(
                 .op_tracker = &OpTracker.init(.UnaryOp, op, .{&a.widen()}, {}),
                 .strides = a.strides,
                 .offset = a.offset,
-                .block_tracker = a.block_tracker.update(),
+                .op_group_tracker = a.op_group_tracker.keepGroup(),
                 .folded_constant = a.folded_constant,
             };
         }
@@ -455,7 +455,7 @@ pub fn Tensor(
                     {},
                 ),
                 .strides = &bc_strides,
-                .block_tracker = a.block_tracker.update(),
+                .op_group_tracker = a.op_group_tracker.keepGroup(),
             };
         }
 
@@ -496,7 +496,7 @@ pub fn Tensor(
         }
         /// Apply an elementwise binary operation on two arrays, with broadcasting
         pub fn binaryFn(comptime a: Self, _b: anytype, comptime op: ops.BinaryOp) BinaryFnResult(_b, op) {
-            const b = (asTensor(_b)).join(a.block_tracker.next_block);
+            const b = (asTensor(_b)).joinGroup(a.op_group_tracker.next);
             const Result = BinaryFnResult(b, op);
             return Result{
                 .op_tracker = &OpTracker.init(
@@ -507,7 +507,7 @@ pub fn Tensor(
                 ),
                 .strides = &Result.contiguous_strides,
                 .offset = 0,
-                .block_tracker = a.block_tracker.update(),
+                .op_group_tracker = a.op_group_tracker.keepGroup(),
                 .folded_constant = a.folded_constant and b.folded_constant,
             };
         }
@@ -576,7 +576,7 @@ pub fn Tensor(
                 .op_tracker = &OpTracker.init(.ReduceOp, op, .{&a.widen()}, &reduce_dim_mask),
                 .strides = &Result.contiguous_strides,
                 .offset = 0,
-                .block_tracker = a.block_tracker.update(),
+                .op_group_tracker = a.op_group_tracker.keepGroup(),
                 .folded_constant = false,
             };
         }
@@ -620,13 +620,13 @@ pub fn Tensor(
             , .{ shape, @TypeOf(other).shape, n, m, other_m, p }));
         }
         pub fn matmul(comptime _a: Self, comptime _b: anytype) MatMul(_b) {
-            const a = _a.enter("matmul");
-            const b = _b.join(a.block_tracker.next_block);
+            const a = _a.startGroup("matmul");
+            const b = _b.joinGroup(a.op_group_tracker.next);
             return a.unsqueeze(a.ndims - 1)
                 .mul(b.transpose(b.ndims - 2, b.ndims - 1).unsqueeze(b.ndims - 2))
                 .sum(a.ndims)
                 .squeeze(a.ndims)
-                .leave();
+                .endGroup();
         }
 
         pub fn Where(comptime true_value: anytype, comptime false_value: anytype) type {
@@ -645,13 +645,13 @@ pub fn Tensor(
         pub fn where(mask: Self, true_value: anytype, false_value: anytype) (Where(true_value, false_value)) {
             const Out = Where(true_value, false_value);
             const mask_expand = mask.expand(Out.shape);
-            const true_expand = asTensor(true_value).join(mask.block_tracker.next_block).expand(Out.shape);
-            const false_expand = asTensor(false_value).join(mask.block_tracker.next_block).expand(Out.shape);
+            const true_expand = asTensor(true_value).joinGroup(mask.op_group_tracker.next).expand(Out.shape);
+            const false_expand = asTensor(false_value).joinGroup(mask.op_group_tracker.next).expand(Out.shape);
             return .{
                 .op_tracker = &OpTracker.init(.TernaryOp, .Where, .{ &mask_expand.widen(), &true_expand.widen(), &false_expand.widen() }, {}),
                 .strides = mask.strides,
                 .offset = mask.offset,
-                .block_tracker = mask.block_tracker.update(),
+                .op_group_tracker = mask.op_group_tracker.keepGroup(),
                 .folded_constant = false,
             };
         }

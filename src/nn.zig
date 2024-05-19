@@ -12,7 +12,7 @@ pub fn Linear(comptime in: u64, comptime out: u64, comptime dtype: dtypes.DType)
 
         pub fn forward(comptime self: @This(), comptime x: anytype) @TypeOf(x).MatMul(W) {
             std.debug.assert(tensor.isTensor(@TypeOf(x)));
-            return x.enter(std.fmt.comptimePrint("Linear({d},{d})", .{ in, out })).matmul(self.weight).add(self.bias).leave();
+            return x.startGroup(std.fmt.comptimePrint("Linear({d},{d})", .{ in, out })).matmul(self.weight).add(self.bias).endGroup();
         }
     };
 }

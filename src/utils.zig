@@ -98,10 +98,10 @@ pub fn numEntries(comptime ndims: u8, shape: [ndims]u64) u128 {
 /// Utility function for visualizing the full graph that is created at compile time, no scheduling is done yet
 pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, allocator: std.mem.Allocator) !void {
     const Viz = struct {
-        fn blocksViz(curr_block: ?*const tracker.BlockTracker.Block, viz_writer: anytype) !u32 {
-            if (curr_block) |block| {
-                const depth = try blocksViz(block.outer, viz_writer);
-                try viz_writer.print("    subgraph cluster_{s}_{x} {{", .{ block.name, block.id });
+        fn opGroupViz(curr: ?*const tracker.OpGroupTracker.OpGroup, viz_writer: anytype) !u32 {
+            if (curr) |op_group| {
+                const depth = try opGroupViz(op_group.outer, viz_writer);
+                try viz_writer.print("    subgraph cluster_{s}_{x} {{", .{ op_group.name, op_group.id });
                 // try viz_writer.print("    {{", .{});
 
                 return depth + 1;
@@ -146,24 +146,24 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
         }
         try written.putNoClobber(tensor, {});
 
-        const depth: u32 = try Viz.blocksViz(tensor.block_tracker.curr_block, writer);
+        const depth: u32 = try Viz.opGroupViz(tensor.op_group_tracker.curr, writer);
         try writer.print("\n", .{});
 
         switch (tensor.op_tracker.*) {
             .ArrayOp => |opt| {
                 try switch (opt.op) {
                     .Cast => writer.print(
-                        \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nblock: {[block]s}\ndtype: {[data]s}"];
+                        \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nop_group: {[op_group]s}\ndtype: {[data]s}"];
                         \\
                     , .{
                         .op_type = @typeName(@TypeOf(opt.op)),
                         .op = @tagName(opt.op),
                         .out = @intFromPtr(tensor),
                         .data = @tagName(tensor.dtype),
-                        .block = @as([]const u8, if (tensor.block_tracker.curr_block) |block| block.name else "null"),
+                        .op_group = @as([]const u8, if (tensor.op_group_tracker.curr) |op_group| op_group.name else "null"),
                     }),
                     .View => writer.print(
-                        \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nblock: {[block]s}\nshape {[shape]any}\nstrides {[strides]any}\noffset {[offset]d}"];
+                        \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nop_group: {[op_group]s}\nshape {[shape]any}\nstrides {[strides]any}\noffset {[offset]d}"];
                         \\
                     , .{
                         .op_type = @typeName(@TypeOf(opt.op)),
@@ -172,70 +172,70 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
                         .shape = tensor.shape[0..tensor.ndims],
                         .strides = tensor.strides[0..tensor.ndims],
                         .offset = tensor.offset,
-                        .block = @as([]const u8, if (tensor.block_tracker.curr_block) |block| block.name else "null"),
+                        .op_group = @as([]const u8, if (tensor.op_group_tracker.curr) |op_group| op_group.name else "null"),
                     }),
                     else => writer.print(
-                        \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nblock: {[block]s}\nshape: {[data]any}"];
+                        \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nop_group: {[op_group]s}\nshape: {[data]any}"];
                         \\
                     , .{
                         .op_type = @typeName(@TypeOf(opt.op)),
                         .op = @tagName(opt.op),
                         .out = @intFromPtr(tensor),
                         .data = tensor.shape[0..tensor.ndims],
-                        .block = @as([]const u8, if (tensor.block_tracker.curr_block) |block| block.name else "null"),
+                        .op_group = @as([]const u8, if (tensor.op_group_tracker.curr) |op_group| op_group.name else "null"),
                     }),
                 };
             },
             .ReduceOp => |opt| try writer.print(
-                \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nblock: {[block]s}\n{[data]any}"];
+                \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nop_group: {[op_group]s}\n{[data]any}"];
                 \\
             , .{
                 .op_type = @typeName(@TypeOf(opt.op)),
                 .op = @tagName(opt.op),
                 .out = @intFromPtr(tensor),
                 .data = opt.dims,
-                .block = @as([]const u8, if (tensor.block_tracker.curr_block) |block| block.name else "null"),
+                .op_group = @as([]const u8, if (tensor.op_group_tracker.curr) |op_group| op_group.name else "null"),
             }),
             .InitOp => |opt| try switch (opt.op) {
                 .Full => writer.print(
-                    \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nblock: {[block]s}\nvalue: {[value]s}"];
+                    \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nop_group: {[op_group]s}\nvalue: {[value]s}"];
                     \\
                 , .{
                     .op_type = @typeName(@TypeOf(opt.op)),
                     .op = @tagName(opt.op),
                     .out = @intFromPtr(tensor),
-                    .block = @as([]const u8, if (tensor.block_tracker.curr_block) |block| block.name else "null"),
+                    .op_group = @as([]const u8, if (tensor.op_group_tracker.curr) |op_group| op_group.name else "null"),
                     .value = opt.args.Full,
                 }),
                 .Range => writer.print(
-                    \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nblock: {[block]s}\nstart: {[start]s}, stop: {[stop]s}"];
+                    \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nop_group: {[op_group]s}\nstart: {[start]s}, stop: {[stop]s}"];
                     \\
                 , .{
                     .op_type = @typeName(@TypeOf(opt.op)),
                     .op = @tagName(opt.op),
                     .out = @intFromPtr(tensor),
-                    .block = @as([]const u8, if (tensor.block_tracker.curr_block) |block| block.name else "null"),
+                    .op_group = @as([]const u8, if (tensor.op_group_tracker.curr) |op_group| op_group.name else "null"),
                     .start = opt.args.Range.start,
                     .stop = opt.args.Range.stop,
                 }),
                 else => writer.print(
-                    \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nblock: {[block]s}"];
+                    \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nop_group: {[op_group]s}"];
                     \\
                 , .{
                     .op_type = @typeName(@TypeOf(opt.op)),
                     .op = @tagName(opt.op),
                     .out = @intFromPtr(tensor),
-                    .block = @as([]const u8, if (tensor.block_tracker.curr_block) |block| block.name else "null"),
+                    .op_group = @as([]const u8, if (tensor.op_group_tracker.curr) |op_group| op_group.name else "null"),
                 }),
             },
             inline else => |opt| try writer.print(
-                \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nblock: {[block]s}"];
+                \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nop_group: {[op_group]s}"];
                 \\
             , .{
                 .op_type = @typeName(@TypeOf(opt.op)),
                 .op = @tagName(opt.op),
                 .out = @intFromPtr(tensor),
-                .block = @as([]const u8, if (tensor.block_tracker.curr_block) |block| block.name else "null"),
+                .op_group = @as([]const u8, if (tensor.op_group_tracker.curr) |op_group| op_group.name else "null"),
             }),
         }
 
@@ -264,7 +264,7 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
         switch (tensor.op_tracker.*) {
             inline else => |opt| {
                 try writer.print(
-                    \\    T_{[out]x}[label="dtype {[dtype]s}\nshape {[shape]any}\nstrides {[strides]any}\noffset {[offset]d}\n folded_constant {[fc]}"shape=box];
+                    \\    T_{[out]x}[label="dtype {[dtype]s}\nshape {[shape]any}\nstrides {[strides]any}\noffset {[offset]d}\nfolded_constant {[fc]}"shape=box];
                     \\    {[op]s}_{[out]x}->T_{[out]x}[label="{[dtype]s}{[shape]any}"];
                     \\
                 , .{

@@ -101,9 +101,9 @@ pub const Dim = union(enum) {
 
         fn variables(self: Symbolic) [][]const u8 {
             const a_vars: [][]const u8 = @constCast(self.a.variables());
-            std.sort.block(u8, a_vars, {}, std.ascii.lessThanIgnoreCase);
+            std.sort.op_group(u8, a_vars, {}, std.ascii.lessThanIgnoreCase);
             const b_vars: [][]const u8 = @constCast(self.b.variables());
-            std.sort.block(u8, b_vars, {}, std.ascii.lessThanIgnoreCase);
+            std.sort.op_group(u8, b_vars, {}, std.ascii.lessThanIgnoreCase);
             var c_vars: [a_vars.len + b_vars.len]std.builtin.Type.StructField = undefined;
             var a_i: usize = 0;
             var b_i: usize = 0;

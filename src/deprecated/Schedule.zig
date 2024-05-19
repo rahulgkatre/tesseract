@@ -116,7 +116,7 @@ const Json = struct {
     }
 
     fn fromJsonCompatibleLoop(parsed_loop: *const JsonCompatibleLoop) !*Loop {
-        // Use the arena allocator because the parsed loop will join the other loops of the schedule
+        // Use the arena allocator because the parsed loop will joinGroup the other loops of the schedule
         var loop: *Loop = try arena.allocator().create(Loop);
         loop.dim = parsed_loop.dim;
         loop.group = parsed_loop.group;
@@ -209,7 +209,7 @@ pub const Loop = struct {
             };
         }
         // Sort the loops such that all reduced dims correspond to innermost loops
-        std.sort.block(*const Loop, loop_nest, {}, loopCompare);
+        std.sort.op_group(*const Loop, loop_nest, {}, loopCompare);
         // Nest the loops
         const outermost_loop = loop_nest[0];
         for (loop_nest[0 .. ndims - 1], loop_nest[1..]) |outer, inner| {

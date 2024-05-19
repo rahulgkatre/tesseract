@@ -74,26 +74,26 @@ pub fn Functions(comptime T: type) type {
             return a.add(tensor.asTensor(b).neg());
         }
         pub fn exp(comptime a: FloatTensor(Tensor)) FloatTensor(Tensor) {
-            return a.enter("exp").mul(INV_LN_2).exp2().leave();
+            return a.startGroup("exp").mul(INV_LN_2).exp2().endGroup();
         }
         pub fn log(comptime a: FloatTensor(Tensor)) FloatTensor(Tensor) {
-            return a.enter("log").log2().mul(LN_2).leave();
+            return a.startGroup("log").log2().mul(LN_2).endGroup();
         }
         pub fn sigmoid(comptime raw_a: FloatTensor(Tensor)) FloatTensor(Tensor) {
-            const a = raw_a.enter("sigmoid");
+            const a = raw_a.startGroup("sigmoid");
             const x_pos = a.neg().exp().add(1.0).recip();
             const x_neg = a.exp().div(a.exp().add(1.0));
             const mask = a.lessThan(0.0);
-            return mask.where(x_neg, x_pos).leave();
+            return mask.where(x_neg, x_pos).endGroup();
         }
         pub fn relu(comptime a: Tensor) Tensor {
-            return a.enter("relu").maximum(0).cast(a.dtype).leave();
+            return a.startGroup("relu").maximum(0).cast(a.dtype).endGroup();
         }
         pub fn softmax(comptime raw_a: FloatTensor(Tensor), comptime dim: i16) FloatTensor(Tensor) {
-            const a = raw_a.enter("softmax");
+            const a = raw_a.startGroup("softmax");
             const minus_max_exp = a.sub(a.max({})).exp();
             const sumexp = minus_max_exp.sum(dim);
-            return minus_max_exp.div(sumexp).leave();
+            return minus_max_exp.div(sumexp).endGroup();
         }
     };
 }

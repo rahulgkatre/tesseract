@@ -28,7 +28,7 @@ pub const AnyTensor = extern struct {
     strides: [*]const u64,
     offset: u64,
     op_tracker: *const tracker.OpTracker,
-    block_tracker: tracker.BlockTracker,
+    op_group_tracker: tracker.OpGroupTracker,
     folded_constant: bool,
 
     pub fn Narrow(comptime self: AnyTensor) type {

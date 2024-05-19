@@ -33,7 +33,7 @@ pub const OpTracker = union(ops.OpTypes) {
         args: ops.InitOp.Args,
 
         pub fn jsonStringify(self: @This(), write_stream: anytype) !void {
-            try write_stream.write(.{ .op = self.op, .args = @intFromPtr(self.args) });
+            try write_stream.write(.{ .op = self.op, .args = self.args });
         }
     },
     TernaryOp: struct {
@@ -94,24 +94,24 @@ pub const OpTracker = union(ops.OpTypes) {
         return switch (self.*) {
             .UnaryOp => |op_tracker| .{ .UnaryOp = .{
                 .op = op_tracker.op,
-                .a = op_tracker.a,
+                .a = @intFromPtr(op_tracker.a),
                 .out = @intFromPtr(out),
             } },
             .BinaryOp => |op_tracker| .{ .BinaryOp = .{
                 .op = op_tracker.op,
-                .a = op_tracker.a,
-                .b = op_tracker.b,
+                .a = @intFromPtr(op_tracker.a),
+                .b = @intFromPtr(op_tracker.b),
                 .out = @intFromPtr(out),
             } },
             .ReduceOp => |op_tracker| .{ .ReduceOp = .{
                 .op = op_tracker.op,
-                .a = op_tracker.a,
+                .a = @intFromPtr(op_tracker.a),
                 .dims = op_tracker.dims,
                 .out = @intFromPtr(out),
             } },
             .ArrayOp => |op_tracker| .{ .ArrayOp = .{
                 .op = op_tracker.op,
-                .a = op_tracker.a,
+                .a = @intFromPtr(op_tracker.a),
                 .out = @intFromPtr(out),
             } },
             .InitOp => |op_tracker| .{ .InitOp = .{
@@ -121,9 +121,9 @@ pub const OpTracker = union(ops.OpTypes) {
             } },
             .TernaryOp => |op_tracker| .{ .TernaryOp = .{
                 .op = op_tracker.op,
-                .a = op_tracker.a,
-                .b = op_tracker.b,
-                .c = op_tracker.c,
+                .a = @intFromPtr(op_tracker.a),
+                .b = @intFromPtr(op_tracker.b),
+                .c = @intFromPtr(op_tracker.c),
                 .out = @intFromPtr(out),
             } },
         };
@@ -132,24 +132,24 @@ pub const OpTracker = union(ops.OpTypes) {
     pub const JsonFormat = union(ops.OpTypes) {
         UnaryOp: struct {
             op: ops.UnaryOp,
-            a: *const AnyTensor,
+            a: usize,
             out: usize,
         },
         BinaryOp: struct {
             op: ops.BinaryOp,
-            a: *const AnyTensor,
-            b: *const AnyTensor,
+            a: usize,
+            b: usize,
             out: usize,
         },
         ReduceOp: struct {
             op: ops.ReduceOp,
-            a: *const AnyTensor,
+            a: usize,
             dims: []const bool,
             out: usize,
         },
         ArrayOp: struct {
             op: ops.ArrayOp,
-            a: *const AnyTensor,
+            a: usize,
             out: usize,
         },
         InitOp: struct {
@@ -159,58 +159,64 @@ pub const OpTracker = union(ops.OpTypes) {
         },
         TernaryOp: struct {
             op: ops.TernaryOp,
-            a: *const AnyTensor,
-            b: *const AnyTensor,
-            c: *const AnyTensor,
+            a: usize,
+            b: usize,
+            c: usize,
             out: usize,
         },
     };
 };
 
-pub const BlockTracker = extern struct {
-    pub const Block = struct {
+/// Structure for tracking groups of operations (i.e. functions)
+/// This is used for autodifferentiation, where a simpler operation expression can be written
+/// instead of a more complicated expression derived through the backwards pass
+/// Group name should always correspond to a function name so that a corresponding
+/// gradient function "d_<function name>" and be looked up
+pub const OpGroupTracker = extern struct {
+    pub const OpGroup = struct {
         name: []const u8,
-        outer: ?*const Block,
+        outer: ?*const OpGroup,
         id: usize,
     };
 
-    curr_block: ?*const Block = null,
-    next_block: ?*const Block = null,
+    curr: ?*const OpGroup = null,
+    next: ?*const OpGroup = null,
     next_id: usize = 0,
 
-    pub fn enter(bt: BlockTracker, block_name: []const u8) BlockTracker {
+    pub fn startGroup(self: OpGroupTracker, name: []const u8) OpGroupTracker {
         return .{
-            .curr_block = bt.curr_block,
-            .next_block = &Block{
-                .name = block_name,
-                .outer = bt.next_block,
-                .id = bt.next_id,
+            .curr = self.curr,
+            .next = &OpGroup{
+                .name = name,
+                .outer = self.next,
+                .id = self.next_id,
             },
-            .next_id = bt.next_id + 1,
+            .next_id = self.next_id + 1,
         };
     }
 
-    pub fn join(bt: BlockTracker, block: ?*const Block) BlockTracker {
+    pub fn joinGroup(self: OpGroupTracker, group: ?*const OpGroup) OpGroupTracker {
         return .{
-            .curr_block = bt.curr_block,
-            .next_block = block,
-            .next_id = if (block) |b| @max(bt.next_id + 1, b.id) else bt.next_id + 1,
+            .curr = self.curr,
+            .next = group,
+            .next_id = if (group) |g| @max(self.next_id + 1, g.id + 1) else self.next_id + 1,
         };
     }
 
-    pub fn update(bt: BlockTracker) BlockTracker {
+    pub fn keepGroup(self: OpGroupTracker) OpGroupTracker {
         return .{
-            .curr_block = bt.next_block,
-            .next_block = bt.next_block,
-            .next_id = bt.next_id + 1,
+            .curr = self.next,
+            .next = self.next,
+            .next_id = self.next_id + 1,
         };
     }
 
-    pub fn leave(bt: BlockTracker) BlockTracker {
+    pub fn endGroup(self: OpGroupTracker) OpGroupTracker {
         return .{
-            .curr_block = bt.curr_block,
-            .next_block = if (bt.next_block) |next_block| next_block.outer else @compileError("No block to end"),
-            .next_id = bt.next_id + 1,
+            .curr = self.curr,
+            // Next group is the outer one (end of the function scope)
+            .next = if (self.next) |next| next.outer else @compileError("No op group to end"),
+            .next_id = self.next_id + 1,
         };
     }
 };
