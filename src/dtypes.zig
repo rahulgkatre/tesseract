@@ -1,9 +1,10 @@
 const std = @import("std");
 const tensor = @import("tensor.zig");
 pub const DType = enum(u8) {
+    bool_literal,
+    int_literal,
+    float_literal,
     bool,
-    comptime_int,
-    comptime_float,
     u8,
     i8,
     u16,
@@ -23,16 +24,16 @@ pub const DType = enum(u8) {
 pub const default_float: DType = .f32;
 pub const default_int: DType = .i32;
 
-pub fn isComptime(t: DType) bool {
+pub fn isLiteral(t: DType) bool {
     return switch (t) {
-        .comptime_float, .comptime_int => true,
+        .bool_literal, .float_literal, .int_literal => true,
         else => false,
     };
 }
 
 pub fn isFloat(t: DType) bool {
     return switch (t) {
-        .comptime_float, .f16, .f32, .f64, .f128 => true,
+        .float_literal, .f16, .f32, .f64, .f128 => true,
         else => false,
     };
 }
@@ -44,7 +45,7 @@ pub fn isSigned(t: DType) bool {
         return true;
     } else {
         return switch (t) {
-            .comptime_int, .i8, .i16, .i32, .i64, .i128 => true,
+            .int_literal, .i8, .i16, .i32, .i64, .i128 => true,
             else => false,
         };
     }
@@ -56,14 +57,14 @@ pub fn isInt(t: DType) bool {
 
 pub fn isBool(t: DType) bool {
     return switch (t) {
-        .bool => true,
+        .bool, .bool_literal => true,
         else => false,
     };
 }
 
 pub fn bits(t: DType) u8 {
     return switch (t) {
-        .comptime_int, .comptime_float => 0,
+        .bool_literal, .int_literal, .float_literal => 0,
         .bool => 1,
         .u8, .i8 => 8,
         .u16, .i16, .f16 => 16,
@@ -75,9 +76,9 @@ pub fn bits(t: DType) u8 {
 
 pub fn ZigType(comptime dtype: DType) type {
     return switch (dtype) {
-        .comptime_float => comptime_float,
-        .comptime_int => comptime_int,
-        .bool => bool,
+        .float_literal => comptime_float,
+        .int_literal => comptime_int,
+        .bool, .bool_literal => bool,
         .u8, .i8, .u16, .i16, .u32, .i32, .u64, .i64, .u128, .i128 => std.meta.Int(
             if (isSigned(dtype)) .signed else .unsigned,
             bits(dtype),
@@ -88,9 +89,10 @@ pub fn ZigType(comptime dtype: DType) type {
 
 pub fn inferDType(comptime value: anytype) DType {
     return switch (@typeInfo(@TypeOf(value))) {
-        .ComptimeInt => .comptime_int,
-        .ComptimeFloat => .comptime_float,
-        .Int, .Float, .Bool => @field(DType, @typeName(@TypeOf(value))),
+        .Bool => .bool_literal,
+        .ComptimeInt => .int_literal,
+        .ComptimeFloat => .float_literal,
+        .Int, .Float => @field(DType, @typeName(@TypeOf(value))),
         else => @compileError(@typeName(@TypeOf(value)) ++ " is not a valid tensor element type"),
     };
 }
@@ -106,8 +108,8 @@ pub fn resultDType(dtype1: DType, dtype2: DType) DType {
     const is_float2 = isFloat(dtype2);
     const is_int1 = isInt(dtype1);
     const is_int2 = isInt(dtype2);
-    const is_comptime1 = isComptime(dtype1);
-    const is_comptime2 = isComptime(dtype2);
+    const is_comptime1 = isLiteral(dtype1);
+    const is_comptime2 = isLiteral(dtype2);
 
     if (is_bool1 and is_float2 or is_float1 and is_bool2) {
         @compileError("Cannot combine a float and a bool");

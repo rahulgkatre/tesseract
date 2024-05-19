@@ -1,10 +1,11 @@
 const std = @import("std");
 const comptimePrint = std.fmt.comptimePrint;
-const anytensor = @import("anytensor.zig").anytensor;
+const AnyTensor = @import("anytensor.zig").AnyTensor;
 const utils = @import("utils.zig");
 const ops = @import("ops.zig");
 const dtypes = @import("dtypes.zig");
-const Record = @import("record.zig").Record;
+const OpTracker = @import("tracker.zig").OpTracker;
+const BlockTracker = @import("tracker.zig").BlockTracker;
 
 pub fn AsTensor(comptime val: anytype) type {
     if (isTensor(@TypeOf(val))) {
@@ -18,7 +19,7 @@ pub fn range(
     comptime start: comptime_int,
     comptime stop: comptime_int,
 ) tensor(.i32, .{stop - start}) {
-    return tensor(.i32, .{stop - start}){ .record = &Record.init(.InitOp, .Range, {}, .{ .Range = .{
+    return tensor(.i32, .{stop - start}){ .op_tracker = &OpTracker.init(.InitOp, .Range, {}, .{ .Range = .{
         .start = std.fmt.comptimePrint("{d}", .{start}),
         .stop = std.fmt.comptimePrint("{d}", .{stop}),
     } }) };
@@ -80,11 +81,12 @@ pub fn Tensor(
         shape: [*]const u64 = &shape,
         strides: [*]const u64,
         offset: u64,
-        record: *const Record = &Record.init(.InitOp, .Empty, {}, .{ .Empty = {} }),
-        block_tracker: *const utils.BlockTracker,
+        op_tracker: *const OpTracker = &OpTracker.init(.InitOp, .Empty, {}, .{ .Empty = {} }),
+        block_tracker: BlockTracker,
+        folded_constant: bool,
 
-        pub fn widen(comptime self: Self) anytensor {
-            return @as(*const anytensor, @ptrCast(&self)).*;
+        pub fn widen(comptime self: Self) AnyTensor {
+            return @as(*const AnyTensor, @ptrCast(&self)).*;
         }
 
         /// Allows for negative dimension indexing to work by normalizing it to ndims
@@ -150,37 +152,40 @@ pub fn Tensor(
         /// than the one that would be found through simple backtracking of the graph.
         /// By default the block is null, so setting the block isn't necessary
         /// for simple functions with trivial gradients (e.g subtraction)
-        pub fn startBlock(self: Self, block_name: []const u8) Self {
+        pub fn enter(self: Self, block_name: []const u8) Self {
             // Block will not modify the computation graph so pass through
             // the other tensor fields unmodified
             // @compileLog("Starting block", &self.block_tracker.enterBlock(block_name).next_block.?.name);
             return .{
-                .record = self.record,
+                .op_tracker = self.op_tracker,
                 .strides = self.strides,
                 .offset = self.offset,
-                .block_tracker = &self.block_tracker.enterBlock(block_name),
+                .block_tracker = self.block_tracker.enter(block_name),
+                .folded_constant = self.folded_constant,
             };
         }
 
-        pub fn joinBlock(self: Self, block: ?*const utils.BlockTracker.Block) Self {
+        pub fn join(self: Self, block: ?*const BlockTracker.Block) Self {
             // @compileLog("Joining block", other_block_tracker.next_block.?.name);
             return .{
-                .record = self.record,
+                .op_tracker = self.op_tracker,
                 .strides = self.strides,
                 .offset = self.offset,
-                .block_tracker = &self.block_tracker.joinBlock(block),
+                .block_tracker = self.block_tracker.join(block),
+                .folded_constant = self.folded_constant,
             };
         }
 
         /// End the current block by setting it to the outer block.
         /// Compile error if the current block is null.
-        pub fn endBlock(self: *const Self) Self {
+        pub fn leave(self: *const Self) Self {
             // @compileLog("Exiting block", &self.block_tracker.next_block.?.name);
             return .{
-                .record = self.record,
+                .op_tracker = self.op_tracker,
                 .strides = self.strides,
                 .offset = self.offset,
-                .block_tracker = &self.block_tracker.exitBlock(),
+                .block_tracker = self.block_tracker.leave(),
+                .folded_constant = self.folded_constant,
             };
         }
 
@@ -188,7 +193,7 @@ pub fn Tensor(
         /// codegen will make this an argument of the function
         pub fn input() Self {
             return .{
-                .record = &Record.init(
+                .op_tracker = &OpTracker.init(
                     .InitOp,
                     .Input,
                     {},
@@ -196,7 +201,8 @@ pub fn Tensor(
                 ),
                 .strides = &contiguous_strides,
                 .offset = 0,
-                .block_tracker = &utils.BlockTracker{},
+                .block_tracker = BlockTracker{},
+                .folded_constant = false,
             };
         }
 
@@ -206,7 +212,7 @@ pub fn Tensor(
         /// and optimizers can detect it,
         pub fn param() Self {
             return .{
-                .record = &Record.init(
+                .op_tracker = &OpTracker.init(
                     .InitOp,
                     .Parameter,
                     {},
@@ -214,7 +220,8 @@ pub fn Tensor(
                 ),
                 .strides = &contiguous_strides,
                 .offset = 0,
-                .block_tracker = &utils.BlockTracker{},
+                .block_tracker = BlockTracker{},
+                .folded_constant = false,
             };
         }
 
@@ -223,7 +230,7 @@ pub fn Tensor(
         /// unless they are marked as requires_grad
         pub fn full(comptime value: dtypes.ZigType(dtype)) Self {
             return .{
-                .record = &Record.init(
+                .op_tracker = &OpTracker.init(
                     .InitOp,
                     .Full,
                     {},
@@ -231,7 +238,8 @@ pub fn Tensor(
                 ),
                 .strides = &contiguous_strides,
                 .offset = 0,
-                .block_tracker = &utils.BlockTracker{},
+                .block_tracker = BlockTracker{},
+                .folded_constant = true,
             };
         }
 
@@ -243,7 +251,7 @@ pub fn Tensor(
         pub fn random() Self {
             std.debug.assert(dtypes.isFloat(dtype));
             return .{
-                .record = &Record.init(
+                .op_tracker = &OpTracker.init(
                     .InitOp,
                     .Rand,
                     {},
@@ -251,7 +259,7 @@ pub fn Tensor(
                 ),
                 .strides = &contiguous_strides,
                 .offset = 0,
-                .block_tracker = &utils.BlockTracker{},
+                .block_tracker = BlockTracker{},
             };
         }
 
@@ -371,10 +379,11 @@ pub fn Tensor(
         /// There are guardrails to prevent out of bounds access into underlying memory!
         pub fn view(comptime a: Self, comptime new_shape: anytype, comptime new_strides: [new_shape.len]u64, new_offset: u64) (Reshape(new_shape)) {
             var out = Reshape(new_shape){
-                .record = &Record.init(.ArrayOp, .View, .{&a.widen()}, {}),
+                .op_tracker = &OpTracker.init(.ArrayOp, .View, .{&a.widen()}, {}),
                 .strides = &new_strides,
                 .offset = new_offset,
-                .block_tracker = &a.block_tracker.update(),
+                .block_tracker = a.block_tracker.update(),
+                .folded_constant = a.folded_constant,
             };
             if (out.storage() > a.storage()) {
                 @compileError(comptimePrint(
@@ -405,10 +414,11 @@ pub fn Tensor(
         pub fn cast(comptime a: Self, comptime new_dtype: dtypes.DType) tensor(new_dtype, shape) {
             if (new_dtype != a.dtype) {
                 return .{
-                    .record = &Record.init(.ArrayOp, .Cast, .{&a.widen()}, {}),
+                    .op_tracker = &OpTracker.init(.ArrayOp, .Cast, .{&a.widen()}, {}),
                     .strides = a.strides,
                     .offset = a.offset,
-                    .block_tracker = &a.block_tracker.update(),
+                    .block_tracker = a.block_tracker.update(),
+                    .folded_constant = a.folded_constant,
                 };
             } else {
                 return a;
@@ -418,10 +428,11 @@ pub fn Tensor(
         ///Apply an elementwise unary operation
         pub fn unaryFn(comptime a: Self, comptime op: ops.UnaryOp) Self {
             return .{
-                .record = &Record.init(.UnaryOp, op, .{&a.widen()}, {}),
+                .op_tracker = &OpTracker.init(.UnaryOp, op, .{&a.widen()}, {}),
                 .strides = a.strides,
                 .offset = a.offset,
-                .block_tracker = &a.block_tracker.update(),
+                .block_tracker = a.block_tracker.update(),
+                .folded_constant = a.folded_constant,
             };
         }
 
@@ -437,14 +448,14 @@ pub fn Tensor(
                 bc_strides[new_shape.len - i - 1] = if (i >= ndims) 0 else a.strides[ndims - i - 1];
             }
             return .{
-                .record = &Record.init(
+                .op_tracker = &OpTracker.init(
                     .ArrayOp,
                     .Expand,
                     .{&a.widen()},
                     {},
                 ),
                 .strides = &bc_strides,
-                .block_tracker = &a.block_tracker.update(),
+                .block_tracker = a.block_tracker.update(),
             };
         }
 
@@ -485,10 +496,10 @@ pub fn Tensor(
         }
         /// Apply an elementwise binary operation on two arrays, with broadcasting
         pub fn binaryFn(comptime a: Self, _b: anytype, comptime op: ops.BinaryOp) BinaryFnResult(_b, op) {
-            const b = (asTensor(_b)).joinBlock(a.block_tracker.next_block);
+            const b = (asTensor(_b)).join(a.block_tracker.next_block);
             const Result = BinaryFnResult(b, op);
             return Result{
-                .record = &Record.init(
+                .op_tracker = &OpTracker.init(
                     .BinaryOp,
                     op,
                     .{ &a.widen(), &b.widen() },
@@ -496,7 +507,8 @@ pub fn Tensor(
                 ),
                 .strides = &Result.contiguous_strides,
                 .offset = 0,
-                .block_tracker = &a.block_tracker.update(),
+                .block_tracker = a.block_tracker.update(),
+                .folded_constant = a.folded_constant and b.folded_constant,
             };
         }
 
@@ -561,10 +573,11 @@ pub fn Tensor(
 
             const Result = ReduceFnResult(reduce_dims);
             return Result{
-                .record = &Record.init(.ReduceOp, op, .{&a.widen()}, &reduce_dim_mask),
+                .op_tracker = &OpTracker.init(.ReduceOp, op, .{&a.widen()}, &reduce_dim_mask),
                 .strides = &Result.contiguous_strides,
                 .offset = 0,
-                .block_tracker = &a.block_tracker.update(),
+                .block_tracker = a.block_tracker.update(),
+                .folded_constant = false,
             };
         }
 
@@ -607,13 +620,13 @@ pub fn Tensor(
             , .{ shape, @TypeOf(other).shape, n, m, other_m, p }));
         }
         pub fn matmul(comptime _a: Self, comptime _b: anytype) MatMul(_b) {
-            const a = _a.startBlock("matmul");
-            const b = _b.joinBlock(a.block_tracker.next_block);
+            const a = _a.enter("matmul");
+            const b = _b.join(a.block_tracker.next_block);
             return a.unsqueeze(a.ndims - 1)
                 .mul(b.transpose(b.ndims - 2, b.ndims - 1).unsqueeze(b.ndims - 2))
                 .sum(a.ndims)
                 .squeeze(a.ndims)
-                .endBlock();
+                .leave();
         }
 
         pub fn Where(comptime true_value: anytype, comptime false_value: anytype) type {
@@ -632,13 +645,14 @@ pub fn Tensor(
         pub fn where(mask: Self, true_value: anytype, false_value: anytype) (Where(true_value, false_value)) {
             const Out = Where(true_value, false_value);
             const mask_expand = mask.expand(Out.shape);
-            const true_expand = asTensor(true_value).joinBlock(mask.block_tracker.next_block).expand(Out.shape);
-            const false_expand = asTensor(false_value).joinBlock(mask.block_tracker.next_block).expand(Out.shape);
+            const true_expand = asTensor(true_value).join(mask.block_tracker.next_block).expand(Out.shape);
+            const false_expand = asTensor(false_value).join(mask.block_tracker.next_block).expand(Out.shape);
             return .{
-                .record = &Record.init(.TernaryOp, .Where, .{ &mask_expand.widen(), &true_expand.widen(), &false_expand.widen() }, {}),
+                .op_tracker = &OpTracker.init(.TernaryOp, .Where, .{ &mask_expand.widen(), &true_expand.widen(), &false_expand.widen() }, {}),
                 .strides = mask.strides,
                 .offset = mask.offset,
-                .block_tracker = &mask.block_tracker.update(),
+                .block_tracker = mask.block_tracker.update(),
+                .folded_constant = false,
             };
         }
 
@@ -729,8 +743,8 @@ test "unaryFn" {
     const tensor1 = comptime tensor(.i32, .{ 2, 3, 4 }).full(3);
     const tensor2 = comptime tensor1.neg();
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor2.shape[0..tensor2.ndims]);
-    try std.testing.expect(tensor2.record.UnaryOp.op == .Neg);
-    try std.testing.expectEqual(tensor2.record.UnaryOp.a.narrow().*, tensor1);
+    try std.testing.expect(tensor2.op_tracker.UnaryOp.op == .Neg);
+    try std.testing.expectEqual(tensor2.op_tracker.UnaryOp.a.narrow().*, tensor1);
 }
 
 test "binaryFn" {
@@ -738,27 +752,27 @@ test "binaryFn" {
     const tensor2 = comptime tensor(.i32, .{ 3, 1 }).full(3);
     const tensor3 = comptime tensor1.add(tensor2);
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor3.shape[0..tensor3.ndims]);
-    try std.testing.expect(tensor3.record.BinaryOp.op == .Add);
-    try std.testing.expectEqual(tensor3.record.BinaryOp.a.narrow().*, tensor1);
-    try std.testing.expectEqual(tensor3.record.BinaryOp.b.narrow().*, tensor2);
+    try std.testing.expect(tensor3.op_BinaryOp.op == .Add);
+    try std.testing.expectEqual(tensor3.op_BinaryOp.a.narrow().*, tensor1);
+    try std.testing.expectEqual(tensor3.op_BinaryOp.b.narrow().*, tensor2);
 }
 
 test "reduce" {
     const tensor1 = comptime tensor(.i32, .{ 2, 3, 4 }).full(5);
     const tensor2 = comptime tensor1.sum(1);
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 1, 4 }, tensor2.shape[0..tensor1.ndims]);
-    try std.testing.expect(tensor2.record.ReduceOp.op == .Add);
-    try std.testing.expectEqual(tensor2.record.ReduceOp.a.narrow().*, tensor1);
-    try std.testing.expectEqual(tensor2.record.ReduceOp.dims[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
+    try std.testing.expect(tensor2.op_tracker.ReduceOp.op == .Add);
+    try std.testing.expectEqual(tensor2.op_tracker.ReduceOp.a.narrow().*, tensor1);
+    try std.testing.expectEqual(tensor2.op_tracker.ReduceOp.dims[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
 }
 
 test "multiple dim reduce" {
     const tensor1 = comptime tensor(.i32, .{ 2, 3, 4 }).full(5);
     const tensor2 = comptime tensor1.sum(.{ 0, 1 });
     try std.testing.expectEqualSlices(u64, &[_]u64{ 1, 1, 4 }, tensor2.shape[0..tensor2.ndims]);
-    try std.testing.expect(tensor2.record.ReduceOp.op == .Add);
-    try std.testing.expectEqual(tensor2.record.ReduceOp.a.narrow().*, tensor1);
-    try std.testing.expectEqualDeep(tensor2.record.ReduceOp.dims[0..tensor2.ndims], &[_]bool{ true, true, false });
+    try std.testing.expect(tensor2.op_tracker.ReduceOp.op == .Add);
+    try std.testing.expectEqual(tensor2.op_tracker.ReduceOp.a.narrow().*, tensor1);
+    try std.testing.expectEqualDeep(tensor2.op_tracker.ReduceOp.dims[0..tensor2.ndims], &[_]bool{ true, true, false });
 }
 
 test "binaryFn reduce" {
@@ -766,11 +780,11 @@ test "binaryFn reduce" {
     const tensor2 = comptime tensor(.i32, .{ 2, 3, 1 }).full(3);
     const tensor3 = comptime tensor1.add(tensor2).sum(1);
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 1, 4 }, tensor3.shape[0..tensor3.ndims]);
-    try std.testing.expect(tensor3.record.ReduceOp.op == .Add);
+    try std.testing.expect(tensor3.op_tracker.ReduceOp.op == .Add);
     // Anonymous intermediate tensor that stores tensor1 + tensor2
-    const anon = tensor3.record.ReduceOp.a;
-    try std.testing.expectEqual(anon.record.BinaryOp.a.narrow().*, tensor1);
-    try std.testing.expectEqual(anon.record.BinaryOp.b.narrow().*, tensor2);
+    const anon = tensor3.op_tracker.ReduceOp.a;
+    try std.testing.expectEqual(anon.op_BinaryOp.a.narrow().*, tensor1);
+    try std.testing.expectEqual(anon.op_BinaryOp.b.narrow().*, tensor2);
 }
 
 test "as_type" {

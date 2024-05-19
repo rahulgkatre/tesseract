@@ -2,57 +2,8 @@ const std = @import("std");
 const comptimePrint = std.fmt.comptimePrint;
 const ops = @import("ops.zig");
 const dtypes = @import("dtypes.zig");
-const anytensor = @import("anytensor.zig").anytensor;
-
-pub const BlockTracker = extern struct {
-    pub const Block = struct {
-        name: []const u8,
-        outer: ?*const Block,
-        id: u32,
-    };
-
-    block_end: bool = false,
-    curr_block: ?*const Block = null,
-    next_block: ?*const Block = null,
-    next_block_id: u32 = 0,
-
-    pub fn enterBlock(bt: BlockTracker, block_name: []const u8) BlockTracker {
-        return .{
-            .curr_block = bt.curr_block,
-            .next_block = &Block{
-                .name = block_name,
-                .outer = bt.next_block,
-                .id = bt.next_block_id,
-            },
-            .next_block_id = bt.next_block_id + 1,
-        };
-    }
-
-    pub fn joinBlock(bt: BlockTracker, block: ?*const Block) BlockTracker {
-        return .{
-            .curr_block = bt.curr_block,
-            .next_block = block,
-            .next_block_id = bt.next_block_id + 1,
-        };
-    }
-
-    pub fn update(bt: BlockTracker) BlockTracker {
-        return .{
-            .curr_block = bt.next_block,
-            .next_block = bt.next_block,
-            .next_block_id = bt.next_block_id + 1,
-        };
-    }
-
-    pub fn exitBlock(bt: BlockTracker) BlockTracker {
-        return .{
-            .block_end = true,
-            .curr_block = bt.curr_block,
-            .next_block = if (bt.next_block) |next_block| next_block.outer else @compileError("No block to end"),
-            .next_block_id = bt.next_block_id + 1,
-        };
-    }
-};
+const tracker = @import("tracker.zig");
+const AnyTensor = @import("anytensor.zig").AnyTensor;
 
 pub fn arrayPermute(comptime T: type, comptime len: u8, array: [len]u64, perm: [len]u8) [len]T {
     var used: [len]bool = [_]bool{false} ** len;
@@ -145,27 +96,44 @@ pub fn numEntries(comptime ndims: u8, shape: [ndims]u64) u128 {
 }
 
 /// Utility function for visualizing the full graph that is created at compile time, no scheduling is done yet
-pub fn dataflowViz(entrypoints: []const *const anytensor, writer: anytype, allocator: std.mem.Allocator) !void {
-    const RecursiveBlocksViz = struct {
-        fn blocksViz(curr_block: ?*const BlockTracker.Block, viz_writer: anytype) !u32 {
+pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, allocator: std.mem.Allocator) !void {
+    const Viz = struct {
+        fn blocksViz(curr_block: ?*const tracker.BlockTracker.Block, viz_writer: anytype) !u32 {
             if (curr_block) |block| {
                 const depth = try blocksViz(block.outer, viz_writer);
-                try viz_writer.print("    subgraph cluster_{s}_{d} {{", .{ block.name, block.id });
+                try viz_writer.print("    subgraph cluster_{s}_{x} {{", .{ block.name, block.id });
+                // try viz_writer.print("    {{", .{});
+
                 return depth + 1;
             } else {
                 return 0;
             }
         }
+
+        fn inputViz(in: *const AnyTensor, out: *const AnyTensor, viz_writer: anytype) !void {
+            try viz_writer.print(
+                \\    T_{[in]x}->{[op]s}_{[out]x}[label="{[dtype]s}{[shape]any}"];
+                \\
+            , .{
+                .op = switch (out.op_tracker.*) {
+                    inline else => |opt| @tagName(opt.op),
+                },
+                .out = @intFromPtr(out),
+                .in = @intFromPtr(in),
+                .dtype = @tagName(in.dtype),
+                .shape = in.shape[0..in.ndims],
+            });
+        }
     };
 
-    var written = std.AutoArrayHashMap(*const anytensor, void).init(allocator);
+    var written = std.AutoArrayHashMap(*const AnyTensor, void).init(allocator);
     defer written.deinit();
     try writer.print(
         \\digraph G {{
         \\    compound=true;
         \\
     , .{});
-    var queue = std.ArrayList(*const anytensor).init(allocator);
+    var queue = std.ArrayList(*const AnyTensor).init(allocator);
     defer queue.deinit();
 
     for (entrypoints) |entry| {
@@ -178,18 +146,18 @@ pub fn dataflowViz(entrypoints: []const *const anytensor, writer: anytype, alloc
         }
         try written.putNoClobber(tensor, {});
 
-        const depth: u32 = try RecursiveBlocksViz.blocksViz(tensor.block_tracker.curr_block, writer);
+        const depth: u32 = try Viz.blocksViz(tensor.block_tracker.curr_block, writer);
         try writer.print("\n", .{});
 
-        switch (tensor.record.*) {
-            .ArrayOp => |rec| {
-                try switch (rec.op) {
+        switch (tensor.op_tracker.*) {
+            .ArrayOp => |opt| {
+                try switch (opt.op) {
                     .Cast => writer.print(
                         \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nblock: {[block]s}\ndtype: {[data]s}"];
                         \\
                     , .{
-                        .op_type = @typeName(@TypeOf(rec.op)),
-                        .op = @tagName(rec.op),
+                        .op_type = @typeName(@TypeOf(opt.op)),
+                        .op = @tagName(opt.op),
                         .out = @intFromPtr(tensor),
                         .data = @tagName(tensor.dtype),
                         .block = @as([]const u8, if (tensor.block_tracker.curr_block) |block| block.name else "null"),
@@ -198,8 +166,8 @@ pub fn dataflowViz(entrypoints: []const *const anytensor, writer: anytype, alloc
                         \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nblock: {[block]s}\nshape {[shape]any}\nstrides {[strides]any}\noffset {[offset]d}"];
                         \\
                     , .{
-                        .op_type = @typeName(@TypeOf(rec.op)),
-                        .op = @tagName(rec.op),
+                        .op_type = @typeName(@TypeOf(opt.op)),
+                        .op = @tagName(opt.op),
                         .out = @intFromPtr(tensor),
                         .shape = tensor.shape[0..tensor.ndims],
                         .strides = tensor.strides[0..tensor.ndims],
@@ -210,147 +178,80 @@ pub fn dataflowViz(entrypoints: []const *const anytensor, writer: anytype, alloc
                         \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nblock: {[block]s}\nshape: {[data]any}"];
                         \\
                     , .{
-                        .op_type = @typeName(@TypeOf(rec.op)),
-                        .op = @tagName(rec.op),
+                        .op_type = @typeName(@TypeOf(opt.op)),
+                        .op = @tagName(opt.op),
                         .out = @intFromPtr(tensor),
                         .data = tensor.shape[0..tensor.ndims],
                         .block = @as([]const u8, if (tensor.block_tracker.curr_block) |block| block.name else "null"),
                     }),
                 };
             },
-            .ReduceOp => |rec| try writer.print(
+            .ReduceOp => |opt| try writer.print(
                 \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nblock: {[block]s}\n{[data]any}"];
                 \\
             , .{
-                .op_type = @typeName(@TypeOf(rec.op)),
-                .op = @tagName(rec.op),
+                .op_type = @typeName(@TypeOf(opt.op)),
+                .op = @tagName(opt.op),
                 .out = @intFromPtr(tensor),
-                .data = rec.dims,
+                .data = opt.dims,
                 .block = @as([]const u8, if (tensor.block_tracker.curr_block) |block| block.name else "null"),
             }),
-            .InitOp => |rec| try switch (rec.op) {
+            .InitOp => |opt| try switch (opt.op) {
                 .Full => writer.print(
                     \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nblock: {[block]s}\nvalue: {[value]s}"];
                     \\
                 , .{
-                    .op_type = @typeName(@TypeOf(rec.op)),
-                    .op = @tagName(rec.op),
+                    .op_type = @typeName(@TypeOf(opt.op)),
+                    .op = @tagName(opt.op),
                     .out = @intFromPtr(tensor),
                     .block = @as([]const u8, if (tensor.block_tracker.curr_block) |block| block.name else "null"),
-                    .value = rec.args.Full,
+                    .value = opt.args.Full,
                 }),
                 .Range => writer.print(
                     \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nblock: {[block]s}\nstart: {[start]s}, stop: {[stop]s}"];
                     \\
                 , .{
-                    .op_type = @typeName(@TypeOf(rec.op)),
-                    .op = @tagName(rec.op),
+                    .op_type = @typeName(@TypeOf(opt.op)),
+                    .op = @tagName(opt.op),
                     .out = @intFromPtr(tensor),
                     .block = @as([]const u8, if (tensor.block_tracker.curr_block) |block| block.name else "null"),
-                    .start = rec.args.Range.start,
-                    .stop = rec.args.Range.stop,
+                    .start = opt.args.Range.start,
+                    .stop = opt.args.Range.stop,
                 }),
                 else => writer.print(
                     \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nblock: {[block]s}"];
                     \\
                 , .{
-                    .op_type = @typeName(@TypeOf(rec.op)),
-                    .op = @tagName(rec.op),
+                    .op_type = @typeName(@TypeOf(opt.op)),
+                    .op = @tagName(opt.op),
                     .out = @intFromPtr(tensor),
                     .block = @as([]const u8, if (tensor.block_tracker.curr_block) |block| block.name else "null"),
                 }),
             },
-            inline else => |rec| try writer.print(
+            inline else => |opt| try writer.print(
                 \\    {[op]s}_{[out]x}[label="{[op_type]s}.{[op]s}\nblock: {[block]s}"];
                 \\
             , .{
-                .op_type = @typeName(@TypeOf(rec.op)),
-                .op = @tagName(rec.op),
+                .op_type = @typeName(@TypeOf(opt.op)),
+                .op = @tagName(opt.op),
                 .out = @intFromPtr(tensor),
                 .block = @as([]const u8, if (tensor.block_tracker.curr_block) |block| block.name else "null"),
             }),
         }
 
-        switch (tensor.record.*) {
-            .TernaryOp => |rec| {
-                try writer.print(
-                    \\    T_{[a]x}->{[op]s}_{[out]x}[label="{[a_dtype]s}{[a_shape]any}"];
-                    \\    T_{[b]x}->{[op]s}_{[out]x}[label="{[b_dtype]s}{[b_shape]any}"];
-                    \\    T_{[c]x}->{[op]s}_{[out]x}[label="{[c_dtype]s}{[c_shape]any}"];
-                    \\    T_{[out]x}[label="dtype {[out_dtype]s}\nshape {[out_shape]any}\nstrides {[out_strides]any}\noffset {[out_offset]d}"shape=box];
-                    \\    {[op]s}_{[out]x}->T_{[out]x}[label="{[out_dtype]s}{[out_shape]any}"];
-                    \\    
-                , .{
-                    .op = @tagName(rec.op),
-                    .out = @intFromPtr(tensor),
-                    .out_dtype = @tagName(tensor.dtype),
-                    .out_shape = tensor.shape[0..tensor.ndims],
-                    .out_strides = tensor.strides[0..tensor.ndims],
-                    .out_offset = tensor.offset,
-                    .a = @intFromPtr(rec.a),
-                    .a_dtype = @tagName(rec.a.dtype),
-                    .a_shape = rec.a.shape[0..rec.a.ndims],
-                    .b = @intFromPtr(rec.b),
-                    .b_dtype = @tagName(rec.b.dtype),
-                    .b_shape = rec.b.shape[0..rec.b.ndims],
-                    .c = @intFromPtr(rec.c),
-                    .c_dtype = @tagName(rec.c.dtype),
-                    .c_shape = rec.c.shape[0..rec.c.ndims],
-                });
+        switch (tensor.op_tracker.*) {
+            .TernaryOp => |opt| {
+                try Viz.inputViz(opt.a, tensor, writer);
+                try Viz.inputViz(opt.b, tensor, writer);
+                try Viz.inputViz(opt.c, tensor, writer);
             },
-            .BinaryOp => |rec| {
-                try writer.print(
-                    \\    T_{[a]x}->{[op]s}_{[out]x}[label="{[a_dtype]s}{[a_shape]any}"];
-                    \\    T_{[b]x}->{[op]s}_{[out]x}[label="{[b_dtype]s}{[b_shape]any}"];
-                    \\    T_{[out]x}[label="dtype {[out_dtype]s}\nshape {[out_shape]any}\nstrides {[out_strides]any}\noffset {[out_offset]d}"shape=box];
-                    \\    {[op]s}_{[out]x}->T_{[out]x}[label="{[out_dtype]s}{[out_shape]any}"];
-                    \\
-                , .{
-                    .op = @tagName(rec.op),
-                    .out = @intFromPtr(tensor),
-                    .out_dtype = @tagName(tensor.dtype),
-                    .out_shape = tensor.shape[0..tensor.ndims],
-                    .out_strides = tensor.strides[0..tensor.ndims],
-                    .out_offset = tensor.offset,
-                    .a = @intFromPtr(rec.a),
-                    .a_dtype = @tagName(rec.a.dtype),
-                    .a_shape = rec.a.shape[0..rec.a.ndims],
-                    .b = @intFromPtr(rec.b),
-                    .b_dtype = @tagName(rec.b.dtype),
-                    .b_shape = rec.b.shape[0..rec.b.ndims],
-                });
+            .BinaryOp => |opt| {
+                try Viz.inputViz(opt.a, tensor, writer);
+                try Viz.inputViz(opt.b, tensor, writer);
             },
-            .InitOp => |rec| {
-                try writer.print(
-                    \\    T_{[out]x}[label="dtype {[out_dtype]s}\nshape {[out_shape]any}\nstrides {[out_strides]any}\noffset {[out_offset]d}"shape=box];
-                    \\    {[op]s}_{[out]x}->T_{[out]x}[label="{[out_dtype]s}{[out_shape]any}"];
-                    \\
-                , .{
-                    .op = @tagName(rec.op),
-                    .out = @intFromPtr(tensor),
-                    .out_dtype = @tagName(tensor.dtype),
-                    .out_shape = tensor.shape[0..tensor.ndims],
-                    .out_strides = tensor.strides[0..tensor.ndims],
-                    .out_offset = tensor.offset,
-                });
-            },
-            inline else => |rec| {
-                try writer.print(
-                    \\    T_{[a]x}->{[op]s}_{[out]x}[label="{[a_dtype]s}{[a_shape]any}"];
-                    \\    T_{[out]x}[label="dtype {[out_dtype]s}\nshape {[out_shape]any}\nstrides {[out_strides]any}\noffset {[out_offset]d}"shape=box];
-                    \\    {[op]s}_{[out]x}->T_{[out]x}[label="{[out_dtype]s}{[out_shape]any}"];
-                    \\
-                , .{
-                    .op = @tagName(rec.op),
-                    .out = @intFromPtr(tensor),
-                    .out_dtype = @tagName(tensor.dtype),
-                    .out_shape = tensor.shape[0..tensor.ndims],
-                    .out_strides = tensor.strides[0..tensor.ndims],
-                    .out_offset = tensor.offset,
-                    .a = @intFromPtr(rec.a),
-                    .a_dtype = @tagName(rec.a.dtype),
-                    .a_shape = rec.a.shape[0..rec.a.ndims],
-                });
+            .InitOp => {},
+            inline else => |opt| {
+                try Viz.inputViz(opt.a, tensor, writer);
             },
         }
 
@@ -360,19 +261,37 @@ pub fn dataflowViz(entrypoints: []const *const anytensor, writer: anytype, alloc
 
         try writer.print("\n", .{});
 
-        switch (tensor.record.*) {
-            .TernaryOp => |rec| {
-                try queue.append(rec.a);
-                try queue.append(rec.b);
-                try queue.append(rec.c);
+        switch (tensor.op_tracker.*) {
+            inline else => |opt| {
+                try writer.print(
+                    \\    T_{[out]x}[label="dtype {[dtype]s}\nshape {[shape]any}\nstrides {[strides]any}\noffset {[offset]d}\n folded_constant {[fc]}"shape=box];
+                    \\    {[op]s}_{[out]x}->T_{[out]x}[label="{[dtype]s}{[shape]any}"];
+                    \\
+                , .{
+                    .op = @tagName(opt.op),
+                    .out = @intFromPtr(tensor),
+                    .dtype = @tagName(tensor.dtype),
+                    .shape = tensor.shape[0..tensor.ndims],
+                    .strides = tensor.strides[0..tensor.ndims],
+                    .offset = tensor.offset,
+                    .fc = tensor.folded_constant,
+                });
             },
-            .BinaryOp => |rec| {
-                try queue.append(rec.a);
-                try queue.append(rec.b);
+        }
+
+        switch (tensor.op_tracker.*) {
+            .TernaryOp => |opt| {
+                try queue.append(opt.a);
+                try queue.append(opt.b);
+                try queue.append(opt.c);
+            },
+            .BinaryOp => |opt| {
+                try queue.append(opt.a);
+                try queue.append(opt.b);
             },
             .InitOp => {},
-            inline else => |rec| {
-                try queue.append(rec.a);
+            inline else => |opt| {
+                try queue.append(opt.a);
             },
         }
     }
@@ -383,14 +302,14 @@ pub fn dataflowViz(entrypoints: []const *const anytensor, writer: anytype, alloc
     , .{});
 }
 
-pub fn dataflowJson(entrypoints: []const *const anytensor, writer: anytype, allocator: std.mem.Allocator) !void {
-    var tensors_json = std.AutoArrayHashMap(*const anytensor, anytensor.JsonFormat).init(allocator);
+pub fn dataflowJson(entrypoints: []const *const AnyTensor, writer: anytype, allocator: std.mem.Allocator) !void {
+    var tensors_json = std.AutoArrayHashMap(*const AnyTensor, AnyTensor.JsonFormat).init(allocator);
     defer tensors_json.deinit();
 
-    var records_json = std.ArrayList(@import("record.zig").Record.JsonFormat).init(allocator);
-    defer records_json.deinit();
+    var op_trackers_json = std.ArrayList(@import("tracker.zig").OpTracker.JsonFormat).init(allocator);
+    defer op_trackers_json.deinit();
 
-    var queue = std.ArrayList(*const anytensor).init(allocator);
+    var queue = std.ArrayList(*const AnyTensor).init(allocator);
     defer queue.deinit();
 
     for (entrypoints) |entry| {
@@ -402,27 +321,27 @@ pub fn dataflowJson(entrypoints: []const *const anytensor, writer: anytype, allo
             continue;
         }
         try tensors_json.put(tensor, tensor.toJsonFormat());
-        try records_json.append(tensor.record.toJsonFormat(tensor));
-        switch (tensor.record.*) {
-            .TernaryOp => |rec| {
-                try queue.append(rec.a);
-                try queue.append(rec.b);
-                try queue.append(rec.c);
+        try op_trackers_json.append(tensor.op_tracker.toJsonFormat(tensor));
+        switch (tensor.op_tracker.*) {
+            .TernaryOp => |opt| {
+                try queue.append(opt.a);
+                try queue.append(opt.b);
+                try queue.append(opt.c);
             },
-            .BinaryOp => |rec| {
-                try queue.append(rec.a);
-                try queue.append(rec.b);
+            .BinaryOp => |opt| {
+                try queue.append(opt.a);
+                try queue.append(opt.b);
             },
             .InitOp => {},
-            inline else => |rec| {
-                try queue.append(rec.a);
+            inline else => |opt| {
+                try queue.append(opt.a);
             },
         }
     }
 
     try std.json.stringify(.{
         .tensors = tensors_json.values(),
-        .operations = records_json.items,
+        .operations = op_trackers_json.items,
     }, .{}, writer);
     try writer.print("\n", .{});
 }

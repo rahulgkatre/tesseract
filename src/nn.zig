@@ -1,6 +1,6 @@
 const std = @import("std");
 const tensor = @import("tensor.zig");
-const anytensor = @import("anytensor.zig").anytensor;
+const AnyTensor = @import("anytensor.zig").AnyTensor;
 const dtypes = @import("dtypes.zig");
 
 pub fn Linear(comptime in: u64, comptime out: u64, comptime dtype: dtypes.DType) type {
@@ -12,7 +12,7 @@ pub fn Linear(comptime in: u64, comptime out: u64, comptime dtype: dtypes.DType)
 
         pub fn forward(comptime self: @This(), comptime x: anytype) @TypeOf(x).MatMul(W) {
             std.debug.assert(tensor.isTensor(@TypeOf(x)));
-            return x.startBlock(std.fmt.comptimePrint("Linear({d},{d})", .{ in, out })).matmul(self.weight).add(self.bias).endBlock();
+            return x.enter(std.fmt.comptimePrint("Linear({d},{d})", .{ in, out })).matmul(self.weight).add(self.bias).leave();
         }
     };
 }
@@ -42,7 +42,7 @@ test "lazy linear" {
     const linear = comptime LazyLinear(256){};
     const y = comptime linear.init(x).forward(x);
     const writer = std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write){ .context = std.io.getStdOut() };
-    try @import("utils.zig").dataflowViz(&[_]*const anytensor{&y.widen()}, writer, std.testing.allocator);
+    try @import("utils.zig").dataflowViz(&[_]*const AnyTensor{&y.widen()}, writer, std.testing.allocator);
 }
 
 test "linear" {
@@ -50,7 +50,7 @@ test "linear" {
     const linear = comptime Linear(784, 256, .f32){};
     const y = comptime linear.forward(x);
     const writer = std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write){ .context = std.io.getStdOut() };
-    try @import("utils.zig").dataflowViz(&[_]*const anytensor{&y.widen()}, writer, std.testing.allocator);
+    try @import("utils.zig").dataflowViz(&[_]*const AnyTensor{&y.widen()}, writer, std.testing.allocator);
 }
 
 test "symbolic using enum literal?" {
