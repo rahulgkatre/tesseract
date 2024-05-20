@@ -7,6 +7,7 @@ pub const UnaryOp = enum {
     pub const Info = struct {
         op: UnaryOp,
         in: [1]*const AnyTensor,
+        args: Args = {},
     };
     pub const Args = void;
     pub const Json = struct {
@@ -28,6 +29,7 @@ pub const BinaryOp = enum {
     pub const Info = struct {
         op: BinaryOp,
         in: [2]*const AnyTensor,
+        args: Args = {},
     };
     pub const Args = void;
     pub const Json = struct {
@@ -49,6 +51,7 @@ pub const TernaryOp = enum {
     pub const Info = struct {
         op: TernaryOp,
         in: [3]*const AnyTensor,
+        args: Args = {},
     };
     pub const Args = void;
     pub const Json = struct {
@@ -90,6 +93,7 @@ pub const BufferOp = enum {
     pub const Info = struct {
         op: BufferOp,
         in: [1]*const AnyTensor,
+        args: Args = {},
     };
     pub const Args = void;
     pub const Json = struct {
@@ -108,6 +112,7 @@ pub const BufferOp = enum {
 pub const InitOp = enum {
     pub const Info = struct {
         op: InitOp,
+        in: [0]*const AnyTensor,
         args: InitOp.Args,
     };
     pub const Args = union(InitOp) {

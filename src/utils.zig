@@ -102,8 +102,6 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
             if (curr) |group| {
                 const depth = try opGroupViz(group.outer, viz_writer);
                 try viz_writer.print("    subgraph cluster_{s}_{x} {{", .{ group.name, group.id });
-                // try viz_writer.print("    {{", .{});
-
                 return depth + 1;
             } else {
                 return 0;
@@ -186,16 +184,6 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
                     }),
                 };
             },
-            .ReduceOp => |info| try writer.print(
-                \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\n{[args]any}"];
-                \\
-            , .{
-                .type = @typeName(@TypeOf(info.op)),
-                .op = @tagName(info.op),
-                .out = @intFromPtr(out),
-                .args = info.args,
-                .group = @as([]const u8, if (out.op_group_tracker.curr) |group| group.name else "null"),
-            }),
             .InitOp => |info| try switch (info.op) {
                 .Full => writer.print(
                     \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\nvalue: {[value]s}"];
@@ -229,12 +217,13 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
                 }),
             },
             inline else => |info| try writer.print(
-                \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}"];
+                \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\n{[args]any}"];
                 \\
             , .{
                 .type = @typeName(@TypeOf(info.op)),
                 .op = @tagName(info.op),
                 .out = @intFromPtr(out),
+                .args = info.args,
                 .group = @as([]const u8, if (out.op_group_tracker.curr) |group| group.name else "null"),
             }),
         }
@@ -292,7 +281,7 @@ pub fn dataflowJson(entrypoints: []const *const AnyTensor, writer: anytype, allo
     var tensors_json = std.AutoArrayHashMap(*const AnyTensor, AnyTensor.JsonFormat).init(allocator);
     defer tensors_json.deinit();
 
-    var op_trackers_json = std.ArrayList(@import("tracker.zig").OpTracker.JsonFormat).init(allocator);
+    var op_trackers_json = std.ArrayList(@import("tracker.zig").OpTracker.Json).init(allocator);
     defer op_trackers_json.deinit();
 
     var queue = std.ArrayList(*const AnyTensor).init(allocator);
@@ -307,7 +296,7 @@ pub fn dataflowJson(entrypoints: []const *const AnyTensor, writer: anytype, allo
             continue;
         }
         try tensors_json.put(out, out.toJsonFormat());
-        try op_trackers_json.append(out.op_tracker.toJsonFormat(out));
+        try op_trackers_json.append(out.op_tracker.toJson(out));
         switch (out.op_tracker.*) {
             .InitOp => {},
             inline else => |info| {

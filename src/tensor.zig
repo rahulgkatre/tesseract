@@ -64,7 +64,6 @@ pub fn Tensor(
 ) type {
     return extern struct {
         const Self = @This();
-        const shaper = @import("zig").Shaper(Self);
 
         // All the functions for operations are implemented separately
         pub usingnamespace @import("functions.zig").Functions(Self);
@@ -81,12 +80,20 @@ pub fn Tensor(
         shape: [*]const u64 = &shape,
         strides: [*]const u64,
         offset: u64,
-        op_tracker: *const OpTracker = &OpTracker.init(.InitOp, .Empty, {}, .{ .Empty = {} }),
+        op_tracker: *const OpTracker = &OpTracker.init(.InitOp, .Empty, .{}, .{ .Empty = {} }),
         op_group_tracker: OpGroupTracker,
         folded_constant: bool,
 
         pub fn widen(comptime self: Self) AnyTensor {
             return @as(*const AnyTensor, @ptrCast(&self)).*;
+        }
+
+        pub fn BufferType() type {
+            var Child = dtypes.ZigType(dtype);
+            for (0..ndims) |dim| {
+                Child = [shape[ndims - dim - 1]]Child;
+            }
+            return Child;
         }
 
         /// Allows for negative dimension indexing to work by normalizing it to ndims
@@ -153,9 +160,7 @@ pub fn Tensor(
         /// By default the op_group is null, so setting the op_group isn't necessary
         /// for simple functions with trivial gradients (e.g suogtraction)
         pub fn startGroup(self: Self, op_group_name: []const u8) Self {
-            // OpGroup will not modify the computation graph so pass through
-            // the other tensor fields unmodified
-            // @compileLog("Starting op_group", &self.op_group_tracker.startGroupOpGroup(op_group_name).next.?.name);
+            // OpGroup will not modify the computation graph so pass the other fields unmodified
             return .{
                 .op_tracker = self.op_tracker,
                 .strides = self.strides,
@@ -166,7 +171,6 @@ pub fn Tensor(
         }
 
         pub fn joinGroup(self: Self, op_group: ?*const OpGroupTracker.OpGroup) Self {
-            // @compileLog("Joining op_group", other_op_group_tracker.next.?.name);
             return .{
                 .op_tracker = self.op_tracker,
                 .strides = self.strides,
@@ -196,7 +200,7 @@ pub fn Tensor(
                 .op_tracker = &OpTracker.init(
                     .InitOp,
                     .Input,
-                    {},
+                    .{},
                     .{ .Input = {} },
                 ),
                 .strides = &contiguous_strides,
@@ -215,7 +219,7 @@ pub fn Tensor(
                 .op_tracker = &OpTracker.init(
                     .InitOp,
                     .Parameter,
-                    {},
+                    .{},
                     .{ .Parameter = {} },
                 ),
                 .strides = &contiguous_strides,
@@ -233,7 +237,7 @@ pub fn Tensor(
                 .op_tracker = &OpTracker.init(
                     .InitOp,
                     .Full,
-                    {},
+                    .{},
                     .{ .Full = .{ .value = std.fmt.comptimePrint("{}", .{value}) } },
                 ),
                 .strides = &contiguous_strides,
@@ -254,7 +258,7 @@ pub fn Tensor(
                 .op_tracker = &OpTracker.init(
                     .InitOp,
                     .Rand,
-                    {},
+                    .{},
                     .{ .Rand = {} },
                 ),
                 .strides = &contiguous_strides,
@@ -750,7 +754,7 @@ test "unaryFn" {
     const tensor2 = comptime tensor1.neg();
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor2.shape[0..tensor2.ndims]);
     try std.testing.expect(tensor2.op_tracker.UnaryOp.op == .Neg);
-    try std.testing.expectEqual(tensor2.op_tracker.UnaryOp.a.narrow().*, tensor1);
+    try std.testing.expectEqual(tensor2.op_tracker.UnaryOp.in[0].narrow().*, tensor1);
 }
 
 test "binaryFn" {
@@ -758,9 +762,9 @@ test "binaryFn" {
     const tensor2 = comptime tensor(.i32, .{ 3, 1 }).full(3);
     const tensor3 = comptime tensor1.add(tensor2);
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor3.shape[0..tensor3.ndims]);
-    try std.testing.expect(tensor3.op_BinaryOp.op == .Add);
-    try std.testing.expectEqual(tensor3.op_BinaryOp.a.narrow().*, tensor1);
-    try std.testing.expectEqual(tensor3.op_BinaryOp.b.narrow().*, tensor2);
+    try std.testing.expect(tensor3.op_tracker.BinaryOp.op == .Add);
+    try std.testing.expectEqual(tensor3.op_tracker.BinaryOp.in[0].narrow().*, tensor1);
+    try std.testing.expectEqual(tensor3.op_tracker.BinaryOp.in[1].narrow().*, tensor2);
 }
 
 test "reduce" {
@@ -768,8 +772,8 @@ test "reduce" {
     const tensor2 = comptime tensor1.sum(1);
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 1, 4 }, tensor2.shape[0..tensor1.ndims]);
     try std.testing.expect(tensor2.op_tracker.ReduceOp.op == .Add);
-    try std.testing.expectEqual(tensor2.op_tracker.ReduceOp.a.narrow().*, tensor1);
-    try std.testing.expectEqual(tensor2.op_tracker.ReduceOp.dims[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
+    try std.testing.expectEqual(tensor2.op_tracker.ReduceOp.in[0].narrow().*, tensor1);
+    try std.testing.expectEqual(tensor2.op_tracker.ReduceOp.args.mask[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
 }
 
 test "multiple dim reduce" {
@@ -777,8 +781,8 @@ test "multiple dim reduce" {
     const tensor2 = comptime tensor1.sum(.{ 0, 1 });
     try std.testing.expectEqualSlices(u64, &[_]u64{ 1, 1, 4 }, tensor2.shape[0..tensor2.ndims]);
     try std.testing.expect(tensor2.op_tracker.ReduceOp.op == .Add);
-    try std.testing.expectEqual(tensor2.op_tracker.ReduceOp.a.narrow().*, tensor1);
-    try std.testing.expectEqualDeep(tensor2.op_tracker.ReduceOp.dims[0..tensor2.ndims], &[_]bool{ true, true, false });
+    try std.testing.expectEqual(tensor2.op_tracker.ReduceOp.in[0].narrow().*, tensor1);
+    try std.testing.expectEqualDeep(tensor2.op_tracker.ReduceOp.args.mask[0..tensor2.ndims], &[_]bool{ true, true, false });
 }
 
 test "binaryFn reduce" {
@@ -788,12 +792,12 @@ test "binaryFn reduce" {
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 1, 4 }, tensor3.shape[0..tensor3.ndims]);
     try std.testing.expect(tensor3.op_tracker.ReduceOp.op == .Add);
     // Anonymous intermediate tensor that stores tensor1 + tensor2
-    const anon = tensor3.op_tracker.ReduceOp.a;
-    try std.testing.expectEqual(anon.op_BinaryOp.a.narrow().*, tensor1);
-    try std.testing.expectEqual(anon.op_BinaryOp.b.narrow().*, tensor2);
+    const anon = tensor3.op_tracker.ReduceOp.in[0];
+    try std.testing.expectEqual(anon.op_tracker.BinaryOp.in[0], &tensor1.widen());
+    try std.testing.expectEqual(anon.op_tracker.BinaryOp.in[1], &tensor2.widen());
 }
 
-test "as_type" {
+test "cast" {
     const tensor1 = comptime tensor(.bool, .{3}).full(true);
     try std.testing.expect(tensor1.dtype == .bool);
     const tensor2 = comptime tensor1.cast(.i32);
@@ -843,4 +847,9 @@ test "runtime" {
     const tensor1 = comptime tensor(.i32, .{ 2, 1, 4 }).full(1);
     const tensor2 = comptime tensor1.T();
     _ = tensor2;
+}
+
+test "buffer" {
+    const Tensor1 = comptime tensor(.i32, .{ 2, 3, 4 });
+    try std.testing.expectEqual(Tensor1.BufferType(), [2][3][4]i32);
 }

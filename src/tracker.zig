@@ -17,32 +17,22 @@ pub const OpTracker = union(ops.OpTypes) {
             .TernaryOp => [3]*const AnyTensor,
             .BinaryOp => [2]*const AnyTensor,
             .UnaryOp, .BufferOp, .ReduceOp => [1]*const AnyTensor,
-            .InitOp => void,
+            .InitOp => [0]*const AnyTensor,
         },
         args: @field(@TypeOf(op), "Args"),
     ) OpTracker {
-        return @unionInit(OpTracker, @tagName(tag), switch (tag) {
-            .UnaryOp, .BinaryOp, .TernaryOp => .{
-                .op = op,
-                .in = in,
-            },
-            .ReduceOp => .{
+        return @unionInit(
+            OpTracker,
+            @tagName(tag),
+            .{
                 .op = op,
                 .in = in,
                 .args = args,
             },
-            .BufferOp => .{
-                .op = op,
-                .in = in,
-            },
-            .InitOp => .{
-                .op = op,
-                .args = args,
-            },
-        });
+        );
     }
 
-    pub fn toJsonFormat(self: *const OpTracker, out: *const AnyTensor) JsonFormat {
+    pub fn toJson(self: *const OpTracker, out: *const AnyTensor) Json {
         return switch (self.*) {
             .UnaryOp => |info| .{ .UnaryOp = .{
                 .op = info.op,
@@ -78,7 +68,7 @@ pub const OpTracker = union(ops.OpTypes) {
         };
     }
 
-    pub const JsonFormat = union(ops.OpTypes) {
+    pub const Json = union(ops.OpTypes) {
         UnaryOp: ops.UnaryOp.Json,
         BinaryOp: ops.BinaryOp.Json,
         ReduceOp: ops.ReduceOp.Json,

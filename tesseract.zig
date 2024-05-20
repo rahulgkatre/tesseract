@@ -13,6 +13,7 @@ pub const constant = tensor.constant;
 pub const range = tensor.range;
 
 pub const utils = @import("src/utils.zig");
+pub const nn = @import("src/nn.zig");
 
 test "tesseract" {
     _ = tensor;
