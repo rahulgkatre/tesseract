@@ -116,7 +116,7 @@ const Json = struct {
     }
 
     fn fromJsonCompatibleLoop(parsed_loop: *const JsonCompatibleLoop) !*Loop {
-        // Use the arena allocator because the parsed loop will join the other loops of the schedule
+        // Use the arena allocator because the parsed loop will joinGroup the other loops of the schedule
         var loop: *Loop = try arena.allocator().create(Loop);
         loop.dim = parsed_loop.dim;
         loop.group = parsed_loop.group;
@@ -209,7 +209,7 @@ pub const Loop = struct {
             };
         }
         // Sort the loops such that all reduced dims correspond to innermost loops
-        std.sort.block(*const Loop, loop_nest, {}, loopCompare);
+        std.sort.op_group(*const Loop, loop_nest, {}, loopCompare);
         // Nest the loops
         const outermost_loop = loop_nest[0];
         for (loop_nest[0 .. ndims - 1], loop_nest[1..]) |outer, inner| {
@@ -263,7 +263,7 @@ pub const Statement = struct {
                         .ReduceOp => {
                             return .{ .local = target.tensor };
                         },
-                        .ArrayOp => |op_node| {
+                        .BufferOp => |op_node| {
                             if (op_node.op == .AsType) {
                                 return .{ .expression = &(try Statement.getOrInit(target)).expression };
                             } else {
@@ -303,8 +303,8 @@ pub const Statement = struct {
             op: ops.ReduceOp,
             x: Operand,
         },
-        ArrayOp: struct {
-            op: ops.ArrayOp,
+        BufferOp: struct {
+            op: ops.BufferOp,
             x: Operand,
         },
         InitOp: struct {
@@ -357,7 +357,7 @@ pub const Statement = struct {
                             .b = .{ .local = target.tensor },
                         },
                     },
-                    .ArrayOp => |op_node| if (op_node.op == .AsType) .{ .ArrayOp = .{
+                    .BufferOp => |op_node| if (op_node.op == .AsType) .{ .BufferOp = .{
                         .op = op_node.op,
                         .x = try Expression.Operand.init(op_node.x, target.tensor.group),
                     } } else {

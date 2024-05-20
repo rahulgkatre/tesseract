@@ -1,9 +1,9 @@
 const std = @import("std");
 const dtypes = @import("dtypes.zig");
-const anytensor = @import("anytensor.zig").anytensor;
+const AnyTensor = @import("anytensor.zig").AnyTensor;
 
 pub const ComputeNode = struct {
-    // ComputeNode will wrap around anytensor, and there will be a hash map for *const anytensor -> ComputeNode
+    // ComputeNode will wrap around AnyTensor, and there will be a hash map for *const AnyTensor -> ComputeNode
     // ComputeNode will also contain scheduling data such as:
     // https://tvm.apache.org/docs/reference/api/python/te.html?highlight=compute_at#tvm.te.Stage
 
@@ -18,25 +18,25 @@ pub const ComputeNode = struct {
 };
 
 pub const DataNode = struct {
-    // DataNode will wrap around anytensor, and there will be a hash map for *const anytensor -> DataNode
+    // DataNode will wrap around AnyTensor, and there will be a hash map for *const AnyTensor -> DataNode
     // DataNode will also contain scheduling data such as grouping, caching, axis information
-    tensor: *const anytensor,
+    tensor: *const AnyTensor,
 };
 
 pub const Graph = struct {
     arena: *std.heap.ArenaAllocator,
-    ordinals: std.AutoArrayHashMap(*const anytensor, usize),
-    comp_nodes: std.AutoArrayHashMap(*const anytensor, ComputeNode),
-    data_nodes: std.AutoArrayHashMap(*const anytensor, DataNode),
-    node_consumers: std.AutoArrayHashMap(*const anytensor, std.AutoArrayHashMap(*const anytensor, void)),
+    ordinals: std.AutoArrayHashMap(*const AnyTensor, usize),
+    comp_nodes: std.AutoArrayHashMap(*const AnyTensor, ComputeNode),
+    data_nodes: std.AutoArrayHashMap(*const AnyTensor, DataNode),
+    node_consumers: std.AutoArrayHashMap(*const AnyTensor, std.AutoArrayHashMap(*const AnyTensor, void)),
 
     pub fn init(arena: *std.heap.ArenaAllocator) !*Graph {
         var graph = try arena.allocator().create(Graph);
         graph.arena = arena;
-        graph.ordinals = std.AutoArrayHashMap(*const anytensor, usize).init(arena.allocator());
-        graph.comp_nodes = std.AutoArrayHashMap(*const anytensor, ComputeNode).init(arena.allocator());
-        graph.data_nodes = std.AutoArrayHashMap(*const anytensor, DataNode).init(arena.allocator());
-        graph.node_consumers = std.AutoArrayHashMap(*const anytensor, std.AutoArrayHashMap(*const anytensor, void)).init(arena.allocator());
+        graph.ordinals = std.AutoArrayHashMap(*const AnyTensor, usize).init(arena.allocator());
+        graph.comp_nodes = std.AutoArrayHashMap(*const AnyTensor, ComputeNode).init(arena.allocator());
+        graph.data_nodes = std.AutoArrayHashMap(*const AnyTensor, DataNode).init(arena.allocator());
+        graph.node_consumers = std.AutoArrayHashMap(*const AnyTensor, std.AutoArrayHashMap(*const AnyTensor, void)).init(arena.allocator());
         return graph;
     }
 
@@ -44,17 +44,17 @@ pub const Graph = struct {
         graph.arena.deinit();
     }
 
-    fn addConsumer(graph: *Graph, producer: *const anytensor, consumer: *const anytensor) !void {
+    fn addConsumer(graph: *Graph, producer: *const AnyTensor, consumer: *const AnyTensor) !void {
         if (graph.node_consumers.getPtr(producer)) |consumers| {
             try consumers.put(consumer, {});
         } else {
-            var consumers = std.AutoArrayHashMap(*const anytensor, void).init(graph.arena.allocator());
+            var consumers = std.AutoArrayHashMap(*const AnyTensor, void).init(graph.arena.allocator());
             try consumers.put(consumer, {});
             try graph.node_consumers.put(producer, consumers);
         }
     }
 
-    pub fn trace(graph: *Graph, tensor: *const anytensor) !void {
+    pub fn trace(graph: *Graph, tensor: *const AnyTensor) !void {
         if (graph.comp_nodes.contains(tensor)) {
             return;
         }
@@ -63,29 +63,28 @@ pub const Graph = struct {
         const data_node: DataNode = .{ .tensor = tensor };
         try graph.data_nodes.putNoClobber(tensor, data_node);
         // Inline the computation if it is a literal (comptime int/float)
-        const comp_node: ComputeNode = .{ .output_node = graph.data_nodes.getPtr(tensor).?, .compute_location = if (dtypes.isComptime(tensor.dtype)) .Inline else .Root };
+        const comp_node: ComputeNode = .{ .output_node = graph.data_nodes.getPtr(tensor).?, .compute_location = if (dtypes.isLiteral(tensor.dtype)) .Inline else .Root };
         try graph.comp_nodes.putNoClobber(tensor, comp_node);
 
-        switch (tensor.record.*) {
-            .TernaryOp => |rec| {
-                try graph.trace(rec.a);
-                try graph.addConsumer(rec.a, tensor);
-                try graph.trace(rec.b);
-                try graph.addConsumer(rec.b, tensor);
-                try graph.trace(rec.c);
-                try graph.addConsumer(rec.c, tensor);
+        switch (tensor.op_tracker.*) {
+            .TernaryOp => |opt| {
+                try graph.trace(opt.in[0]);
+                try graph.addConsumer(opt.in[0], tensor);
+                try graph.trace(opt.in[1]);
+                try graph.addConsumer(opt.in[1], tensor);
+                try graph.trace(opt.in[2]);
+                try graph.addConsumer(opt.in[2], tensor);
             },
-            .BinaryOp => |rec| {
-                try graph.trace(rec.a);
-                try graph.addConsumer(rec.a, tensor);
-                try graph.trace(rec.b);
-                try graph.addConsumer(rec.b, tensor);
+            .BinaryOp => |opt| {
+                try graph.trace(opt.in[0]);
+                try graph.addConsumer(opt.in[0], tensor);
+                try graph.trace(opt.in[1]);
+                try graph.addConsumer(opt.in[1], tensor);
             },
             .InitOp => {},
-            .CustomOp => unreachable,
-            inline else => |rec| {
-                try graph.trace(rec.a);
-                try graph.addConsumer(rec.a, tensor);
+            inline else => |opt| {
+                try graph.trace(opt.in[0]);
+                try graph.addConsumer(opt.in[0], tensor);
             },
         }
     }

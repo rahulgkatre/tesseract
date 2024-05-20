@@ -6,36 +6,41 @@ const Tensor = tesseract.Tensor;
 // Here is a small neural network that can be used for MNIST
 // All tensor code should run in comptime
 // This can mean in the top level of a file or in a function that is called at comptime
-const x = Tensor(.u8, .{ 16, 28, 28 }).input();
-const x_flatten = x.flatten(.{ .start_dim = -2, .end_dim = -1 });
-const w1 = Tensor(.f16, .{ x_flatten.dimsize(-1), 64 }).param();
-const b1 = Tensor(.f16, .{64}).param();
-const w2 = Tensor(.f16, .{ w1.dimsize(-1), 32 }).param();
-const b2 = Tensor(.f16, .{32}).param();
-const w3 = Tensor(.f16, .{ w2.dimsize(-1), 10 }).param();
-const b3 = Tensor(.f16, .{10}).param();
+// Here the model is defined by a Sequential module, just like in PyTorch
+const x = Tensor(.u8, .{ 16, 28, 28 }).input()
+    .flatten(.{ .start_dim = -2, .end_dim = -1 })
+    .div(255.0)
+    .cast(.f16);
+const model = tesseract.nn.Sequential(.{
+    tesseract.nn.Linear(x.dimsize(-1), 64, .f16){},
+    tesseract.nn.ReLU{},
+    tesseract.nn.Linear(64, 32, .f16){},
+    tesseract.nn.ReLU{},
+    tesseract.nn.Linear(32, 10, .f16){},
+}){};
 
-const norm_x = x_flatten.div(255.0).cast(.f16);
-const l1_out = norm_x.matmul(w1).add(b1).relu();
-const l2_out = l1_out.matmul(w2).add(b2).relu();
-const l3_out = l2_out.matmul(w3).add(b3).relu();
-const out = l3_out.softmax(-1);
+const out = model.forward(x).softmax(-1);
 
 pub fn main() !void {
+    // Try uncommenting this line to see how the shape of the output has already been determined at compile time!
+    // Not shown here, but all the operations that produce this output are also stored as a DAG by the op trackers
+    // @compileLog(@TypeOf(out));
+
+    // Now the program is in runtime, as we have some writers and allocators
     const writer = std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write){ .context = std.io.getStdOut() };
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
-    try tesseract.utils.dataflowViz(&[_]*const tesseract.anytensor{@ptrCast(&out)}, writer, gpa.allocator());
-    // try tesseract.utils.dataflowJson(&[_]*const tesseract.anytensor{@ptrCast(&out)}, writer, gpa.allocator());
+    // Visualize the dataflow as a GraphViz, and also print the JSON representation of the program
+    try tesseract.utils.dataflowViz(&[_]*const tesseract.AnyTensor{@ptrCast(&out)}, writer, gpa.allocator());
+    // try tesseract.utils.dataflowJson(&[_]*const tesseract.AnyTensor{@ptrCast(&out)}, writer, gpa.allocator());
 
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    var graph = try tesseract.graph.Graph.init(&arena);
-    try graph.trace(@ptrCast(&out));
-    graph.inlineSingleConsumers();
-
+    // var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    // defer arena.deinit();
+    // var graph = try tesseract.graph.Graph.init(&arena);
+    // try graph.trace(@ptrCast(&out));
+    // graph.inlineSingleConsumers();
     // for (graph.node_consumers.keys()) |k| {
-    //     const consumers = try gpa.allocator().alloc(tesseract.anytensor.JsonFormat, graph.node_consumers.get(k).?.keys().len);
+    //     const consumers = try gpa.allocator().alloc(tesseract.AnyTensor.JsonFormat, graph.node_consumers.get(k).?.keys().len);
     //     defer gpa.allocator().free(consumers);
 
     //     for (graph.node_consumers.get(k).?.keys(), consumers) |any, *json| {
