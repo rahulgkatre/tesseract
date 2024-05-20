@@ -11,28 +11,20 @@ pub const Module = struct {
     pub fn IFace(comptime T: type, comptime Impl: type) type {
         return struct {
             pub const IType = Module;
-            /// A limitation of Zig is that the return type of a function type cannot be generic on the inputs to the function
-            /// So the implementation the dev provides should actually return an AnyTensor, but this will be narrowed back
-            /// to the actual tensor type by the real forward function that is called
-            /// TODO: Support returning a tuple of AnyTensor
             const ReturnType: type = Impl.ReturnType;
-            const forwardImpl: fn (comptime T, comptime anytype) ReturnType = Impl.forwardImpl;
-            pub fn forward(comptime self: T, comptime in: anytype) @TypeOf(comptime @This().forwardImpl(self, in).narrow()) {
-                return forwardImpl(self, in).narrow();
+            pub fn forward(comptime self: T, comptime in: anytype) @TypeOf(comptime Impl.forward(self, in)) {
+                return Impl.forward(self, in);
             }
         };
     }
 };
 
-// TODO: Make functions.zig no longer a generic type and make a Functional module generator
-// that basically does this same thing but for all functions in functions.zig;
 pub const ReLU = struct {
     const Self = @This();
     pub usingnamespace Module.IFace(Self, struct {
-        pub const ReturnType = AnyTensor;
-        pub fn forwardImpl(comptime _: Self, comptime x: anytype) AnyTensor {
+        pub fn forward(comptime _: Self, comptime x: anytype) @TypeOf(x) {
             std.debug.assert(tensor.isTensor(@TypeOf(x)));
-            return x.relu().widen();
+            return x.relu();
         }
     });
 };
@@ -42,14 +34,12 @@ pub fn Linear(comptime in: u64, comptime out: u64, comptime dtype: dtypes.DType)
         const Self = @This();
 
         pub usingnamespace Module.IFace(Self, struct {
-            pub const ReturnType = AnyTensor;
-            pub fn forwardImpl(comptime self: Self, comptime x: anytype) AnyTensor {
+            pub fn forward(comptime self: Self, comptime x: anytype) @TypeOf(x).MatMul(Weight) {
                 std.debug.assert(tensor.isTensor(@TypeOf(x)));
                 return x.startGroup(std.fmt.comptimePrint("Linear_{d}_{d}", .{ in, out }))
                     .matmul(self.weight)
                     .add(self.bias)
-                    .endGroup()
-                    .widen();
+                    .endGroup();
             }
         });
 
@@ -65,15 +55,21 @@ pub fn Sequential(comptime modules: anytype) type {
     return struct {
         const Self = @This();
         pub usingnamespace Module.IFace(Self, struct {
-            pub const ReturnType = AnyTensor;
-            pub fn forwardImpl(comptime _: Self, comptime x: anytype) AnyTensor {
-                std.debug.assert(tensor.isTensor(@TypeOf(x)));
-                var result: AnyTensor = x.widen();
+            fn ReturnType(comptime in: anytype) type {
+                var result: AnyTensor = in.widen();
                 for (modules) |module| {
                     std.debug.assert(Module.is(@TypeOf(module)));
                     result = module.forward(result.narrow().*).widen();
                 }
-                return result;
+                return result.Narrow();
+            }
+            pub fn forward(comptime _: Self, comptime in: anytype) ReturnType(in) {
+                var result: AnyTensor = in.widen();
+                for (modules) |module| {
+                    std.debug.assert(Module.is(@TypeOf(module)));
+                    result = module.forward(result.narrow().*).widen();
+                }
+                return result.narrow().*;
             }
         });
     };
