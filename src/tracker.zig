@@ -107,6 +107,10 @@ pub const OpGroupTracker = extern struct {
     }
 
     pub fn joinGroup(self: OpGroupTracker, group: ?*const OpGroup) OpGroupTracker {
+        if (group == null) {
+            return self;
+        }
+
         return .{
             .curr = self.curr,
             .next = group,
@@ -115,6 +119,9 @@ pub const OpGroupTracker = extern struct {
     }
 
     pub fn keepGroup(self: OpGroupTracker) OpGroupTracker {
+        if (self.next == null and self.curr == null) {
+            return self;
+        }
         return .{
             .curr = self.next,
             .next = self.next,

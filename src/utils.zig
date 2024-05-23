@@ -113,7 +113,7 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
                 \\    T_{[in]x}->{[op]s}_{[out]x}[label="{[dtype]s}{[shape]any}"];
                 \\
             , .{
-                .op = switch (out.op_tracker.*) {
+                .op = switch (out.meta.op_tracker) {
                     inline else => |info| @tagName(info.op),
                 },
                 .out = @intFromPtr(out),
@@ -144,10 +144,10 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
         }
         try written.putNoClobber(out, {});
 
-        const depth: u32 = try Viz.opGroupViz(out.op_group_tracker.curr, writer);
+        const depth: u32 = try Viz.opGroupViz(out.meta.op_group_tracker.curr, writer);
         try writer.print("\n", .{});
 
-        switch (out.op_tracker.*) {
+        switch (out.meta.op_tracker) {
             .BufferOp => |info| {
                 try switch (info.op) {
                     .Cast => writer.print(
@@ -158,7 +158,7 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
                         .op = @tagName(info.op),
                         .out = @intFromPtr(out),
                         .data = @tagName(out.dtype),
-                        .group = @as([]const u8, if (out.op_group_tracker.curr) |group| group.name else "null"),
+                        .group = @as([]const u8, if (out.meta.op_group_tracker.curr) |group| group.name else "null"),
                     }),
                     .View => writer.print(
                         \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\nshape {[shape]any}\nstrides {[strides]any}\noffset {[offset]d}"];
@@ -170,7 +170,7 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
                         .shape = out.shape[0..out.ndims],
                         .strides = out.strides[0..out.ndims],
                         .offset = out.offset,
-                        .group = @as([]const u8, if (out.op_group_tracker.curr) |group| group.name else "null"),
+                        .group = @as([]const u8, if (out.meta.op_group_tracker.curr) |group| group.name else "null"),
                     }),
                     else => writer.print(
                         \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\nshape: {[data]any}"];
@@ -180,7 +180,7 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
                         .op = @tagName(info.op),
                         .out = @intFromPtr(out),
                         .data = out.shape[0..out.ndims],
-                        .group = @as([]const u8, if (out.op_group_tracker.curr) |group| group.name else "null"),
+                        .group = @as([]const u8, if (out.meta.op_group_tracker.curr) |group| group.name else "null"),
                     }),
                 };
             },
@@ -192,8 +192,18 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
                     .type = @typeName(@TypeOf(info.op)),
                     .op = @tagName(info.op),
                     .out = @intFromPtr(out),
-                    .group = @as([]const u8, if (out.op_group_tracker.curr) |group| group.name else "null"),
+                    .group = @as([]const u8, if (out.meta.op_group_tracker.curr) |group| group.name else "null"),
                     .value = info.args.Full.value,
+                }),
+                .Input => writer.print(
+                    \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\nlabel: {[label]s}"];
+                    \\
+                , .{
+                    .type = @typeName(@TypeOf(info.op)),
+                    .op = @tagName(info.op),
+                    .out = @intFromPtr(out),
+                    .group = @as([]const u8, if (out.meta.op_group_tracker.curr) |group| group.name else "null"),
+                    .label = out.meta.label orelse "null",
                 }),
                 .Range => writer.print(
                     \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\nstart: {[start]s}, stop: {[stop]s}"];
@@ -202,7 +212,7 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
                     .type = @typeName(@TypeOf(info.op)),
                     .op = @tagName(info.op),
                     .out = @intFromPtr(out),
-                    .group = @as([]const u8, if (out.op_group_tracker.curr) |group| group.name else "null"),
+                    .group = @as([]const u8, if (out.meta.op_group_tracker.curr) |group| group.name else "null"),
                     .start = info.args.Range.start,
                     .stop = info.args.Range.stop,
                 }),
@@ -213,22 +223,22 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
                     .type = @typeName(@TypeOf(info.op)),
                     .op = @tagName(info.op),
                     .out = @intFromPtr(out),
-                    .group = @as([]const u8, if (out.op_group_tracker.curr) |group| group.name else "null"),
+                    .group = @as([]const u8, if (out.meta.op_group_tracker.curr) |group| group.name else "null"),
                 }),
             },
             inline else => |info| try writer.print(
-                \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\n{[args]any}"];
+                \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\nargs: {[args]any}"];
                 \\
             , .{
                 .type = @typeName(@TypeOf(info.op)),
                 .op = @tagName(info.op),
                 .out = @intFromPtr(out),
                 .args = info.args,
-                .group = @as([]const u8, if (out.op_group_tracker.curr) |group| group.name else "null"),
+                .group = @as([]const u8, if (out.meta.op_group_tracker.curr) |group| group.name else "null"),
             }),
         }
 
-        switch (out.op_tracker.*) {
+        switch (out.meta.op_tracker) {
             .InitOp => {},
             inline else => |info| {
                 for (info.in) |in| {
@@ -243,10 +253,10 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
 
         try writer.print("\n", .{});
 
-        switch (out.op_tracker.*) {
+        switch (out.meta.op_tracker) {
             inline else => |info| {
                 try writer.print(
-                    \\    T_{[out]x}[label="dtype {[dtype]s}\nshape {[shape]any}\nstrides {[strides]any}\noffset {[offset]d}\nfolded_constant {[fc]}"shape=box];
+                    \\    T_{[out]x}[label="dtype {[dtype]s}\nshape {[shape]any}\nstrides {[strides]any}\noffset {[offset]d}\nfolded_constant {[fc]}\nlabel: {[label]s}"shape=box];
                     \\    {[op]s}_{[out]x}->T_{[out]x}[label="{[dtype]s}{[shape]any}"];
                     \\
                 , .{
@@ -256,12 +266,13 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
                     .shape = out.shape[0..out.ndims],
                     .strides = out.strides[0..out.ndims],
                     .offset = out.offset,
-                    .fc = out.folded_constant,
+                    .fc = out.meta.folded_constant,
+                    .label = out.meta.label orelse "null",
                 });
             },
         }
 
-        switch (out.op_tracker.*) {
+        switch (out.meta.op_tracker) {
             .InitOp => {},
             inline else => |info| {
                 for (info.in) |in| {
@@ -296,8 +307,8 @@ pub fn dataflowJson(entrypoints: []const *const AnyTensor, writer: anytype, allo
             continue;
         }
         try tensors_json.put(out, out.toJsonFormat());
-        try op_trackers_json.append(out.op_tracker.toJson(out));
-        switch (out.op_tracker.*) {
+        try op_trackers_json.append(out.meta.op_tracker.toJson(out));
+        switch (out.meta.op_tracker) {
             .InitOp => {},
             inline else => |info| {
                 for (info.in) |in| {

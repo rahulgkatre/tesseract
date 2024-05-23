@@ -7,16 +7,20 @@ const Tensor = tesseract.Tensor;
 // All tensor code should run in comptime
 // This can mean in the top level of a file or in a function that is called at comptime
 // Here the model is defined by a Sequential module, just like in PyTorch
-const x = Tensor(.u8, .{ 16, 28, 28 }).input()
+const x = Tensor(.u8, .{ 16, 28, 28 }).input(null)
     .flatten(.{ .start_dim = -2, .end_dim = -1 })
     .div(255.0)
     .cast(.f16);
 const model = tesseract.nn.Sequential(.{
-    tesseract.nn.Linear(x.dimsize(-1), 64, .f16){},
+    tesseract.nn.Linear(x.dimsize(-1), 64, .f16, "input"){},
     tesseract.nn.ReLU{},
-    tesseract.nn.Linear(64, 32, .f16){},
+    tesseract.nn.LazyLinear(32, .f16, "fc1"){},
     tesseract.nn.ReLU{},
-    tesseract.nn.Linear(32, 10, .f16){},
+    tesseract.nn.LazyLinear(32, .f16, "fc2"){},
+    tesseract.nn.ReLU{},
+    tesseract.nn.LazyLinear(32, .f16, "fc3"){},
+    tesseract.nn.ReLU{},
+    tesseract.nn.LazyLinear(10, .f16, "output"){},
 }){};
 
 const out = model.forward(x).softmax(-1);

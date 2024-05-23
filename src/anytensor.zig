@@ -27,9 +27,7 @@ pub const AnyTensor = extern struct {
     shape: [*]const u64,
     strides: [*]const u64,
     offset: u64,
-    op_tracker: *const tracker.OpTracker,
-    op_group_tracker: tracker.OpGroupTracker,
-    folded_constant: bool,
+    meta: *const tensor.Metadata,
 
     pub fn Narrow(comptime self: AnyTensor) type {
         return tensor.Tensor(self.dtype, self.ndims, self.shape[0..self.ndims][0..].*);

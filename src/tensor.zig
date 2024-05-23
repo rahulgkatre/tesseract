@@ -7,6 +7,22 @@ const dtypes = @import("dtypes.zig");
 const OpTracker = @import("tracker.zig").OpTracker;
 const OpGroupTracker = @import("tracker.zig").OpGroupTracker;
 
+pub const Metadata = struct {
+    op_tracker: OpTracker,
+    op_group_tracker: OpGroupTracker,
+    folded_constant: bool,
+    label: ?[]const u8,
+
+    pub fn defaults() Metadata {
+        return .{
+            .op_tracker = OpTracker.init(.InitOp, .Empty, .{}, .{ .Empty = {} }),
+            .op_group_tracker = .{},
+            .folded_constant = false,
+            .label = null,
+        };
+    }
+};
+
 pub fn AsTensor(comptime val: anytype) type {
     if (isTensor(@TypeOf(val))) {
         return Tensor(val.dtype, val.ndims, val.shape[0..val.ndims].*);
@@ -42,14 +58,14 @@ pub fn asTensor(comptime val: anytype) AsTensor(val) {
     return if (!isTensor(@TypeOf(val))) AsTensor(val).full(val) else val;
 }
 
-pub fn randLike(comptime other: anytype) @TypeOf(other) {
+pub fn randLike(comptime other: anytype) AsTensor(other) {
     std.debug.assert(isTensor(@TypeOf(other)));
-    return @TypeOf(other).rand();
+    return AsTensor(other).rand();
 }
 
-pub fn fullLike(comptime other: anytype, value: dtypes.ZigType(other.dtype)) @TypeOf(other) {
+pub fn fullLike(comptime other: anytype, value: dtypes.ZigType(other.dtype)) AsTensor(other) {
     std.debug.assert(isTensor(@TypeOf(other)));
-    return @TypeOf(other).full(value);
+    return AsTensor(other).full(value);
 }
 
 pub fn tensor(comptime dtype: dtypes.DType, comptime shape: anytype) type {
@@ -78,11 +94,9 @@ pub fn Tensor(
         dtype: dtypes.DType = dtype,
         ndims: u8 = ndims,
         shape: [*]const u64 = &shape,
-        strides: [*]const u64,
-        offset: u64,
-        op_tracker: *const OpTracker = &OpTracker.init(.InitOp, .Empty, .{}, .{ .Empty = {} }),
-        op_group_tracker: OpGroupTracker,
-        folded_constant: bool,
+        strides: [*]const u64 = &contiguous_strides,
+        offset: u64 = 0,
+        meta: *const Metadata = &Metadata.defaults(),
 
         pub fn widen(comptime self: Self) AnyTensor {
             return @as(*const AnyTensor, @ptrCast(&self)).*;
@@ -162,21 +176,27 @@ pub fn Tensor(
         pub fn startGroup(self: Self, op_group_name: []const u8) Self {
             // OpGroup will not modify the computation graph so pass the other fields unmodified
             return .{
-                .op_tracker = self.op_tracker,
+                .meta = &.{
+                    .op_tracker = self.meta.op_tracker,
+                    .op_group_tracker = self.meta.op_group_tracker.startGroup(op_group_name ++ if (self.meta.label) |label| "_" ++ label else ""),
+                    .folded_constant = self.meta.folded_constant,
+                    .label = self.meta.label,
+                },
                 .strides = self.strides,
                 .offset = self.offset,
-                .op_group_tracker = self.op_group_tracker.startGroup(op_group_name),
-                .folded_constant = self.folded_constant,
             };
         }
 
         pub fn joinGroup(self: Self, op_group: ?*const OpGroupTracker.OpGroup) Self {
             return .{
-                .op_tracker = self.op_tracker,
+                .meta = &.{
+                    .op_tracker = self.meta.op_tracker,
+                    .op_group_tracker = self.meta.op_group_tracker.joinGroup(op_group),
+                    .folded_constant = self.meta.folded_constant,
+                    .label = self.meta.label,
+                },
                 .strides = self.strides,
                 .offset = self.offset,
-                .op_group_tracker = self.op_group_tracker.joinGroup(op_group),
-                .folded_constant = self.folded_constant,
             };
         }
 
@@ -185,66 +205,68 @@ pub fn Tensor(
         pub fn endGroup(self: *const Self) Self {
             // @compileLog("Exiting op_group", &self.op_group_tracker.next.?.name);
             return .{
-                .op_tracker = self.op_tracker,
+                .meta = &.{
+                    .op_tracker = self.meta.op_tracker,
+                    .op_group_tracker = self.meta.op_group_tracker.endGroup(),
+                    .folded_constant = self.meta.folded_constant,
+                    .label = self.meta.label,
+                },
                 .strides = self.strides,
                 .offset = self.offset,
-                .op_group_tracker = self.op_group_tracker.endGroup(),
-                .folded_constant = self.folded_constant,
             };
         }
 
         /// Used to mark a tensor as an input to a graph,
         /// codegen will make this an argument of the function
-        pub fn input() Self {
-            return .{
-                .op_tracker = &OpTracker.init(
+        /// A label can be given to make two tensors of the same shape/dtype
+        /// correspond to different arrays at runtime (e.g. for two input images )
+        pub fn input(comptime label: ?[]const u8) Self {
+            return .{ .meta = &.{
+                .op_tracker = OpTracker.init(
                     .InitOp,
                     .Input,
                     .{},
                     .{ .Input = {} },
                 ),
-                .strides = &contiguous_strides,
-                .offset = 0,
                 .op_group_tracker = OpGroupTracker{},
                 .folded_constant = false,
-            };
+                .label = label,
+            } };
         }
 
         /// Used to mark a tensor as a learnable parameter,
         /// codegen will make this an argument of the function,
         /// gradients can be accumulated for it,
         /// and optimizers can detect it,
-        pub fn param() Self {
-            return .{
-                .op_tracker = &OpTracker.init(
+        pub fn param(label: []const u8) Self {
+            return .{ .meta = &.{
+                .op_tracker = OpTracker.init(
                     .InitOp,
                     .Parameter,
                     .{},
                     .{ .Parameter = {} },
                 ),
-                .strides = &contiguous_strides,
-                .offset = 0,
                 .op_group_tracker = OpGroupTracker{},
                 .folded_constant = false,
-            };
+                .label = label,
+            } };
         }
 
         /// Fill a tensor with a value
         /// By default, full tensors will be constant folded in codegen
         /// unless they are marked as requires_grad
         pub fn full(comptime value: dtypes.ZigType(dtype)) Self {
-            return .{
-                .op_tracker = &OpTracker.init(
+            return .{ .meta = &.{
+                .op_tracker = OpTracker.init(
                     .InitOp,
                     .Full,
                     .{},
                     .{ .Full = .{ .value = std.fmt.comptimePrint("{}", .{value}) } },
                 ),
-                .strides = &contiguous_strides,
-                .offset = 0,
                 .op_group_tracker = OpGroupTracker{},
                 .folded_constant = true,
-            };
+                .label = null,
+            } };
         }
 
         /// Fill a tensor with random generated numbers
@@ -252,19 +274,19 @@ pub fn Tensor(
         /// unless they are marked as requires_grad
         /// Do not use this for random initialization of parameters!
         /// Note that some device backends do not support this
-        pub fn random() Self {
+        pub fn random(label: []const u8) Self {
             std.debug.assert(dtypes.isFloat(dtype));
-            return .{
+            return .{ .meta = &.{
                 .op_tracker = &OpTracker.init(
                     .InitOp,
                     .Rand,
                     .{},
                     .{ .Rand = {} },
                 ),
-                .strides = &contiguous_strides,
-                .offset = 0,
-                .op_group_tracker = OpGroupTracker{},
-            };
+                .op_group_tracker = .{},
+                .folded_constant = false,
+                .label = label,
+            } };
         }
 
         pub fn Permute(comptime perm: [ndims]u8) type {
@@ -383,11 +405,14 @@ pub fn Tensor(
         /// There are guardrails to prevent out of bounds access into underlying memory!
         pub fn view(comptime a: Self, comptime new_shape: anytype, comptime new_strides: [new_shape.len]u64, new_offset: u64) (Reshape(new_shape)) {
             var out = Reshape(new_shape){
-                .op_tracker = &OpTracker.init(.BufferOp, .View, .{&a.widen()}, {}),
+                .meta = &.{
+                    .op_tracker = OpTracker.init(.BufferOp, .View, .{&a.widen()}, {}),
+                    .op_group_tracker = a.meta.op_group_tracker.keepGroup(),
+                    .folded_constant = a.meta.folded_constant,
+                    .label = a.meta.label,
+                },
                 .strides = &new_strides,
                 .offset = new_offset,
-                .op_group_tracker = a.op_group_tracker.keepGroup(),
-                .folded_constant = a.folded_constant,
             };
             if (out.storage() > a.storage()) {
                 @compileError(comptimePrint(
@@ -418,11 +443,14 @@ pub fn Tensor(
         pub fn cast(comptime a: Self, comptime new_dtype: dtypes.DType) tensor(new_dtype, shape) {
             if (new_dtype != a.dtype) {
                 return .{
-                    .op_tracker = &OpTracker.init(.BufferOp, .Cast, .{&a.widen()}, {}),
+                    .meta = &.{
+                        .op_tracker = OpTracker.init(.BufferOp, .Cast, .{&a.widen()}, {}),
+                        .op_group_tracker = a.meta.op_group_tracker.keepGroup(),
+                        .folded_constant = a.meta.folded_constant,
+                        .label = a.meta.label,
+                    },
                     .strides = a.strides,
                     .offset = a.offset,
-                    .op_group_tracker = a.op_group_tracker.keepGroup(),
-                    .folded_constant = a.folded_constant,
                 };
             } else {
                 return a;
@@ -432,11 +460,14 @@ pub fn Tensor(
         ///Apply an elementwise unary operation
         pub fn unaryFn(comptime a: Self, comptime op: ops.UnaryOp) Self {
             return .{
-                .op_tracker = &OpTracker.init(.UnaryOp, op, .{&a.widen()}, {}),
+                .meta = &.{
+                    .op_tracker = OpTracker.init(.UnaryOp, op, .{&a.widen()}, {}),
+                    .op_group_tracker = a.meta.op_group_tracker.keepGroup(),
+                    .folded_constant = a.meta.folded_constant,
+                    .label = a.meta.label,
+                },
                 .strides = a.strides,
                 .offset = a.offset,
-                .op_group_tracker = a.op_group_tracker.keepGroup(),
-                .folded_constant = a.folded_constant,
             };
         }
 
@@ -460,6 +491,7 @@ pub fn Tensor(
                 ),
                 .strides = &bc_strides,
                 .op_group_tracker = a.op_group_tracker.keepGroup(),
+                .label = a.label,
             };
         }
 
@@ -500,19 +532,17 @@ pub fn Tensor(
         }
         /// Apply an elementwise binary operation on two arrays, with broadcasting
         pub fn binaryFn(comptime a: Self, _b: anytype, comptime op: ops.BinaryOp) BinaryFnResult(_b, op) {
-            const b = (asTensor(_b)).joinGroup(a.op_group_tracker.next);
+            const b = (asTensor(_b)).joinGroup(a.meta.op_group_tracker.next);
             const Result = BinaryFnResult(b, op);
             return Result{
-                .op_tracker = &OpTracker.init(
-                    .BinaryOp,
-                    op,
-                    .{ &a.widen(), &b.widen() },
-                    {},
-                ),
                 .strides = &Result.contiguous_strides,
                 .offset = 0,
-                .op_group_tracker = a.op_group_tracker.keepGroup(),
-                .folded_constant = a.folded_constant and b.folded_constant,
+                .meta = &.{
+                    .op_tracker = OpTracker.init(.BinaryOp, op, .{ &a.widen(), &b.widen() }, {}),
+                    .op_group_tracker = a.meta.op_group_tracker.keepGroup(),
+                    .folded_constant = a.meta.folded_constant and b.meta.folded_constant,
+                    .label = null,
+                },
             };
         }
 
@@ -583,11 +613,14 @@ pub fn Tensor(
 
             const Result = ReduceFnResult(reduce_dims);
             return Result{
-                .op_tracker = &OpTracker.init(.ReduceOp, op, .{&a.widen()}, .{ .dims = reduce_dims_array, .mask = &reduce_dim_mask }),
                 .strides = &Result.contiguous_strides,
                 .offset = 0,
-                .op_group_tracker = a.op_group_tracker.keepGroup(),
-                .folded_constant = false,
+                .meta = &.{
+                    .op_tracker = OpTracker.init(.ReduceOp, op, .{&a.widen()}, .{ .dims = reduce_dims_array, .mask = &reduce_dim_mask }),
+                    .op_group_tracker = a.meta.op_group_tracker.keepGroup(),
+                    .folded_constant = false,
+                    .label = a.meta.label,
+                },
             };
         }
 
@@ -629,9 +662,8 @@ pub fn Tensor(
                 \\n = {d}, m = {d}, other_m = {d}, p = {d}
             , .{ shape, @TypeOf(other).shape, n, m, other_m, p }));
         }
-        pub fn matmul(comptime _a: Self, comptime _b: anytype) MatMul(_b) {
+        pub fn matmul(comptime _a: Self, comptime b: anytype) MatMul(b) {
             const a = _a.startGroup("matmul");
-            const b = _b.joinGroup(a.op_group_tracker.next);
             return a.unsqueeze(a.ndims - 1)
                 .mul(b.transpose(b.ndims - 2, b.ndims - 1).unsqueeze(b.ndims - 2))
                 .sum(a.ndims)
@@ -658,11 +690,14 @@ pub fn Tensor(
             const true_expand = asTensor(true_value).joinGroup(mask.op_group_tracker.next).expand(Out.shape);
             const false_expand = asTensor(false_value).joinGroup(mask.op_group_tracker.next).expand(Out.shape);
             return .{
-                .op_tracker = &OpTracker.init(.TernaryOp, .Where, .{ &mask_expand.widen(), &true_expand.widen(), &false_expand.widen() }, {}),
                 .strides = mask.strides,
                 .offset = mask.offset,
-                .op_group_tracker = mask.op_group_tracker.keepGroup(),
-                .folded_constant = false,
+                .meta = &.{
+                    .op_tracker = OpTracker.init(.TernaryOp, .Where, .{ &mask_expand.widen(), &true_expand.widen(), &false_expand.widen() }, {}),
+                    .op_group_tracker = mask.op_group_tracker.keepGroup(),
+                    .folded_constant = false,
+                    .label = null,
+                },
             };
         }
 
@@ -753,8 +788,8 @@ test "unaryFn" {
     const tensor1 = comptime tensor(.i32, .{ 2, 3, 4 }).full(3);
     const tensor2 = comptime tensor1.neg();
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor2.shape[0..tensor2.ndims]);
-    try std.testing.expect(tensor2.op_tracker.UnaryOp.op == .Neg);
-    try std.testing.expectEqual(tensor2.op_tracker.UnaryOp.in[0].narrow().*, tensor1);
+    try std.testing.expect(tensor2.meta.op_tracker.UnaryOp.op == .Neg);
+    try std.testing.expectEqual(tensor2.meta.op_tracker.UnaryOp.in[0].narrow().*, tensor1);
 }
 
 test "binaryFn" {
@@ -762,27 +797,27 @@ test "binaryFn" {
     const tensor2 = comptime tensor(.i32, .{ 3, 1 }).full(3);
     const tensor3 = comptime tensor1.add(tensor2);
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor3.shape[0..tensor3.ndims]);
-    try std.testing.expect(tensor3.op_tracker.BinaryOp.op == .Add);
-    try std.testing.expectEqual(tensor3.op_tracker.BinaryOp.in[0].narrow().*, tensor1);
-    try std.testing.expectEqual(tensor3.op_tracker.BinaryOp.in[1].narrow().*, tensor2);
+    try std.testing.expect(tensor3.meta.op_tracker.BinaryOp.op == .Add);
+    try std.testing.expectEqualDeep(tensor3.meta.op_tracker.BinaryOp.in[0].narrow().*, tensor1);
+    try std.testing.expectEqualDeep(tensor3.meta.op_tracker.BinaryOp.in[1].narrow().*, tensor2);
 }
 
 test "reduce" {
     const tensor1 = comptime tensor(.i32, .{ 2, 3, 4 }).full(5);
     const tensor2 = comptime tensor1.sum(1);
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 1, 4 }, tensor2.shape[0..tensor1.ndims]);
-    try std.testing.expect(tensor2.op_tracker.ReduceOp.op == .Add);
-    try std.testing.expectEqual(tensor2.op_tracker.ReduceOp.in[0].narrow().*, tensor1);
-    try std.testing.expectEqual(tensor2.op_tracker.ReduceOp.args.mask[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
+    try std.testing.expect(tensor2.meta.op_tracker.ReduceOp.op == .Add);
+    try std.testing.expectEqual(tensor2.meta.op_tracker.ReduceOp.in[0].narrow().*, tensor1);
+    try std.testing.expectEqual(tensor2.meta.op_tracker.ReduceOp.args.mask[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
 }
 
 test "multiple dim reduce" {
     const tensor1 = comptime tensor(.i32, .{ 2, 3, 4 }).full(5);
     const tensor2 = comptime tensor1.sum(.{ 0, 1 });
     try std.testing.expectEqualSlices(u64, &[_]u64{ 1, 1, 4 }, tensor2.shape[0..tensor2.ndims]);
-    try std.testing.expect(tensor2.op_tracker.ReduceOp.op == .Add);
-    try std.testing.expectEqual(tensor2.op_tracker.ReduceOp.in[0].narrow().*, tensor1);
-    try std.testing.expectEqualDeep(tensor2.op_tracker.ReduceOp.args.mask[0..tensor2.ndims], &[_]bool{ true, true, false });
+    try std.testing.expect(tensor2.meta.op_tracker.ReduceOp.op == .Add);
+    try std.testing.expectEqual(tensor2.meta.op_tracker.ReduceOp.in[0].narrow().*, tensor1);
+    try std.testing.expectEqualDeep(tensor2.meta.op_tracker.ReduceOp.args.mask[0..tensor2.ndims], &[_]bool{ true, true, false });
 }
 
 test "binaryFn reduce" {
@@ -790,11 +825,11 @@ test "binaryFn reduce" {
     const tensor2 = comptime tensor(.i32, .{ 2, 3, 1 }).full(3);
     const tensor3 = comptime tensor1.add(tensor2).sum(1);
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 1, 4 }, tensor3.shape[0..tensor3.ndims]);
-    try std.testing.expect(tensor3.op_tracker.ReduceOp.op == .Add);
+    try std.testing.expect(tensor3.meta.op_tracker.ReduceOp.op == .Add);
     // Anonymous intermediate tensor that stores tensor1 + tensor2
-    const anon = tensor3.op_tracker.ReduceOp.in[0];
-    try std.testing.expectEqual(anon.op_tracker.BinaryOp.in[0], &tensor1.widen());
-    try std.testing.expectEqual(anon.op_tracker.BinaryOp.in[1], &tensor2.widen());
+    const anon = tensor3.meta.op_tracker.ReduceOp.in[0];
+    try std.testing.expectEqualDeep(anon.meta.op_tracker.BinaryOp.in[0].narrow().*, tensor1);
+    try std.testing.expectEqualDeep(anon.meta.op_tracker.BinaryOp.in[1].narrow().*, tensor2);
 }
 
 test "cast" {
@@ -852,4 +887,12 @@ test "runtime" {
 test "buffer" {
     const Tensor1 = comptime tensor(.i32, .{ 2, 3, 4 });
     try std.testing.expectEqual(Tensor1.BufferType(), [2][3][4]i32);
+}
+
+test "unique input" {
+    const tensor1 = comptime tensor(.i32, .{ 2, 1, 4 }).input("tensor1");
+    const tensor2 = comptime tensor(.i32, .{ 2, 1, 4 }).input("tensor2");
+    const out = comptime tensor1.add(tensor2);
+    const writer = std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write){ .context = std.io.getStdOut() };
+    try @import("utils.zig").dataflowViz(&[_]*const AnyTensor{&out.widen()}, writer, std.testing.allocator);
 }
