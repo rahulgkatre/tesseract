@@ -114,11 +114,11 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
                 \\
             , .{
                 .op = switch (out.meta.op_tracker) {
-                    inline else => |info| @tagName(info.op),
+                    inline else => |info| rawTagName(info.op),
                 },
                 .out = @intFromPtr(out),
                 .in = @intFromPtr(in),
-                .dtype = @tagName(in.dtype),
+                .dtype = rawTagName(in.dtype),
                 .shape = in.shape[0..in.ndims],
             });
         }
@@ -154,18 +154,18 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
                         \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\ndtype: {[data]s}"];
                         \\
                     , .{
-                        .type = @typeName(@TypeOf(info.op)),
-                        .op = @tagName(info.op),
+                        .type = rawTypeName(@TypeOf(info.op)),
+                        .op = rawTagName(info.op),
                         .out = @intFromPtr(out),
-                        .data = @tagName(out.dtype),
+                        .data = rawTagName(out.dtype),
                         .group = @as([]const u8, if (out.meta.op_group_tracker.curr) |group| group.name else "null"),
                     }),
                     .View => writer.print(
                         \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\nshape {[shape]any}\nstrides {[strides]any}\noffset {[offset]d}"];
                         \\
                     , .{
-                        .type = @typeName(@TypeOf(info.op)),
-                        .op = @tagName(info.op),
+                        .type = rawTypeName(@TypeOf(info.op)),
+                        .op = rawTagName(info.op),
                         .out = @intFromPtr(out),
                         .shape = out.shape[0..out.ndims],
                         .strides = out.strides[0..out.ndims],
@@ -176,8 +176,8 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
                         \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\nshape: {[data]any}"];
                         \\
                     , .{
-                        .type = @typeName(@TypeOf(info.op)),
-                        .op = @tagName(info.op),
+                        .type = rawTypeName(@TypeOf(info.op)),
+                        .op = rawTagName(info.op),
                         .out = @intFromPtr(out),
                         .data = out.shape[0..out.ndims],
                         .group = @as([]const u8, if (out.meta.op_group_tracker.curr) |group| group.name else "null"),
@@ -189,8 +189,8 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
                     \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\nvalue: {[value]s}"];
                     \\
                 , .{
-                    .type = @typeName(@TypeOf(info.op)),
-                    .op = @tagName(info.op),
+                    .type = rawTypeName(@TypeOf(info.op)),
+                    .op = rawTagName(info.op),
                     .out = @intFromPtr(out),
                     .group = @as([]const u8, if (out.meta.op_group_tracker.curr) |group| group.name else "null"),
                     .value = info.args.Full.value,
@@ -199,8 +199,8 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
                     \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\nlabel: {[label]s}"];
                     \\
                 , .{
-                    .type = @typeName(@TypeOf(info.op)),
-                    .op = @tagName(info.op),
+                    .type = rawTypeName(@TypeOf(info.op)),
+                    .op = rawTagName(info.op),
                     .out = @intFromPtr(out),
                     .group = @as([]const u8, if (out.meta.op_group_tracker.curr) |group| group.name else "null"),
                     .label = out.meta.label orelse "null",
@@ -209,8 +209,8 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
                     \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\nstart: {[start]s}, stop: {[stop]s}"];
                     \\
                 , .{
-                    .type = @typeName(@TypeOf(info.op)),
-                    .op = @tagName(info.op),
+                    .type = rawTypeName(@TypeOf(info.op)),
+                    .op = rawTagName(info.op),
                     .out = @intFromPtr(out),
                     .group = @as([]const u8, if (out.meta.op_group_tracker.curr) |group| group.name else "null"),
                     .start = info.args.Range.start,
@@ -220,8 +220,8 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
                     \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}"];
                     \\
                 , .{
-                    .type = @typeName(@TypeOf(info.op)),
-                    .op = @tagName(info.op),
+                    .type = rawTypeName(@TypeOf(info.op)),
+                    .op = rawTagName(info.op),
                     .out = @intFromPtr(out),
                     .group = @as([]const u8, if (out.meta.op_group_tracker.curr) |group| group.name else "null"),
                 }),
@@ -230,8 +230,8 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
                 \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\nargs: {[args]any}"];
                 \\
             , .{
-                .type = @typeName(@TypeOf(info.op)),
-                .op = @tagName(info.op),
+                .type = rawTypeName(@TypeOf(info.op)),
+                .op = rawTagName(info.op),
                 .out = @intFromPtr(out),
                 .args = info.args,
                 .group = @as([]const u8, if (out.meta.op_group_tracker.curr) |group| group.name else "null"),
@@ -256,13 +256,13 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
         switch (out.meta.op_tracker) {
             inline else => |info| {
                 try writer.print(
-                    \\    T_{[out]x}[label="dtype {[dtype]s}\nshape {[shape]any}\nstrides {[strides]any}\noffset {[offset]d}\nfolded_constant {[fc]}\nlabel: {[label]s}"shape=box];
+                    \\    T_{[out]x}[label="dtype: {[dtype]s}\nshape: {[shape]any}\nstrides: {[strides]any}\noffset: {[offset]d}\nfolded_constant: {[fc]}\nlabel: {[label]s}"shape=box];
                     \\    {[op]s}_{[out]x}->T_{[out]x}[label="{[dtype]s}{[shape]any}"];
                     \\
                 , .{
-                    .op = @tagName(info.op),
+                    .op = rawTagName(info.op),
                     .out = @intFromPtr(out),
-                    .dtype = @tagName(out.dtype),
+                    .dtype = rawTagName(out.dtype),
                     .shape = out.shape[0..out.ndims],
                     .strides = out.strides[0..out.ndims],
                     .offset = out.offset,
@@ -323,4 +323,72 @@ pub fn dataflowJson(entrypoints: []const *const AnyTensor, writer: anytype, allo
         .operations = op_trackers_json.items,
     }, .{}, writer);
     try writer.print("\n", .{});
+}
+
+pub fn arrayToSentinelPointer(comptime array: anytype) [*:0]const @typeInfo(@TypeOf(array)).Array.child {
+    return (array ++ .{0})[0..array.len :0];
+}
+
+pub fn extractDType(comptime ArrayType: type) dtypes.DType {
+    switch (@typeInfo(ArrayType)) {
+        .Array => |info| return extractDType(info.child),
+        .Int, .Float, .Bool, .ComptimeInt, .ComptimeFloat => return @field(dtypes.DType, rawTypeName(ArrayType)),
+        .Struct => |info| if (info.backing_integer) |_| {
+            return @field(dtypes.DType, rawTypeName(ArrayType));
+        },
+        else => {},
+    }
+    @compileError("ArrayType input for Tensor must be a array type (e.g. [M][N][P]DType), received " ++ std.fmt.comptimePrint("{any}", .{ArrayType}));
+}
+
+pub fn extractNdims(comptime ArrayType: type) u8 {
+    switch (@typeInfo(ArrayType)) {
+        .Array => |info| return 1 + extractNdims(info.child),
+        .Int, .Float, .Bool, .ComptimeInt, .ComptimeFloat => return 0,
+        .Struct => |info| if (info.backing_integer) |_| {
+            return 0;
+        },
+        else => {},
+    }
+    @compileError("ArrayType input for Tensor must be a array type (e.g. [M][N][P]DType), received " ++ std.fmt.comptimePrint("{any}", .{ArrayType}));
+}
+
+pub fn extractShape(comptime ArrayType: type) [extractNdims(ArrayType)]u64 {
+    switch (@typeInfo(ArrayType)) {
+        .Array => |info| return .{info.len} ++ extractShape(info.child),
+        .Int, .Float, .Bool, .ComptimeInt, .ComptimeFloat => return .{},
+        .Struct => |info| if (info.backing_integer) |_| {
+            return .{};
+        },
+        else => {},
+    }
+    @compileError("ArrayType input for Tensor must be a array type (e.g. [M][N][P]DType), received " ++ std.fmt.comptimePrint("{any}", .{ArrayType}));
+}
+
+pub fn ToArrayType(comptime ndims: u8, comptime shape: [ndims]u64, comptime dtype: dtypes.DType) type {
+    var Child = dtypes.ZigType(dtype);
+    for (0..ndims) |dim| {
+        Child = [shape[ndims - dim - 1]]Child;
+    }
+    return Child;
+}
+
+pub fn rawTypeName(comptime T: type) []const u8 {
+    const name = @typeName(T);
+    for (0..name.len) |i| {
+        if (name[name.len - i - 1] == '.') {
+            return name[name.len - i ..];
+        }
+    }
+    return name;
+}
+
+pub fn rawTagName(tag: anytype) []const u8 {
+    const name = @tagName(tag);
+    for (0..name.len) |i| {
+        if (name[name.len - i - 1] == '.') {
+            return name[name.len - i ..];
+        }
+    }
+    return name;
 }

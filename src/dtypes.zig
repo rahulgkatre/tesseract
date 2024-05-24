@@ -1,18 +1,34 @@
 const std = @import("std");
 const tensor = @import("tensor.zig");
+const utils = @import("utils.zig");
+
+/// Brain floating point
+pub const bf16 = packed struct {
+    sign: u1 = 0,
+    exponent: u8 = 0,
+    mantissa: u7 = 0,
+};
+
+pub const TF32 = packed struct {
+    sign: u1 = 0,
+    exponent: u8 = 0,
+    mantissa: u10 = 0,
+};
+
 pub const DType = enum(u8) {
-    bool_literal,
-    int_literal,
-    float_literal,
+    comptime_int,
+    comptime_float,
     bool,
     u8,
     i8,
     u16,
     i16,
     f16,
+    bf16,
     u32,
     i32,
     f32,
+    TF32,
     u64,
     i64,
     f64,
@@ -26,14 +42,14 @@ pub const default_int: DType = .i32;
 
 pub fn isLiteral(t: DType) bool {
     return switch (t) {
-        .bool_literal, .float_literal, .int_literal => true,
+        .bool, .comptime_float, .comptime_int => true,
         else => false,
     };
 }
 
 pub fn isFloat(t: DType) bool {
     return switch (t) {
-        .float_literal, .f16, .f32, .f64, .f128 => true,
+        .comptime_float, .f16, .bf16, .f32, .TF32, .f64, .f128 => true,
         else => false,
     };
 }
@@ -45,7 +61,7 @@ pub fn isSigned(t: DType) bool {
         return true;
     } else {
         return switch (t) {
-            .int_literal, .i8, .i16, .i32, .i64, .i128 => true,
+            .comptime_int, .i8, .i16, .i32, .i64, .i128 => true,
             else => false,
         };
     }
@@ -57,43 +73,46 @@ pub fn isInt(t: DType) bool {
 
 pub fn isBool(t: DType) bool {
     return switch (t) {
-        .bool, .bool_literal => true,
+        .bool => true,
         else => false,
     };
 }
 
 pub fn bits(t: DType) u8 {
     return switch (t) {
-        .bool_literal, .int_literal, .float_literal => 0,
+        .comptime_int, .comptime_float => 0,
         .bool => 1,
         .u8, .i8 => 8,
         .u16, .i16, .f16 => 16,
         .u32, .i32, .f32 => 32,
         .u64, .i64, .f64 => 64,
         .u128, .i128, .f128 => 128,
+        else => @TypeOf(ZigType(t)).Struct.backing_integer,
     };
 }
 
 pub fn ZigType(comptime dtype: DType) type {
     return switch (dtype) {
-        .float_literal => comptime_float,
-        .int_literal => comptime_int,
-        .bool, .bool_literal => bool,
+        .comptime_float => comptime_float,
+        .comptime_int => comptime_int,
+        .bool => bool,
         .u8, .i8, .u16, .i16, .u32, .i32, .u64, .i64, .u128, .i128 => std.meta.Int(
             if (isSigned(dtype)) .signed else .unsigned,
             bits(dtype),
         ),
         .f16, .f32, .f64, .f128 => std.meta.Float(bits(dtype)),
+        .bf16 => bf16,
+        .TF32 => TF32,
     };
 }
 
 pub fn inferDType(comptime value: anytype) DType {
     return switch (@typeInfo(@TypeOf(value))) {
-        .Bool => .bool_literal,
-        .ComptimeInt => .int_literal,
-        .ComptimeFloat => .float_literal,
-        .Int, .Float => @field(DType, @typeName(@TypeOf(value))),
-        else => @compileError(@typeName(@TypeOf(value)) ++ " is not a valid tensor element type"),
+        .Bool => .bool,
+        .ComptimeInt => .comptime_int,
+        .ComptimeFloat => .comptime_float,
+        .Int, .Float => @field(DType, utils.rawTypeName(@TypeOf(value))),
+        else => @compileError(@typeName(@TypeOf(value)) ++ " is not a valid tensor data type"),
     };
 }
 
@@ -162,18 +181,17 @@ pub fn floatResultDType(dtype1: DType, dtype2: DType) DType {
 
 pub fn FloatTensor(comptime T: type) type {
     std.debug.assert(tensor.isTensor(T));
-    const Tensor = tensor.Tensor(T.dtype, T.ndims, T.shape);
-    if (!isFloat(Tensor.dtype)) {
-        return tensor.Tensor(default_float, Tensor.ndims, Tensor.shape);
+    if (!isFloat(T.dtype)) {
+        return tensor.tensor(.comptime_float, T.shape);
     } else {
-        return Tensor;
+        return T;
     }
 }
 
 pub fn BoolTensor(comptime T: type) type {
     std.debug.assert(tensor.isTensor(T));
-    const Tensor = tensor.Tensor(T.dtype, T.ndims, T.shape);
-    if (!isBool(Tensor.dtype)) {
+    const Tensor = tensor.tensor(.bool, T.shape);
+    if (!isBool(T.dtype)) {
         @compileError("Must be bool datatype");
     } else {
         return Tensor;
@@ -182,8 +200,8 @@ pub fn BoolTensor(comptime T: type) type {
 
 pub fn IntTensor(comptime T: type) type {
     std.debug.assert(tensor.isTensor(T));
-    const Tensor = tensor.Tensor(T.dtype, T.ndims, T.shape);
-    if (!isInt(Tensor.dtype)) {
+    const Tensor = tensor.tensor(.comptime_int, T.shape);
+    if (!isInt(T.dtype)) {
         @compileError("Must cast to int datatype first");
     } else {
         return Tensor;

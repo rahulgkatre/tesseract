@@ -30,7 +30,7 @@ pub const AnyTensor = extern struct {
     meta: *const tensor.Metadata,
 
     pub fn Narrow(comptime self: AnyTensor) type {
-        return tensor.Tensor(self.dtype, self.ndims, self.shape[0..self.ndims][0..].*);
+        return tensor.tensor(self.dtype, self.shape[0..self.ndims][0..].*);
     }
 
     /// Performs type narrowing to get back the shapetyped Tensor
