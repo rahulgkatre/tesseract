@@ -7,7 +7,7 @@ const Tensor = tesseract.Tensor;
 // All tensor code should run in comptime
 // This can mean in the top level of a file or in a function that is called at comptime
 // Here the model is defined by a Sequential module, just like in PyTorch
-const x = Tensor(.u8, .{ 16, 28, 28 }).input(null)
+const x = Tensor([16][28][28]u8).input("digit")
     .flatten(.{ .start_dim = -2, .end_dim = -1 })
     .div(255.0)
     .cast(.f16);

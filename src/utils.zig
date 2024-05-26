@@ -71,6 +71,10 @@ pub fn ravelMultiIndex(comptime ndims: u8, strides: [ndims]u64, offset: u64, mul
 // This is the default stride pattern unless a stride is manually provided
 // using asStrided
 pub fn contiguousStrides(comptime ndims: u8, shape: [ndims]u64) [ndims]u64 {
+    if (ndims == 0) {
+        return .{};
+    }
+
     var offset: u64 = 1;
     var strides: [ndims]u64 = undefined;
     for (0..ndims - 1) |d| {
@@ -329,25 +333,21 @@ pub fn arrayToSentinelPointer(comptime array: anytype) [*:0]const @typeInfo(@Typ
     return (array ++ .{0})[0..array.len :0];
 }
 
-pub fn extractDType(comptime ArrayType: type) dtypes.DType {
-    switch (@typeInfo(ArrayType)) {
+pub fn extractDType(comptime Type: type) dtypes.DType {
+    switch (@typeInfo(Type)) {
         .Array => |info| return extractDType(info.child),
-        .Int, .Float, .Bool, .ComptimeInt, .ComptimeFloat => return @field(dtypes.DType, rawTypeName(ArrayType)),
-        .Struct => |info| if (info.backing_integer) |_| {
-            return @field(dtypes.DType, rawTypeName(ArrayType));
-        },
+        .Int, .Float, .Bool, .ComptimeInt, .ComptimeFloat => return @field(dtypes.DType, rawTypeName(Type)),
+        .Struct => |info| if (info.backing_integer) |_| return @field(dtypes.DType, rawTypeName(Type)),
         else => {},
     }
-    @compileError("ArrayType input for Tensor must be a array type (e.g. [M][N][P]DType), received " ++ std.fmt.comptimePrint("{any}", .{ArrayType}));
+    @compileError("ArrayType input for Tensor must be a array type (e.g. [M][N][P]DType), received " ++ std.fmt.comptimePrint("{any}", .{Type}));
 }
 
 pub fn extractNdims(comptime ArrayType: type) u8 {
     switch (@typeInfo(ArrayType)) {
         .Array => |info| return 1 + extractNdims(info.child),
         .Int, .Float, .Bool, .ComptimeInt, .ComptimeFloat => return 0,
-        .Struct => |info| if (info.backing_integer) |_| {
-            return 0;
-        },
+        .Struct => |info| if (info.backing_integer) |_| return 0,
         else => {},
     }
     @compileError("ArrayType input for Tensor must be a array type (e.g. [M][N][P]DType), received " ++ std.fmt.comptimePrint("{any}", .{ArrayType}));
@@ -357,18 +357,16 @@ pub fn extractShape(comptime ArrayType: type) [extractNdims(ArrayType)]u64 {
     switch (@typeInfo(ArrayType)) {
         .Array => |info| return .{info.len} ++ extractShape(info.child),
         .Int, .Float, .Bool, .ComptimeInt, .ComptimeFloat => return .{},
-        .Struct => |info| if (info.backing_integer) |_| {
-            return .{};
-        },
+        .Struct => |info| if (info.backing_integer) |_| return .{},
         else => {},
     }
     @compileError("ArrayType input for Tensor must be a array type (e.g. [M][N][P]DType), received " ++ std.fmt.comptimePrint("{any}", .{ArrayType}));
 }
 
-pub fn ToArrayType(comptime ndims: u8, comptime shape: [ndims]u64, comptime dtype: dtypes.DType) type {
+pub fn ToArrayType(dtype: dtypes.DType, shape: anytype) type {
     var Child = dtypes.ZigType(dtype);
-    for (0..ndims) |dim| {
-        Child = [shape[ndims - dim - 1]]Child;
+    for (0..shape.len) |dim| {
+        Child = [shape[shape.len - dim - 1]]Child;
     }
     return Child;
 }

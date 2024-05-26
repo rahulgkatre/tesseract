@@ -22,7 +22,7 @@ pub const LazyModule = struct {
     pub fn IFace(comptime T: type, comptime Impl: type) type {
         return struct {
             pub usingnamespace Module.IFace(T, struct {
-                pub fn forward(comptime _: T, comptime in: anytype) @TypeOf(comptime Impl.RealModule(in).forward(Impl.RealModule(in){}, in)) {
+                pub fn forward(_: T, comptime in: anytype) @TypeOf(comptime Impl.RealModule(in).forward(Impl.RealModule(in){}, in)) {
                     return Impl.RealModule(in).forward(Impl.RealModule(in){}, in);
                 }
             });
@@ -33,14 +33,14 @@ pub const LazyModule = struct {
 pub const ReLU = struct {
     const Self = @This();
     pub usingnamespace Module.IFace(Self, struct {
-        pub fn forward(comptime _: Self, comptime x: anytype) @TypeOf(x) {
+        pub fn forward(_: Self, comptime x: anytype) @TypeOf(x) {
             std.debug.assert(tensor.isTensor(@TypeOf(x)));
             return x.relu();
         }
     });
 };
 
-pub fn LazyLinear(comptime out: u64, comptime dtype: dtypes.DType, comptime label: []const u8) type {
+pub fn LazyLinear(out: u64, dtype: dtypes.DType, comptime label: []const u8) type {
     return struct {
         const Self = @This();
         pub usingnamespace LazyModule.IFace(Self, struct {
@@ -53,26 +53,26 @@ pub fn LazyLinear(comptime out: u64, comptime dtype: dtypes.DType, comptime labe
 }
 
 test "lazy linear" {
-    const x = comptime tensor.tensor(.f32, .{ 16, 784 }).input(null);
+    const x = comptime tensor.Tensor([16][784]f32).input(null);
     const linear = comptime LazyLinear(256, .f32, "lazy_fc"){};
     const y1 = comptime linear.forward(x);
 
-    const x2 = comptime tensor.tensor(.f32, .{ 16, 1 }).input("x2");
+    const x2 = comptime tensor.Tensor([16][1]f32).input("x2");
     const y2 = comptime linear.forward(x2);
 
-    const x3 = comptime tensor.tensor(.f32, .{ 16, 1 }).input("x3");
+    const x3 = comptime tensor.Tensor([16][1]f32).input("x3");
     const y3 = comptime linear.forward(x3);
 
     const writer = std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write){ .context = std.io.getStdOut() };
     try @import("utils.zig").dataflowViz(&[_]*const AnyTensor{ &y1.widen(), &y2.widen(), &y3.widen() }, writer, std.testing.allocator);
 }
 
-pub fn Linear(comptime in: u64, comptime out: u64, comptime dtype: dtypes.DType, comptime label: []const u8) type {
+pub fn Linear(in: u64, out: u64, dtype: dtypes.DType, label: []const u8) type {
     return struct {
         const Self = @This();
 
         pub usingnamespace Module.IFace(Self, struct {
-            pub fn forward(comptime self: Self, comptime x: anytype) @TypeOf(x).MatMul(Weight) {
+            pub fn forward(self: Self, x: anytype) tensor.AsTensor(x).MatMul(self.weight) {
                 std.debug.assert(tensor.isTensor(@TypeOf(x)));
                 return x.startGroup(std.fmt.comptimePrint("Linear_{d}_{d}_{s}", .{ in, out, label }))
                     .matmul(self.weight)
@@ -81,8 +81,8 @@ pub fn Linear(comptime in: u64, comptime out: u64, comptime dtype: dtypes.DType,
             }
         });
 
-        const Weight = tensor.tensor(dtype, .{ in, out });
-        const Bias = tensor.tensor(dtype, .{out});
+        const Weight = tensor.Tensor([in][out]dtypes.ZigType(dtype));
+        const Bias = tensor.Tensor([out]dtypes.ZigType(dtype));
 
         weight: Weight = Weight.param(label ++ "_weight"),
         bias: Bias = Bias.param(label ++ "_bias"),
@@ -93,7 +93,7 @@ pub fn Sequential(comptime modules: anytype) type {
     return struct {
         const Self = @This();
         pub usingnamespace Module.IFace(Self, struct {
-            fn ReturnType(comptime in: anytype) type {
+            fn ReturnType(in: anytype) type {
                 var result: AnyTensor = in.widen();
                 for (modules) |module| {
                     std.debug.assert(Module.is(@TypeOf(module)));
@@ -101,7 +101,7 @@ pub fn Sequential(comptime modules: anytype) type {
                 }
                 return result.Narrow();
             }
-            pub fn forward(comptime _: Self, comptime in: anytype) ReturnType(in) {
+            pub fn forward(_: Self, in: anytype) ReturnType(in) {
                 var result: AnyTensor = in.widen();
                 for (modules) |module| {
                     std.debug.assert(Module.is(@TypeOf(module)));
@@ -114,7 +114,7 @@ pub fn Sequential(comptime modules: anytype) type {
 }
 
 test "linear" {
-    const x = comptime tensor.tensor(.f32, .{ 16, 784 }).input(null);
+    const x = comptime tensor.Tensor([16][784]f32).input(null);
     const linear = comptime Linear(784, 256, .f32, "fc"){};
     const y = comptime linear.forward(x);
     _ = y;

@@ -12,8 +12,7 @@ const LN_2 = tensor.asTensor(0.69314718056);
 const INV_LN_2 = tensor.asTensor(1.4426950408888495760773985077695);
 
 pub fn Functions(comptime T: type) type {
-    comptime std.debug.assert(isTensor(T));
-    const Tensor = tensor.tensor(T.dtype, T.shape);
+    const Tensor = tensor.Tensor(T.ArrayType());
     return struct {
         // MapOps
         pub fn exp2(a: Tensor) FloatTensor(Tensor) {
@@ -79,8 +78,8 @@ pub fn Functions(comptime T: type) type {
         pub fn log(a: FloatTensor(Tensor)) FloatTensor(Tensor) {
             return a.startGroup("log").log2().mul(LN_2).endGroup();
         }
-        pub fn sigmoid(raw_a: FloatTensor(Tensor)) FloatTensor(Tensor) {
-            const a = raw_a.startGroup("sigmoid");
+        pub fn sigmoid(_a: FloatTensor(Tensor)) FloatTensor(Tensor) {
+            const a = _a.startGroup("sigmoid");
             const x_pos = a.neg().exp().add(1.0).recip();
             const x_neg = a.exp().div(a.exp().add(1.0));
             const mask = a.lessThan(0.0);
@@ -89,8 +88,8 @@ pub fn Functions(comptime T: type) type {
         pub fn relu(a: Tensor) Tensor {
             return a.startGroup("relu").maximum(0).cast(a.dtype).endGroup();
         }
-        pub fn softmax(raw_a: FloatTensor(Tensor), comptime dim: i16) FloatTensor(Tensor) {
-            const a = raw_a.startGroup("softmax");
+        pub fn softmax(_a: FloatTensor(Tensor), comptime dim: i16) FloatTensor(Tensor) {
+            const a = _a.startGroup("softmax");
             const minus_max_exp = a.sub(a.max({})).exp();
             const sumexp = minus_max_exp.sum(dim);
             return minus_max_exp.div(sumexp).endGroup();
@@ -98,7 +97,8 @@ pub fn Functions(comptime T: type) type {
         pub fn mean(a: Tensor, comptime dims: anytype) FloatTensor(Tensor.ReduceFnResult(dims)) {
             return a.div(a.sum(dims));
         }
-        pub fn variance(a: Tensor, comptime dims: anytype) FloatTensor(Tensor.ReduceFnResult(dims)) {
+        pub fn variance(_a: Tensor, comptime dims: anytype) FloatTensor(Tensor.ReduceFnResult(dims)) {
+            const a = _a.startGroup("variance");
             const mu = a.mean(dims);
             const N: f64 = @floatFromInt(@divExact(a.num_entries, mu.num_entries));
             const a_minus_mu = a.sub(mu);

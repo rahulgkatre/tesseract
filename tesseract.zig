@@ -4,9 +4,8 @@ pub const graph = @import("src/graph.zig");
 
 const tensor = @import("src/tensor.zig");
 
-pub const Tensor = tensor.tensor;
+pub const Tensor = tensor.Tensor;
 pub const AnyTensor = @import("src/anytensor.zig").AnyTensor;
-pub const scalar = tensor.scalar;
 
 // Expose some of the utility functions that create tensors of specific sizes
 pub const constant = tensor.constant;

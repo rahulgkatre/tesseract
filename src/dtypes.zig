@@ -1,12 +1,18 @@
 const std = @import("std");
 const tensor = @import("tensor.zig");
 const utils = @import("utils.zig");
+const AnyTensor = @import("anytensor.zig").AnyTensor;
 
 /// Brain floating point
 pub const bf16 = packed struct {
     sign: u1 = 0,
     exponent: u8 = 0,
     mantissa: u7 = 0,
+};
+
+pub const complex_f32 = packed struct {
+    real: f32,
+    i: f32,
 };
 
 pub const TF32 = packed struct {
@@ -87,7 +93,7 @@ pub fn bits(t: DType) u8 {
         .u32, .i32, .f32 => 32,
         .u64, .i64, .f64 => 64,
         .u128, .i128, .f128 => 128,
-        else => @TypeOf(ZigType(t)).Struct.backing_integer,
+        else => @typeInfo(ZigType(t)).Struct.backing_integer,
     };
 }
 
@@ -101,7 +107,7 @@ pub fn ZigType(comptime dtype: DType) type {
             bits(dtype),
         ),
         .f16, .f32, .f64, .f128 => std.meta.Float(bits(dtype)),
-        .bf16 => bf16,
+        .bf16 => f16,
         .TF32 => TF32,
     };
 }
@@ -180,15 +186,21 @@ pub fn floatResultDType(dtype1: DType, dtype2: DType) DType {
 }
 
 pub fn FloatTensor(comptime T: type) type {
+    if (T == AnyTensor) {
+        return T;
+    }
     std.debug.assert(tensor.isTensor(T));
     if (!isFloat(T.dtype)) {
-        return tensor.tensor(.comptime_float, T.shape);
+        return tensor.tensor(default_float, T.shape);
     } else {
         return T;
     }
 }
 
 pub fn BoolTensor(comptime T: type) type {
+    if (T == AnyTensor) {
+        return T;
+    }
     std.debug.assert(tensor.isTensor(T));
     const Tensor = tensor.tensor(.bool, T.shape);
     if (!isBool(T.dtype)) {
@@ -199,8 +211,11 @@ pub fn BoolTensor(comptime T: type) type {
 }
 
 pub fn IntTensor(comptime T: type) type {
+    if (T == AnyTensor) {
+        return T;
+    }
     std.debug.assert(tensor.isTensor(T));
-    const Tensor = tensor.tensor(.comptime_int, T.shape);
+    const Tensor = tensor.tensor(default_int, T.shape);
     if (!isInt(T.dtype)) {
         @compileError("Must cast to int datatype first");
     } else {

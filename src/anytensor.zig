@@ -6,7 +6,7 @@ const std = @import("std");
 
 // AnyTensor and tensor need to have the exact same runtime layout for @ptrCast tricks to work
 comptime {
-    const t_info = @typeInfo(tensor.tensor(.bool, .{1})).Struct;
+    const t_info = @typeInfo(tensor.Tensor(f32)).Struct;
     const a_info = @typeInfo(AnyTensor).Struct;
     std.debug.assert(t_info.layout == .@"extern");
     std.debug.assert(t_info.layout == a_info.layout);
@@ -30,7 +30,7 @@ pub const AnyTensor = extern struct {
     meta: *const tensor.Metadata,
 
     pub fn Narrow(comptime self: AnyTensor) type {
-        return tensor.tensor(self.dtype, self.shape[0..self.ndims][0..].*);
+        return tensor.Tensor(utils.ToArrayType(self.dtype, self.shape[0..self.ndims][0..].*));
     }
 
     /// Performs type narrowing to get back the shapetyped Tensor
