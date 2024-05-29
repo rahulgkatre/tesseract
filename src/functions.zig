@@ -37,25 +37,25 @@ pub fn Functions(comptime T: type) type {
             return a.unaryFn(.Id);
         }
         // ZipOps
-        pub fn add(a: Tensor, b: anytype) Tensor.BinaryFnResult(b, .Add) {
+        pub fn add(a: Tensor, comptime b: anytype) Tensor.BinaryFnResult(b, .Add) {
             return a.binaryFn(b, .Add);
         }
-        pub fn mul(a: Tensor, b: anytype) Tensor.BinaryFnResult(b, .Mul) {
+        pub fn mul(a: Tensor, comptime b: anytype) Tensor.BinaryFnResult(b, .Mul) {
             return a.binaryFn(b, .Mul);
         }
-        pub fn maximum(a: Tensor, b: anytype) Tensor.BinaryFnResult(b, .Max) {
+        pub fn maximum(a: Tensor, comptime b: anytype) Tensor.BinaryFnResult(b, .Max) {
             return a.binaryFn(b, .Max);
         }
-        pub fn mod(a: IntTensor(Tensor), b: anytype) Tensor.BinaryFnResult(b, .Mod) {
+        pub fn mod(a: IntTensor(Tensor), comptime b: anytype) Tensor.BinaryFnResult(b, .Mod) {
             return a.binaryFn(b, .Mod);
         }
-        pub fn lessThan(a: Tensor, b: anytype) Tensor.BinaryFnResult(b, .Lt) {
+        pub fn lessThan(a: Tensor, comptime b: anytype) Tensor.BinaryFnResult(b, .Lt) {
             return a.binaryFn(b, .Lt);
         }
-        pub fn equals(a: BoolTensor(Tensor), b: anytype) Tensor.BinaryFnResult(b, .Eq) {
+        pub fn equals(a: BoolTensor(Tensor), comptime b: anytype) Tensor.BinaryFnResult(b, .Eq) {
             return a.binaryFn(b, .Eq);
         }
-        pub fn xor(a: BoolTensor(Tensor), b: anytype) Tensor.BinaryFnResult(b, .Xor) {
+        pub fn xor(a: BoolTensor(Tensor), comptime b: anytype) Tensor.BinaryFnResult(b, .Xor) {
             return a.binaryFn(b, .Xor);
         }
         // ReduceOps
@@ -67,7 +67,7 @@ pub fn Functions(comptime T: type) type {
         }
         // Compounded operations
         pub fn div(a: Tensor, b: anytype) Tensor.BinaryFnResult(b, .Add) {
-            return a.mul(tensor.asTensor(b).recip());
+            return a.startGroup("div").mul(tensor.asTensor(b).recip()).endGroup();
         }
         pub fn sub(a: Tensor, b: anytype) Tensor.BinaryFnResult(b, .Add) {
             return a.add(tensor.asTensor(b).neg());
@@ -86,7 +86,13 @@ pub fn Functions(comptime T: type) type {
             return mask.where(x_neg, x_pos).endGroup();
         }
         pub fn relu(a: Tensor) Tensor {
-            return a.startGroup("relu").maximum(0).cast(a.dtype).endGroup();
+            if (dtypes.isFloat(a.dtype)) {
+                return a.startGroup("relu").maximum(0.0).endGroup();
+            } else if (dtypes.isInt(a.dtype)) {
+                return a.startGroup("relu").maximum(0).endGroup();
+            } else {
+                unreachable;
+            }
         }
         pub fn softmax(_a: FloatTensor(Tensor), comptime dim: i16) FloatTensor(Tensor) {
             const a = _a.startGroup("softmax");

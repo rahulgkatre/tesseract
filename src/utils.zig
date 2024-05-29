@@ -5,7 +5,7 @@ const dtypes = @import("dtypes.zig");
 const tracker = @import("tracker.zig");
 const AnyTensor = @import("anytensor.zig").AnyTensor;
 
-pub fn arrayPermute(comptime T: type, comptime len: u8, array: [len]u64, perm: [len]u8) [len]T {
+pub fn arrayPermute(comptime T: type, comptime len: u8, array: [len]u64, comptime perm: [len]u8) [len]T {
     var used: [len]bool = [_]bool{false} ** len;
     for (perm) |p| {
         if (p < len and !used[p]) {
@@ -21,7 +21,8 @@ pub fn arrayPermute(comptime T: type, comptime len: u8, array: [len]u64, perm: [
     }
     for (used) |u| {
         if (!u) {
-            const msg = comptimePrint("Invalid permutation: {any}", .{perm});
+            std.log.err("Invalid permutation {any}", .{perm});
+            const msg = "An error occurred in tensor validation";
             if (@inComptime()) {
                 @compileError(msg);
             } else {
@@ -91,6 +92,29 @@ pub fn contiguousStrides(comptime ndims: u8, shape: [ndims]u64) [ndims]u64 {
     return strides;
 }
 
+pub fn broadcastShape(shape1: anytype, shape2: anytype) [@max(shape1.len, shape2.len)]u64 {
+    if (std.mem.eql(u64, &shape1, &shape2)) {
+        return shape1;
+    }
+    const bc_ndims = @max(shape1.len, shape2.len);
+    var bc_shape: [bc_ndims]u64 = undefined;
+    for (0..bc_ndims) |i| {
+        const dim1 = if (i >= shape1.len) 1 else shape1[shape1.len - i - 1];
+        const dim2 = if (i >= shape2.len) 1 else shape2[shape2.len - i - 1]; // orelse dim1;
+        if (dim1 != 1 and dim2 != 1 and dim1 != dim2) {
+            @compileError(comptimePrint(
+                \\Tensor shapes are not comaptible for broadcasting
+                \\Tensor A shape: {any}
+                \\Tensor B shape: {any}
+            ,
+                .{ shape1, shape2 },
+            ));
+        }
+        bc_shape[bc_ndims - i - 1] = if (dim1 == dim2 or dim2 == 1) dim1 else dim2;
+    }
+    return bc_shape;
+}
+
 pub fn numEntries(comptime ndims: u8, shape: [ndims]u64) u128 {
     var prod: u128 = 1;
     for (shape) |s| {
@@ -100,7 +124,7 @@ pub fn numEntries(comptime ndims: u8, shape: [ndims]u64) u128 {
 }
 
 /// Utility function for visualizing the full graph that is created at compile time, no scheduling is done yet
-pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, allocator: std.mem.Allocator) !void {
+pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, allocator: std.mem.Allocator, draw_groups: bool) !void {
     const Viz = struct {
         fn opGroupViz(curr: ?*const tracker.OpGroupTracker.OpGroup, viz_writer: anytype) !u32 {
             if (curr) |group| {
@@ -148,8 +172,14 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
         }
         try written.putNoClobber(out, {});
 
-        const depth: u32 = try Viz.opGroupViz(out.meta.op_group_tracker.curr, writer);
-        try writer.print("\n", .{});
+        const depth: u32 = blk: {
+            var depth: u32 = 0;
+            if (draw_groups) {
+                depth = try Viz.opGroupViz(out.meta.op_group_tracker.curr, writer);
+                try writer.print("\n", .{});
+            }
+            break :blk depth;
+        };
 
         switch (out.meta.op_tracker) {
             .BufferOp => |info| {
@@ -260,7 +290,7 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
         switch (out.meta.op_tracker) {
             inline else => |info| {
                 try writer.print(
-                    \\    T_{[out]x}[label="dtype: {[dtype]s}\nshape: {[shape]any}\nstrides: {[strides]any}\noffset: {[offset]d}\nfolded_constant: {[fc]}\nlabel: {[label]s}"shape=box];
+                    \\    T_{[out]x}[label="dtype: {[dtype]s}\nshape: {[shape]any}\nstrides: {[strides]any}\noffset: {[offset]d}\nconstant: {[fc]}\nlabel: {[label]s}"shape=box];
                     \\    {[op]s}_{[out]x}->T_{[out]x}[label="{[dtype]s}{[shape]any}"];
                     \\
                 , .{
@@ -270,7 +300,7 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
                     .shape = out.shape[0..out.ndims],
                     .strides = out.strides[0..out.ndims],
                     .offset = out.offset,
-                    .fc = out.meta.folded_constant,
+                    .fc = out.meta.constant,
                     .label = out.meta.label orelse "null",
                 });
             },
@@ -293,7 +323,7 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
 }
 
 pub fn dataflowJson(entrypoints: []const *const AnyTensor, writer: anytype, allocator: std.mem.Allocator) !void {
-    var tensors_json = std.AutoArrayHashMap(*const AnyTensor, AnyTensor.JsonFormat).init(allocator);
+    var tensors_json = std.AutoArrayHashMap(*const AnyTensor, AnyTensor.Json).init(allocator);
     defer tensors_json.deinit();
 
     var op_trackers_json = std.ArrayList(@import("tracker.zig").OpTracker.Json).init(allocator);
@@ -361,14 +391,6 @@ pub fn extractShape(comptime ArrayType: type) [extractNdims(ArrayType)]u64 {
         else => {},
     }
     @compileError("ArrayType input for Tensor must be a array type (e.g. [M][N][P]DType), received " ++ std.fmt.comptimePrint("{any}", .{ArrayType}));
-}
-
-pub fn ToArrayType(dtype: dtypes.DType, shape: anytype) type {
-    var Child = dtypes.ZigType(dtype);
-    for (0..shape.len) |dim| {
-        Child = [shape[shape.len - dim - 1]]Child;
-    }
-    return Child;
 }
 
 pub fn rawTypeName(comptime T: type) []const u8 {

@@ -106,13 +106,13 @@ pub const OpGroupTracker = extern struct {
         };
     }
 
-    pub fn joinGroup(self: OpGroupTracker, group: ?*const OpGroup) OpGroupTracker {
+    pub fn foldIntoGroup(self: OpGroupTracker, group: ?*const OpGroup) OpGroupTracker {
         if (group == null) {
             return self;
         }
 
         return .{
-            .curr = self.curr,
+            .curr = group,
             .next = group,
             .next_id = if (group) |g| @max(self.next_id + 1, g.id + 1) else self.next_id + 1,
         };

@@ -63,7 +63,7 @@ pub const Graph = struct {
         const data_node: DataNode = .{ .tensor = tensor };
         try graph.data_nodes.putNoClobber(tensor, data_node);
         // Inline the computation if it is a literal (comptime int/float)
-        const comp_node: ComputeNode = .{ .output_node = graph.data_nodes.getPtr(tensor).?, .compute_location = if (dtypes.isLiteral(tensor.dtype)) .Inline else .Root };
+        const comp_node: ComputeNode = .{ .output_node = graph.data_nodes.getPtr(tensor).?, .compute_location = if (dtypes.isComptime(tensor.dtype)) .Inline else .Root };
         try graph.comp_nodes.putNoClobber(tensor, comp_node);
 
         switch (tensor.op_tracker.*) {

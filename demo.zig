@@ -8,22 +8,18 @@ const Tensor = tesseract.Tensor;
 // This can mean in the top level of a file or in a function that is called at comptime
 // Here the model is defined by a Sequential module, just like in PyTorch
 const x = Tensor([16][28][28]u8).input("digit")
-    .flatten(.{ .start_dim = -2, .end_dim = -1 })
-    .div(255.0)
-    .cast(.f16);
+    .flatten(.{ .from = -2, .to = -1 })
+    .cast(.f16)
+    .div(255.0);
 const model = tesseract.nn.Sequential(.{
-    tesseract.nn.Linear(x.dimsize(-1), 64, .f16, "input"){},
+    tesseract.nn.LazyLinear(64, .f16, "input"){},
     tesseract.nn.ReLU{},
     tesseract.nn.LazyLinear(32, .f16, "fc1"){},
     tesseract.nn.ReLU{},
     tesseract.nn.LazyLinear(32, .f16, "fc2"){},
     tesseract.nn.ReLU{},
-    tesseract.nn.LazyLinear(32, .f16, "fc3"){},
-    tesseract.nn.ReLU{},
     tesseract.nn.LazyLinear(10, .f16, "output"){},
 }){};
-
-const out = model.forward(x).softmax(-1);
 
 pub fn main() !void {
     // Try uncommenting this line to see how the shape of the output has already been determined at compile time!
@@ -35,7 +31,9 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     // Visualize the dataflow as a GraphViz, and also print the JSON representation of the program
-    try tesseract.utils.dataflowViz(&[_]*const tesseract.AnyTensor{@ptrCast(&out)}, writer, gpa.allocator());
+    const out = comptime model.forward(x).softmax(-1);
+
+    try tesseract.utils.dataflowViz(&[_]*const tesseract.AnyTensor{@ptrCast(&out)}, writer, gpa.allocator(), false);
     // try tesseract.utils.dataflowJson(&[_]*const tesseract.AnyTensor{@ptrCast(&out)}, writer, gpa.allocator());
 
     // var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);

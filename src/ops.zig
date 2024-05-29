@@ -105,8 +105,6 @@ pub const BufferOp = enum {
     View,
     Cast,
     Pad,
-    Expand,
-    Shrink,
     Contiguous,
 };
 pub const InitOp = enum {

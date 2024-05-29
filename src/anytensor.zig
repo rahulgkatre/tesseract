@@ -12,8 +12,7 @@ comptime {
     std.debug.assert(t_info.layout == a_info.layout);
     for (t_info.fields, a_info.fields) |t_field, a_field| {
         std.debug.assert(t_field.alignment == a_field.alignment);
-        std.debug.assert(t_field.is_comptime == a_field.is_comptime);
-        std.debug.assert(t_field.type == a_field.type);
+        std.debug.assert(@sizeOf(t_field.type) == @sizeOf(a_field.type));
     }
 }
 
@@ -30,7 +29,7 @@ pub const AnyTensor = extern struct {
     meta: *const tensor.Metadata,
 
     pub fn Narrow(comptime self: AnyTensor) type {
-        return tensor.Tensor(utils.ToArrayType(self.dtype, self.shape[0..self.ndims][0..].*));
+        return tensor.AsTensor(self);
     }
 
     /// Performs type narrowing to get back the shapetyped Tensor
@@ -38,7 +37,7 @@ pub const AnyTensor = extern struct {
         return @ptrCast(self);
     }
 
-    pub const JsonFormat = struct {
+    pub const Json = struct {
         uid: usize,
         dtype: dtypes.DType,
         ndims: u8,
@@ -47,7 +46,7 @@ pub const AnyTensor = extern struct {
         offset: u64,
     };
 
-    pub fn toJsonFormat(self: *const AnyTensor) JsonFormat {
+    pub fn toJson(self: *const AnyTensor) Json {
         return .{
             .uid = @intFromPtr(self),
             .dtype = self.dtype,
