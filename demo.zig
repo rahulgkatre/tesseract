@@ -33,8 +33,8 @@ pub fn main() !void {
     // Visualize the dataflow as a GraphViz, and also print the JSON representation of the program
     const out = comptime model.forward(x).softmax(-1);
 
-    try tesseract.utils.dataflowViz(&[_]*const tesseract.AnyTensor{@ptrCast(&out)}, writer, gpa.allocator(), false);
-    // try tesseract.utils.dataflowJson(&[_]*const tesseract.AnyTensor{@ptrCast(&out)}, writer, gpa.allocator());
+    try tesseract.utils.dataflowViz(&[_]*const tesseract.AnyTensor{comptime &out.toAny()}, writer, gpa.allocator(), false);
+    try tesseract.utils.dataflowJson(&[_]*const tesseract.AnyTensor{comptime &out.toAny()}, writer, gpa.allocator());
 
     // var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     // defer arena.deinit();

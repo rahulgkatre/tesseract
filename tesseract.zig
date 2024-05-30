@@ -8,12 +8,11 @@ pub const Tensor = tensor.Tensor;
 pub const AnyTensor = @import("src/anytensor.zig").AnyTensor;
 
 // Expose some of the utility functions that create tensors of specific sizes
-pub const constant = tensor.constant;
 pub const range = tensor.range;
 
 pub const utils = @import("src/utils.zig");
 pub const nn = @import("src/nn.zig");
 
 test "tesseract" {
-    _ = tensor;
+    std.testing.refAllDecls(@This());
 }

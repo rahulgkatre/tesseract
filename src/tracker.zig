@@ -1,6 +1,22 @@
 const ops = @import("ops.zig");
 const std = @import("std");
+const utils = @import("utils.zig");
 const AnyTensor = @import("anytensor.zig").AnyTensor;
+
+fn ArgsType(comptime tag: ops.OpTypes, comptime op: @field(ops, utils.rawTagName(tag))) type {
+    const Args = @field(@TypeOf(op), "Args");
+    switch (@typeInfo(Args)) {
+        .Void, .Struct => return Args,
+        .Union => {
+            const field = @field(Args, utils.rawTagName(op));
+            return switch (@typeInfo(@TypeOf(field))) {
+                .Type => field,
+                else => void,
+            };
+        },
+        else => unreachable,
+    }
+}
 
 pub const OpTracker = union(ops.OpTypes) {
     UnaryOp: ops.UnaryOp.Info,
@@ -12,14 +28,14 @@ pub const OpTracker = union(ops.OpTypes) {
 
     pub fn init(
         comptime tag: ops.OpTypes,
-        comptime op: @field(ops, @tagName(tag)),
+        comptime op: @field(ops, utils.rawTagName(tag)),
         in: switch (tag) {
             .TernaryOp => [3]*const AnyTensor,
             .BinaryOp => [2]*const AnyTensor,
             .UnaryOp, .TypeOp, .ReduceOp => [1]*const AnyTensor,
             .InitOp => [0]*const AnyTensor,
         },
-        args: @field(@TypeOf(op), "Args"),
+        args: ArgsType(tag, op),
     ) OpTracker {
         return @unionInit(
             OpTracker,
@@ -27,7 +43,12 @@ pub const OpTracker = union(ops.OpTypes) {
             .{
                 .op = op,
                 .in = in,
-                .args = args,
+                .args = switch (@typeInfo(@field(@TypeOf(op), "Args"))) {
+                    .Struct => args,
+                    .Union => @unionInit(@field(@TypeOf(op), "Args"), utils.rawTagName(op), args),
+                    .Void => {},
+                    else => unreachable,
+                },
             },
         );
     }

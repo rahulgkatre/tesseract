@@ -62,8 +62,12 @@ test "lazy linear" {
     const x3 = comptime tensor.Tensor([16][1]f32).input("x3");
     const y3 = comptime linear.forward(x3);
 
-    const writer = std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write){ .context = std.io.getStdOut() };
-    try @import("utils.zig").dataflowViz(&[_]*const AnyTensor{ &y1.widen(), &y2.widen(), &y3.widen() }, writer, std.testing.allocator);
+    _ = y1;
+    _ = y2;
+    _ = y3;
+
+    // const writer = std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write){ .context = std.io.getStdOut() };
+    // try @import("utils.zig").dataflowViz(&[_]*const AnyTensor{ &y1.widen(), &y2.widen(), &y3.widen() }, writer, std.testing.allocator);
 }
 
 pub fn Linear(in: u64, out: u64, dtype: dtypes.DType, label: []const u8) type {
@@ -71,7 +75,7 @@ pub fn Linear(in: u64, out: u64, dtype: dtypes.DType, label: []const u8) type {
         const Self = @This();
 
         pub usingnamespace Module.IFace(Self, struct {
-            pub fn forward(self: Self, x: anytype) tensor.AsTensor(x).MatMul(self.weight) {
+            pub fn forward(self: Self, x: anytype) tensor.TensorTypeOf(x).MatMul(self.weight) {
                 std.debug.assert(tensor.isTensor(@TypeOf(x)));
                 return x.startGroup(std.fmt.comptimePrint("Linear_{d}_{d}_{s}", .{ in, out, label }))
                     .matmul(self.weight)
@@ -93,20 +97,20 @@ pub fn Sequential(comptime modules: anytype) type {
         const Self = @This();
         pub usingnamespace Module.IFace(Self, struct {
             fn ReturnType(in: anytype) type {
-                var result: AnyTensor = in.widen();
+                var result: AnyTensor = tensor.asTensor(in).toAny();
                 for (modules) |module| {
                     std.debug.assert(Module.is(@TypeOf(module)));
-                    result = module.forward(result.narrow().*).widen();
+                    result = tensor.asTensor(module.forward(result.toTensor().*)).toAny();
                 }
-                return result.Narrow();
+                return tensor.TensorTypeOf(result);
             }
             pub fn forward(_: Self, in: anytype) ReturnType(in) {
-                var result: AnyTensor = in.widen();
+                var result: AnyTensor = tensor.asTensor(in).toAny();
                 for (modules) |module| {
                     std.debug.assert(Module.is(@TypeOf(module)));
-                    result = module.forward(result.narrow().*).widen();
+                    result = tensor.asTensor(module.forward(result.toTensor().*)).toAny();
                 }
-                return result.narrow().*;
+                return result.toTensor().*;
             }
         });
     };
@@ -117,6 +121,4 @@ test "linear" {
     const linear = comptime Linear(784, 256, .f32, "fc"){};
     const y = comptime linear.forward(x);
     _ = y;
-    // const writer = std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write){ .context = std.io.getStdOut() };
-    // try @import("utils.zig").dataflowViz(&[_]*const AnyTensor{&y.widen()}, writer, std.testing.allocator);
 }

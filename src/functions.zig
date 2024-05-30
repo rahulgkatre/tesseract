@@ -2,7 +2,7 @@ const std = @import("std");
 const tensor = @import("tensor.zig");
 const dtypes = @import("dtypes.zig");
 
-const AsTensor = tensor.AsTensor;
+const TensorTypeOf = tensor.TensorTypeOf;
 const isTensor = tensor.isTensor;
 const IntTensor = dtypes.IntTensor;
 const BoolTensor = dtypes.BoolTensor;
@@ -34,39 +34,39 @@ pub fn Functions(comptime T: type) type {
             return a.unaryFn(.Sqrt);
         }
         // ZipOps
-        pub fn add(a: Tensor, comptime b: anytype) Tensor.BinaryFnResult(b, .Add) {
+        pub fn add(a: Tensor, comptime b: anytype) Tensor.BinaryFnResultType(b, .Add) {
             return a.binaryFn(b, .Add);
         }
-        pub fn mul(a: Tensor, comptime b: anytype) Tensor.BinaryFnResult(b, .Mul) {
+        pub fn mul(a: Tensor, comptime b: anytype) Tensor.BinaryFnResultType(b, .Mul) {
             return a.binaryFn(b, .Mul);
         }
-        pub fn maximum(a: Tensor, comptime b: anytype) Tensor.BinaryFnResult(b, .Max) {
+        pub fn maximum(a: Tensor, comptime b: anytype) Tensor.BinaryFnResultType(b, .Max) {
             return a.binaryFn(b, .Max);
         }
-        pub fn mod(a: IntTensor(Tensor), comptime b: anytype) Tensor.BinaryFnResult(b, .Mod) {
+        pub fn mod(a: IntTensor(Tensor), comptime b: anytype) Tensor.BinaryFnResultType(b, .Mod) {
             return a.binaryFn(b, .Mod);
         }
-        pub fn lessThan(a: Tensor, comptime b: anytype) Tensor.BinaryFnResult(b, .Lt) {
+        pub fn lessThan(a: Tensor, comptime b: anytype) Tensor.BinaryFnResultType(b, .Lt) {
             return a.binaryFn(b, .Lt);
         }
-        pub fn equals(a: BoolTensor(Tensor), comptime b: anytype) Tensor.BinaryFnResult(b, .Eq) {
+        pub fn equals(a: BoolTensor(Tensor), comptime b: anytype) Tensor.BinaryFnResultType(b, .Eq) {
             return a.binaryFn(b, .Eq);
         }
-        pub fn xor(a: BoolTensor(Tensor), comptime b: anytype) Tensor.BinaryFnResult(b, .Xor) {
+        pub fn xor(a: BoolTensor(Tensor), comptime b: anytype) Tensor.BinaryFnResultType(b, .Xor) {
             return a.binaryFn(b, .Xor);
         }
         // ReduceOps
-        pub fn sum(a: Tensor, dims: anytype) Tensor.ReduceFnResult(dims) {
+        pub fn sum(a: Tensor, dims: anytype) Tensor.ReduceFnResultType(dims) {
             return a.reduceFn(.Add, dims);
         }
-        pub fn max(a: Tensor, comptime dims: anytype) Tensor.ReduceFnResult(dims) {
+        pub fn max(a: Tensor, comptime dims: anytype) Tensor.ReduceFnResultType(dims) {
             return a.reduceFn(.Max, dims);
         }
         // Compounded operations
-        pub fn div(a: Tensor, b: anytype) Tensor.BinaryFnResult(b, .Add) {
+        pub fn div(a: Tensor, b: anytype) Tensor.BinaryFnResultType(b, .Add) {
             return a.startGroup("div").mul(tensor.asTensor(b).recip()).endGroup();
         }
-        pub fn sub(a: Tensor, b: anytype) Tensor.BinaryFnResult(b, .Add) {
+        pub fn sub(a: Tensor, b: anytype) Tensor.BinaryFnResultType(b, .Add) {
             return a.add(tensor.asTensor(b).neg());
         }
         pub fn exp(a: FloatTensor(Tensor)) FloatTensor(Tensor) {
@@ -97,10 +97,10 @@ pub fn Functions(comptime T: type) type {
             const sumexp = minus_max_exp.sum(dim);
             return minus_max_exp.div(sumexp).endGroup();
         }
-        pub fn mean(a: Tensor, comptime dims: anytype) FloatTensor(Tensor.ReduceFnResult(dims)) {
+        pub fn mean(a: Tensor, comptime dims: anytype) FloatTensor(Tensor.ReduceFnResultType(dims)) {
             return a.div(a.sum(dims));
         }
-        pub fn variance(_a: Tensor, comptime dims: anytype) FloatTensor(Tensor.ReduceFnResult(dims)) {
+        pub fn variance(_a: Tensor, comptime dims: anytype) FloatTensor(Tensor.ReduceFnResultType(dims)) {
             const a = _a.startGroup("variance");
             const mu = a.mean(dims);
             const N: f64 = @floatFromInt(@divExact(a.num_entries, mu.num_entries));

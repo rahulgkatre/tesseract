@@ -28,12 +28,8 @@ pub const AnyTensor = extern struct {
     offset: u64,
     meta: *const tensor.Metadata,
 
-    pub fn Narrow(comptime self: AnyTensor) type {
-        return tensor.AsTensor(self);
-    }
-
-    /// Performs type narrowing to get back the shapetyped Tensor
-    pub fn narrow(comptime self: *const AnyTensor) *const Narrow(self.*) {
+    /// Performs type narrowing to get back the shape-typed Tensor
+    pub fn toTensor(comptime self: *const AnyTensor) *const tensor.TensorTypeOf(self.*) {
         return @ptrCast(self);
     }
 

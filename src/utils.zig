@@ -124,7 +124,7 @@ pub fn numEntries(comptime ndims: u8, shape: [ndims]u64) u128 {
 }
 
 /// Utility function for visualizing the full graph that is created at compile time, no scheduling is done yet
-pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, allocator: std.mem.Allocator, draw_groups: bool) !void {
+pub fn dataflowViz(entrypoints: anytype, writer: anytype, allocator: std.mem.Allocator, draw_groups: bool) !void {
     const Viz = struct {
         fn opGroupViz(curr: ?*const tracker.OpGroupTracker.OpGroup, viz_writer: anytype) !u32 {
             if (curr) |group| {
@@ -162,7 +162,7 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
     var queue = std.ArrayList(*const AnyTensor).init(allocator);
     defer queue.deinit();
 
-    for (entrypoints) |entry| {
+    for (entrypoints[0..]) |entry| {
         try queue.append(@ptrCast(entry));
     }
 
@@ -340,7 +340,7 @@ pub fn dataflowJson(entrypoints: []const *const AnyTensor, writer: anytype, allo
         if (tensors_json.contains(out)) {
             continue;
         }
-        try tensors_json.put(out, out.toJsonFormat());
+        try tensors_json.put(out, out.toJson());
         try op_trackers_json.append(out.meta.op_tracker.toJson(out));
         switch (out.meta.op_tracker) {
             .InitOp => {},
@@ -403,8 +403,8 @@ pub fn rawTypeName(comptime T: type) []const u8 {
     return name;
 }
 
-pub fn rawTagName(tag: anytype) []const u8 {
-    const name = @tagName(tag);
+pub fn rawTagName(tagged: anytype) []const u8 {
+    const name = @tagName(tagged);
     for (0..name.len) |i| {
         if (name[name.len - i - 1] == '.') {
             return name[name.len - i ..];
@@ -412,3 +412,8 @@ pub fn rawTagName(tag: anytype) []const u8 {
     }
     return name;
 }
+
+pub const DimRange = struct {
+    from: i16 = 0,
+    to: i16 = -1,
+};
