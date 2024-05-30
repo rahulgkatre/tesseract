@@ -1,4 +1,3 @@
-const dtypes = @import("dtypes.zig");
 const AnyTensor = @import("anytensor.zig").AnyTensor;
 
 // Arithmetic operations for unary functions, binary functions,
@@ -90,8 +89,6 @@ pub const ReduceOp = enum {
 // TypeOps mutate the type of the tensor, in Tesseract's case this not only changes
 // the dtype but also the shape, so any shape affecting ops are TypeOps
 
-pub const PadModeEnum = enum { constant, reflect, replicate, circular };
-
 pub const TypeOp = enum {
     pub const Info = struct {
         op: TypeOp,
@@ -99,17 +96,27 @@ pub const TypeOp = enum {
         args: Args,
     };
     pub const Args = union(TypeOp) {
+        pub const Pad = struct {
+            pub const Mode = enum {
+                Constant,
+                Reflect,
+                Replicate,
+                Circular,
+            };
+
+            padding: []const [2]u64,
+            mode: union(Mode) {
+                Constant: struct {
+                    value: []const u8,
+                },
+                Reflect: void,
+                Replicate: void,
+                Circular: void,
+            },
+        };
         View: void,
         Cast: void,
-        Pad: struct {
-            padding: []const [2]u64,
-            mode: union(PadModeEnum) {
-                constant: []const u8,
-                reflect: void,
-                replicate: void,
-                circular: void,
-            },
-        },
+        Pad: Pad,
         Contiguous: void,
     };
     pub const Json = struct {
@@ -130,17 +137,21 @@ pub const InitOp = enum {
         args: InitOp.Args,
     };
     pub const Args = union(InitOp) {
+        pub const Full = struct {
+            value: []const u8,
+        };
+
+        pub const Range = struct {
+            start: []const u8,
+            stop: []const u8,
+        };
+
         Empty: void,
         Input: void,
         Parameter: void,
-        Full: struct {
-            value: []const u8,
-        },
+        Full: Full,
         Rand: void,
-        Range: struct {
-            start: []const u8,
-            stop: []const u8,
-        },
+        Range: Range,
     };
     pub const Json = struct {
         op: InitOp,

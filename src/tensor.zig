@@ -396,11 +396,11 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return a.reshape(Flatten(dim_range).shape);
         }
 
-        const PaddingMode = union(ops.PadModeEnum) {
-            constant: dtypes.ZigType(dtype),
-            reflect: void,
-            replicate: void,
-            circular: void,
+        const PadMode = union(ops.TypeOp.Args.Pad.Mode) {
+            Constant: dtypes.ZigType(dtype),
+            Reflect: void,
+            Replicate: void,
+            Circular: void,
         };
 
         pub fn Pad(padding: anytype) type {
@@ -413,14 +413,14 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             }
             return TensorType(dtype, new_shape);
         }
-        pub fn pad(comptime a: Self, comptime padding: anytype, comptime mode: PaddingMode) Pad(padding) {
+        pub fn pad(comptime a: Self, comptime padding: anytype, comptime mode: PadMode) Pad(padding) {
             return .{
                 .meta = &.{
                     .op_tracker = OpTracker.init(.TypeOp, .Pad, .{&a.widen()}, .{
                         .Pad = .{
                             .padding = &padding,
                             .mode = switch (mode) {
-                                .constant => |constant| .{ .constant = comptimePrint("{}", .{constant}) },
+                                .Constant => |constant| .{ .Constant = .{ .value = comptimePrint("{}", .{constant}) } },
                                 else => mode,
                             },
                         },
@@ -430,6 +430,12 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     .label = a.meta.label,
                 },
             };
+        }
+        /// Get a mask of where padding values exist in the tensor
+        /// This could be useful for packed padded sequences for NLP applications
+        pub fn paddingMask(comptime _: Self, comptime padding: anytype) TensorType(.bool, shape) {
+            const not_padding = TensorType(.bool, shape).full(true);
+            return not_padding.pad(padding, .{ .Constant = .{ .value = false } });
         }
 
         pub fn Permute(comptime perm: [ndims]u8) type {
@@ -919,15 +925,15 @@ test "padding" {
     // https://pytorch.org/docs/stable/generated/torch.nn.functional.pad.html
     const t4d = comptime Tensor([3][3][4][2]f32){};
     const p1d = comptime .{.{ 1, 1 }};
-    const out1 = comptime t4d.pad(p1d, .{ .constant = 0 });
+    const out1 = comptime t4d.pad(p1d, .{ .Constant = 0 });
     try std.testing.expectEqualDeep(@TypeOf(out1).shape, .{ 3, 3, 4, 4 });
 
     const p2d = comptime .{ .{ 1, 1 }, .{ 2, 2 } };
-    const out2 = comptime t4d.pad(p2d, .{ .constant = 0 });
+    const out2 = comptime t4d.pad(p2d, .{ .Constant = 0 });
     try std.testing.expectEqualDeep(@TypeOf(out2).shape, .{ 3, 3, 8, 4 });
 
     const p3d = comptime .{ .{ 0, 1 }, .{ 2, 1 }, .{ 3, 3 } };
-    const out3 = comptime t4d.pad(p3d, .{ .constant = 0 });
+    const out3 = comptime t4d.pad(p3d, .{ .Constant = 0 });
     try std.testing.expectEqualDeep(@TypeOf(out3).shape, .{ 3, 9, 7, 3 });
 }
 
