@@ -3,6 +3,11 @@ const tensor = @import("tensor.zig");
 const utils = @import("utils.zig");
 const AnyTensor = @import("anytensor.zig").AnyTensor;
 
+// For dtypes without a corresponding zig type, they are represented
+// as packed structs
+// A unsigned int of the same bitsize would also work but the labels
+// like "bf16" would be squashed, so this is a better solution
+
 /// Brain floating point
 pub const bf16 = packed struct {
     sign: u1 = 0,
@@ -10,11 +15,7 @@ pub const bf16 = packed struct {
     mantissa: u7 = 0,
 };
 
-pub const complex_f32 = packed struct {
-    real: f32,
-    i: f32,
-};
-
+/// Nvidia Tensor Float
 pub const TF32 = packed struct {
     sign: u1 = 0,
     exponent: u8 = 0,
@@ -97,6 +98,8 @@ pub fn bits(t: DType) u8 {
     };
 }
 
+/// Each dtype has a corresponding Zig type that can be used for the array definition
+/// This function provides a way to get that type
 pub fn ZigType(comptime dtype: DType) type {
     return switch (dtype) {
         .comptime_float => comptime_float,
@@ -153,29 +156,15 @@ pub fn resultDType(dtype1: DType, dtype2: DType) DType {
     @compileError("Cannot combine " ++ utils.rawTagName(dtype1) ++ " and " ++ utils.rawTagName(dtype2));
 }
 
-/// When a float data type is necessary (e.g.  for division) this function can be used
-/// It will always return a float dtype, either the default (f32) or a satisfying one from dtype1 and dtype2
-pub fn floatResultDType(dtype1: DType, dtype2: DType) DType {
-    const result = resultDType(dtype1, dtype2);
-    return if (isFloat(result)) result else default_float;
-}
-
 pub fn FloatTensor(comptime T: type) type {
-    if (T == AnyTensor) {
-        return T;
-    }
     std.debug.assert(tensor.isTensor(T));
     if (isFloat(T.dtype)) {
         return T;
     }
-
-    return tensor.TensorType(T.dtype, T.shape);
+    return tensor.TensorType(default_float, T.shape);
 }
 
 pub fn BoolTensor(comptime T: type) type {
-    if (T == AnyTensor) {
-        return T;
-    }
     std.debug.assert(tensor.isTensor(T));
     const Tensor = tensor.TensorType(.bool, T.shape);
     if (!isBool(T.dtype)) {
@@ -185,14 +174,9 @@ pub fn BoolTensor(comptime T: type) type {
 }
 
 pub fn IntTensor(comptime T: type) type {
-    if (T == AnyTensor) {
-        return T;
-    }
     std.debug.assert(tensor.isTensor(T));
-    const Tensor = tensor.TensorType(default_int, T.shape);
     if (!isInt(T.dtype)) {
         @compileError("Must cast to int datatype first");
     }
-
-    return Tensor;
+    return tensor.TensorType(default_int, T.shape);
 }

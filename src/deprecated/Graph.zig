@@ -266,7 +266,7 @@ pub const Fusion = struct {
                 greedyFusionHelper(op_node.x.tensor);
                 if (op_node.x.tensor.group != node.group) op_node.x.tensor.global = true;
             },
-            .BufferOp => |*op_node| {
+            .TypeOp => |*op_node| {
                 verticalFusion(op_node.x.tensor, node) catch {};
                 greedyFusionHelper(op_node.x.tensor);
                 if (op_node.x.tensor.group != node.group) op_node.x.tensor.global = true;

@@ -6,7 +6,7 @@ pub const OpTracker = union(ops.OpTypes) {
     UnaryOp: ops.UnaryOp.Info,
     BinaryOp: ops.BinaryOp.Info,
     ReduceOp: ops.ReduceOp.Info,
-    BufferOp: ops.BufferOp.Info,
+    TypeOp: ops.TypeOp.Info,
     InitOp: ops.InitOp.Info,
     TernaryOp: ops.TernaryOp.Info,
 
@@ -16,7 +16,7 @@ pub const OpTracker = union(ops.OpTypes) {
         in: switch (tag) {
             .TernaryOp => [3]*const AnyTensor,
             .BinaryOp => [2]*const AnyTensor,
-            .UnaryOp, .BufferOp, .ReduceOp => [1]*const AnyTensor,
+            .UnaryOp, .TypeOp, .ReduceOp => [1]*const AnyTensor,
             .InitOp => [0]*const AnyTensor,
         },
         args: @field(@TypeOf(op), "Args"),
@@ -55,7 +55,7 @@ pub const OpTracker = union(ops.OpTypes) {
                 .args = info.args,
                 .out = @intFromPtr(out),
             } },
-            .BufferOp => |info| .{ .BufferOp = .{
+            .TypeOp => |info| .{ .TypeOp = .{
                 .op = info.op,
                 .in = .{@intFromPtr(info.in[0])},
                 .out = @intFromPtr(out),
@@ -72,7 +72,7 @@ pub const OpTracker = union(ops.OpTypes) {
         UnaryOp: ops.UnaryOp.Json,
         BinaryOp: ops.BinaryOp.Json,
         ReduceOp: ops.ReduceOp.Json,
-        BufferOp: ops.BufferOp.Json,
+        TypeOp: ops.TypeOp.Json,
         InitOp: ops.InitOp.Json,
         TernaryOp: ops.TernaryOp.Json,
     };

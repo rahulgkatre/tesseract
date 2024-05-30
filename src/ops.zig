@@ -16,7 +16,6 @@ pub const UnaryOp = enum {
         out: usize,
     };
 
-    Id,
     Neg,
     Log2,
     Exp2,
@@ -88,16 +87,33 @@ pub const ReduceOp = enum {
         return @field(BinaryOp, @tagName(reduceOp));
     }
 };
-// Buffer ops do not have runtime dependencies as they are consumed by the code generator
-pub const BufferOp = enum {
+// TypeOps mutate the type of the tensor, in Tesseract's case this not only changes
+// the dtype but also the shape, so any shape affecting ops are TypeOps
+
+pub const PadModeEnum = enum { constant, reflect, replicate, circular };
+
+pub const TypeOp = enum {
     pub const Info = struct {
-        op: BufferOp,
+        op: TypeOp,
         in: [1]*const AnyTensor,
-        args: Args = {},
+        args: Args,
     };
-    pub const Args = void;
+    pub const Args = union(TypeOp) {
+        View: void,
+        Cast: void,
+        Pad: struct {
+            padding: []const [2]u64,
+            mode: union(PadModeEnum) {
+                constant: []const u8,
+                reflect: void,
+                replicate: void,
+                circular: void,
+            },
+        },
+        Contiguous: void,
+    };
     pub const Json = struct {
-        op: BufferOp,
+        op: TypeOp,
         in: [1]usize,
         out: usize,
     };
@@ -138,4 +154,4 @@ pub const InitOp = enum {
     Rand,
     Range,
 };
-pub const OpTypes = enum { UnaryOp, BinaryOp, ReduceOp, BufferOp, InitOp, TernaryOp };
+pub const OpTypes = enum { UnaryOp, BinaryOp, ReduceOp, TypeOp, InitOp, TernaryOp };

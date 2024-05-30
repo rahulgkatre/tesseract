@@ -15,26 +15,23 @@ pub fn Functions(comptime T: type) type {
     const Tensor = tensor.Tensor(T.ArrayType());
     return struct {
         // MapOps
-        pub fn exp2(a: Tensor) FloatTensor(Tensor) {
+        pub fn exp2(a: FloatTensor(Tensor)) FloatTensor(Tensor) {
             return a.unaryFn(.Exp2);
         }
-        pub fn log2(a: Tensor) FloatTensor(Tensor) {
+        pub fn log2(a: FloatTensor(Tensor)) FloatTensor(Tensor) {
             return a.unaryFn(.Log2);
         }
         pub fn neg(a: Tensor) Tensor {
             return a.unaryFn(.Neg);
         }
-        pub fn recip(a: Tensor) FloatTensor(Tensor) {
+        pub fn recip(a: FloatTensor(Tensor)) FloatTensor(Tensor) {
             return a.unaryFn(.Rcp);
         }
-        pub fn sin(a: Tensor) FloatTensor(Tensor) {
+        pub fn sin(a: FloatTensor(Tensor)) FloatTensor(Tensor) {
             return a.unaryFn(.Sin);
         }
-        pub fn sqrt(a: Tensor) FloatTensor(Tensor) {
+        pub fn sqrt(a: FloatTensor(Tensor)) FloatTensor(Tensor) {
             return a.unaryFn(.Sqrt);
-        }
-        pub fn id(a: Tensor) Tensor {
-            return a.unaryFn(.Id);
         }
         // ZipOps
         pub fn add(a: Tensor, comptime b: anytype) Tensor.BinaryFnResult(b, .Add) {

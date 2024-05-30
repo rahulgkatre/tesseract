@@ -45,8 +45,7 @@ pub fn LazyLinear(out: u64, dtype: dtypes.DType, comptime label: []const u8) typ
         const Self = @This();
         pub usingnamespace LazyModule.IFace(Self, struct {
             pub fn RealModule(comptime in: anytype) type {
-                const dimsize = in.dimsize(-1);
-                return Linear(dimsize, out, dtype, label);
+                return Linear(tensor.asTensor(in).dimSize(-1), out, dtype, label);
             }
         });
     };

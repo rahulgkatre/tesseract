@@ -103,9 +103,9 @@ pub fn broadcastShape(shape1: anytype, shape2: anytype) [@max(shape1.len, shape2
         const dim2 = if (i >= shape2.len) 1 else shape2[shape2.len - i - 1]; // orelse dim1;
         if (dim1 != 1 and dim2 != 1 and dim1 != dim2) {
             @compileError(comptimePrint(
-                \\Tensor shapes are not comaptible for broadcasting
-                \\Tensor A shape: {any}
-                \\Tensor B shape: {any}
+                \\Shapes are not comaptible for broadcasting
+                \\Shape 1: {any}
+                \\Shape 2: {any}
             ,
                 .{ shape1, shape2 },
             ));
@@ -182,7 +182,7 @@ pub fn dataflowViz(entrypoints: []const *const AnyTensor, writer: anytype, alloc
         };
 
         switch (out.meta.op_tracker) {
-            .BufferOp => |info| {
+            .TypeOp => |info| {
                 try switch (info.op) {
                     .Cast => writer.print(
                         \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ngroup: {[group]s}\ndtype: {[data]s}"];

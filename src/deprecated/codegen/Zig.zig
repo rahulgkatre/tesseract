@@ -169,7 +169,7 @@ fn expressionCode(statement: *const Program.Statement, expression: ?*const Progr
                 return null;
             }
         },
-        .BufferOp => |expr| {
+        .TypeOp => |expr| {
             if (expr.op == .AsType) {
                 const inner_x = try expressionCode(statement, expr.x.inner) orelse try std.fmt.allocPrint(allocator, "T{d}[{s}]", .{
                     expr.x.tensor.memId(),
