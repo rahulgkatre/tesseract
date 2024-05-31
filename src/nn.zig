@@ -3,6 +3,8 @@ const tensor = @import("tensor.zig");
 const AnyTensor = @import("anytensor.zig").AnyTensor;
 const dtypes = @import("dtypes.zig");
 
+const F = @import("functions.zig");
+
 pub const Module = struct {
     fn is(comptime T: type) bool {
         return @hasDecl(T, "forward") and T.IType == Module;
@@ -75,9 +77,8 @@ pub fn Linear(in: u64, out: u64, dtype: dtypes.DType, label: []const u8) type {
         const Self = @This();
 
         pub usingnamespace Module.IFace(Self, struct {
-            pub fn forward(self: Self, x: anytype) tensor.TensorTypeOf(x).MatMul(self.weight) {
-                std.debug.assert(tensor.isTensor(@TypeOf(x)));
-                return x.startGroup(std.fmt.comptimePrint("Linear_{d}_{d}_{s}", .{ in, out, label }))
+            pub fn forward(self: Self, x: anytype) F.MatMul(x, self.weight) {
+                return tensor.asTensor(x).startGroup(std.fmt.comptimePrint("Linear_{d}_{d}_{s}", .{ in, out, label }))
                     .matmul(self.weight)
                     .add(self.bias)
                     .endGroup();
@@ -117,7 +118,7 @@ pub fn Sequential(comptime modules: anytype) type {
 }
 
 test "linear" {
-    const x = comptime tensor.Tensor([16][784]f32).input(null);
+    const x = comptime tensor.Tensor([16][784]f32).input("input");
     const linear = comptime Linear(784, 256, .f32, "fc"){};
     const y = comptime linear.forward(x);
     _ = y;
