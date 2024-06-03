@@ -3,6 +3,10 @@ const tensor = @import("tensor.zig");
 const utils = @import("utils.zig");
 const AnyTensor = @import("anytensor.zig").AnyTensor;
 
+const typing = @import("typing.zig");
+const isTensorType = typing.isTensorType;
+const TensorType = typing.TensorType;
+
 // For dtypes without a corresponding zig type, they are represented
 // as packed structs
 // A unsigned int of the same bitsize would also work but the labels
@@ -157,15 +161,15 @@ pub fn resultDType(dtype1: DType, dtype2: DType) DType {
 }
 
 pub fn FloatTensor(comptime T: type) type {
-    std.debug.assert(tensor.isTensor(T));
+    std.debug.assert(isTensorType(T));
     if (isFloat(T.dtype)) {
         return T;
     }
-    return tensor.TensorType(default_float, T.shape);
+    return TensorType(default_float, T.shape);
 }
 
 pub fn BoolTensor(comptime T: type) type {
-    std.debug.assert(tensor.isTensor(T));
+    std.debug.assert(tensor.isTensorType(T));
     const Tensor = tensor.TensorType(.bool, T.shape);
     if (!isBool(T.dtype)) {
         @compileError("Must be bool datatype");
@@ -174,7 +178,7 @@ pub fn BoolTensor(comptime T: type) type {
 }
 
 pub fn IntTensor(comptime T: type) type {
-    std.debug.assert(tensor.isTensor(T));
+    std.debug.assert(tensor.isTensorType(T));
     if (!isInt(T.dtype)) {
         @compileError("Must cast to int datatype first");
     }

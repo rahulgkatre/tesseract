@@ -3,6 +3,14 @@ const std = @import("std");
 const utils = @import("utils.zig");
 const AnyTensor = @import("anytensor.zig").AnyTensor;
 
+/// Metadata for tensors, shared between the shape-typed Tensor and AnyTensor
+pub const Metadata = struct {
+    op_tracker: OpTracker,
+    op_group_tracker: OpGroupTracker,
+    constant: bool,
+    label: ?[]const u8,
+};
+
 fn ArgsType(comptime tag: ops.OpTypes, comptime op: @field(ops, utils.rawTagName(tag))) type {
     const Args = @field(@TypeOf(op), "Args");
     switch (@typeInfo(Args)) {

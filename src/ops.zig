@@ -82,7 +82,7 @@ pub const ReduceOp = enum {
     Max,
     Xor,
 
-    pub fn binaryOp(comptime reduceOp: ReduceOp) BinaryOp {
+    pub fn binaryOp(reduceOp: ReduceOp) BinaryOp {
         return @field(BinaryOp, @tagName(reduceOp));
     }
 };

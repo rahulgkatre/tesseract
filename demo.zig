@@ -1,7 +1,10 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+
 const tesseract = @import("tesseract.zig");
 const Tensor = tesseract.Tensor;
+const nn = tesseract.nn;
+const debug = tesseract.debug;
 
 // Here is a small neural network that can be used for MNIST
 // All tensor code should run in comptime
@@ -11,15 +14,18 @@ const x = Tensor([16][28][28]u8).input("digit")
     .flatten(.{ .from = -2, .to = -1 })
     .cast(.f16)
     .div(255.0);
-const model = tesseract.nn.Sequential(.{
-    tesseract.nn.LazyLinear(64, .f16, "input"){},
-    tesseract.nn.ReLU{},
-    tesseract.nn.LazyLinear(32, .f16, "fc1"){},
-    tesseract.nn.ReLU{},
-    tesseract.nn.LazyLinear(32, .f16, "fc2"){},
-    tesseract.nn.ReLU{},
-    tesseract.nn.LazyLinear(10, .f16, "output"){},
+
+const model = nn.Sequential("model", .{
+    nn.LazyLinear(64, .f16, "input"){},
+    nn.ReLU{},
+    nn.LazyLinear(32, .f16, "fc1"){},
+    nn.ReLU{},
+    nn.LazyLinear(32, .f16, "fc2"){},
+    nn.ReLU{},
+    nn.LazyLinear(10, .f16, "output"){},
 }){};
+
+const out = model.forward(x).softmax(-1);
 
 pub fn main() !void {
     // Try uncommenting this line to see how the shape of the output has already been determined at compile time!
@@ -27,14 +33,12 @@ pub fn main() !void {
     // @compileLog(@TypeOf(out));
 
     // Now the program is in runtime, as we have some writers and allocators
-    const writer = std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write){ .context = std.io.getStdOut() };
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     // Visualize the dataflow as a GraphViz, and also print the JSON representation of the program
-    const out = comptime model.forward(x).softmax(-1);
 
-    try tesseract.utils.dataflowViz(&[_]*const tesseract.AnyTensor{comptime &out.toAny()}, writer, gpa.allocator(), false);
-    try tesseract.utils.dataflowJson(&[_]*const tesseract.AnyTensor{comptime &out.toAny()}, writer, gpa.allocator());
+    try tesseract.debug.dataflowViz(.{out.toAny()}, debug.debug_writer, gpa.allocator(), true);
+    try tesseract.debug.dataflowJson(.{out.toAny()}, debug.debug_writer, gpa.allocator());
 
     // var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     // defer arena.deinit();

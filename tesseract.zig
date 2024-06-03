@@ -4,15 +4,15 @@ pub const graph = @import("src/graph.zig");
 
 const tensor = @import("src/tensor.zig");
 
+// Expose only Tensor from tensor.zig
 pub const Tensor = tensor.Tensor;
-pub const AnyTensor = @import("src/anytensor.zig").AnyTensor;
 
-// Expose some of the utility functions that create tensors of specific sizes
-pub const range = tensor.range;
-
-pub const utils = @import("src/utils.zig");
+pub usingnamespace @import("src/functions.zig");
 pub const nn = @import("src/nn.zig");
+pub const debug = @import("src/debug.zig");
+pub const typing = @import("src/typing.zig");
 
 test "tesseract" {
+    @setEvalBranchQuota(100000);
     std.testing.refAllDecls(@This());
 }

@@ -1,8 +1,11 @@
 const dtypes = @import("dtypes.zig");
-const tracker = @import("tracker.zig");
+const meta = @import("meta.zig");
 const tensor = @import("tensor.zig");
 const utils = @import("utils.zig");
 const std = @import("std");
+
+const typing = @import("typing.zig");
+const TensorTypeOf = typing.TensorTypeOf;
 
 // AnyTensor and tensor need to have the exact same runtime layout for @ptrCast tricks to work
 comptime {
@@ -11,6 +14,7 @@ comptime {
     std.debug.assert(t_info.layout == .@"extern");
     std.debug.assert(t_info.layout == a_info.layout);
     for (t_info.fields, a_info.fields) |t_field, a_field| {
+        std.debug.assert(std.mem.eql(u8, t_field.name, a_field.name));
         std.debug.assert(t_field.alignment == a_field.alignment);
         std.debug.assert(@sizeOf(t_field.type) == @sizeOf(a_field.type));
     }
@@ -26,10 +30,10 @@ pub const AnyTensor = extern struct {
     shape: [*]const u64,
     strides: [*]const u64,
     offset: u64,
-    meta: *const tensor.Metadata,
+    meta: *const meta.Metadata,
 
     /// Performs type narrowing to get back the shape-typed Tensor
-    pub fn toTensor(comptime self: *const AnyTensor) *const tensor.TensorTypeOf(self.*) {
+    pub fn toTensor(comptime self: *const AnyTensor) *const TensorTypeOf(self.*) {
         return @ptrCast(self);
     }
 

@@ -1,95 +1,154 @@
 const std = @import("std");
-const tensor = @import("tensor.zig");
+const Tensor = @import("tensor.zig").Tensor;
+
 const utils = @import("utils.zig");
 const dtypes = @import("dtypes.zig");
-
-const Tensor = tensor.Tensor;
-const TensorType = tensor.TensorType;
-const TensorTypeOf = tensor.TensorTypeOf;
-const asTensor = tensor.asTensor;
-const isTensor = tensor.isTensor;
 const IntTensor = dtypes.IntTensor;
 const BoolTensor = dtypes.BoolTensor;
 const FloatTensor = dtypes.FloatTensor;
 
-const LN_2 = tensor.asTensor(0.69314718056);
-const INV_LN_2 = tensor.asTensor(1.4426950408888495760773985077695);
+const typing = @import("typing.zig");
+const TensorType = typing.TensorType;
+const TensorTypeOf = typing.TensorTypeOf;
+const asTensor = typing.asTensor;
+const isTensor = typing.isTensorType;
+
+const LN_2 = asTensor(0.69314718056);
+const INV_LN_2 = asTensor(1.4426950408888495760773985077695);
+
+// =============================================================================
+// Tensor creating functions that define tensor type based on input
+// =============================================================================
+
+/// Create a 1D tensor filled with a sequence from {start} to {stop} exclusive
+pub fn range(
+    comptime start: comptime_int,
+    comptime stop: comptime_int,
+) Tensor([stop - start]comptime_int) {
+    return Tensor([stop - start]comptime_int).range(start, stop);
+}
+
+/// Create a tensor with the same shape as the input but filled with random values
+pub fn randLike(comptime input: anytype) TensorTypeOf(input) {
+    return TensorTypeOf(input).rand();
+}
+
+/// Create a tensor with the same shape as the input but filled with a constant
+pub fn fullLike(comptime input: anytype, value: dtypes.ZigType(input.dtype)) TensorTypeOf(input) {
+    return TensorTypeOf(input).full(value);
+}
 
 // =============================================================================
 // Unary functions
 // =============================================================================
 
-pub fn exp2(a: anytype) FloatTensor(TensorTypeOf(a)) {
-    return asTensor(a).unaryFn(.Exp2);
+pub fn exp2(input: anytype) FloatTensor(TensorTypeOf(input)) {
+    return asTensor(input).unaryFn(.Exp2);
 }
-pub fn log2(a: anytype) FloatTensor(TensorTypeOf(a)) {
-    return asTensor(a).unaryFn(.Log2);
+pub fn log2(input: anytype) FloatTensor(TensorTypeOf(input)) {
+    return asTensor(input).unaryFn(.Log2);
 }
-pub fn neg(a: anytype) TensorTypeOf(a) {
-    return asTensor(a).unaryFn(.Neg);
+pub fn neg(input: anytype) TensorTypeOf(input) {
+    return asTensor(input).unaryFn(.Neg);
 }
-pub fn recip(a: anytype) FloatTensor(TensorTypeOf(a)) {
-    return asTensor(a).unaryFn(.Rcp);
+pub fn recip(input: anytype) FloatTensor(TensorTypeOf(input)) {
+    return asTensor(input).unaryFn(.Rcp);
 }
-pub fn sin(a: anytype) FloatTensor(TensorTypeOf(a)) {
-    return asTensor(a).unaryFn(.Sin);
+pub fn sin(input: anytype) FloatTensor(TensorTypeOf(input)) {
+    return asTensor(input).unaryFn(.Sin);
 }
-pub fn sqrt(a: anytype) FloatTensor(TensorTypeOf(a)) {
-    return asTensor(a).unaryFn(.Sqrt);
+pub fn sqrt(input: anytype) FloatTensor(TensorTypeOf(input)) {
+    return asTensor(input).unaryFn(.Sqrt);
+}
+
+test "unary" {
+    const tensor1 = comptime Tensor([2][3][4]i32).full(3);
+    const tensor2 = comptime tensor1.neg();
+    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor2.shape[0..tensor2.ndims]);
+    try std.testing.expect(tensor2.meta.op_tracker.UnaryOp.op == .Neg);
+    try std.testing.expectEqual(tensor2.meta.op_tracker.UnaryOp.in[0].toTensor().*, tensor1);
 }
 
 // =============================================================================
 // Binary functions
 // =============================================================================
 
-pub fn add(a: anytype, b: anytype) TensorTypeOf(a).BinaryFnResultType(b, .Add) {
-    return asTensor(a).binaryFn(b, .Add);
+pub fn add(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .Add) {
+    return asTensor(input).binaryFn(other, .Add);
 }
-pub fn mul(a: anytype, b: anytype) TensorTypeOf(a).BinaryFnResultType(b, .Mul) {
-    return asTensor(a).binaryFn(b, .Mul);
+pub fn mul(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .Mul) {
+    return asTensor(input).binaryFn(other, .Mul);
 }
-pub fn maximum(a: anytype, b: anytype) TensorTypeOf(a).BinaryFnResultType(b, .Max) {
-    return asTensor(a).binaryFn(b, .Max);
+pub fn maximum(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .Max) {
+    return asTensor(input).binaryFn(other, .Max);
 }
-pub fn mod(a: anytype, b: anytype) TensorTypeOf(a).BinaryFnResultType(b, .Mod) {
-    return asTensor(a).binaryFn(b, .Mod);
+pub fn mod(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .Mod) {
+    return asTensor(input).binaryFn(other, .Mod);
 }
-pub fn lessThan(a: anytype, b: anytype) TensorTypeOf(a).BinaryFnResultType(b, .Lt) {
-    return asTensor(a).binaryFn(b, .Lt);
+pub fn lessThan(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .Lt) {
+    return asTensor(input).binaryFn(other, .Lt);
 }
-pub fn equals(a: anytype, b: anytype) TensorTypeOf(a).BinaryFnResultType(b, .Eq) {
-    return asTensor(a).binaryFn(b, .Eq);
+pub fn equals(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .Eq) {
+    return asTensor(input).binaryFn(other, .Eq);
 }
-pub fn xor(a: anytype, b: anytype) TensorTypeOf(a).BinaryFnResultType(b, .Xor) {
-    return asTensor(a).binaryFn(b, .Xor);
+pub fn xor(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .Xor) {
+    return asTensor(input).binaryFn(other, .Xor);
+}
+
+test "binary" {
+    const tensor1 = comptime Tensor([2][1][4]i32).full(2);
+    const tensor2 = comptime Tensor([3][1]i32).full(3);
+    const tensor3 = comptime tensor1.add(tensor2);
+    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor3.shape[0..tensor3.ndims]);
+    try std.testing.expect(tensor3.meta.op_tracker.BinaryOp.op == .Add);
+    try std.testing.expectEqualDeep(tensor3.meta.op_tracker.BinaryOp.in[0].meta.op_tracker.TypeOp.in[0].toTensor().*, tensor1);
+    try std.testing.expectEqualDeep(tensor3.meta.op_tracker.BinaryOp.in[1].meta.op_tracker.TypeOp.in[0].toTensor().*, tensor2);
 }
 
 // =============================================================================
 // Reduce functions
 // =============================================================================
 
-pub fn sum(a: anytype, comptime dims: anytype) TensorTypeOf(a).ReduceFnResultType(dims) {
-    return asTensor(a).reduceFn(.Add, dims);
+pub fn sum(input: anytype, comptime dims: anytype) TensorTypeOf(input).ReduceFnResultType(dims) {
+    return asTensor(input).reduceFn(.Add, dims);
 }
-pub fn max(a: anytype, comptime dims: anytype) TensorTypeOf(a).ReduceFnResultType(dims) {
-    return asTensor(a).reduceFn(.Max, dims);
+pub fn max(input: anytype, comptime dims: anytype) TensorTypeOf(input).ReduceFnResultType(dims) {
+    return asTensor(input).reduceFn(.Max, dims);
+}
+
+test "reduce" {
+    const tensor1 = comptime Tensor([2][3][4]i32).full(5);
+    const tensor2 = comptime tensor1.sum(1);
+    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 1, 4 }, tensor2.shape[0..tensor1.ndims]);
+    try std.testing.expect(tensor2.meta.op_tracker.ReduceOp.op == .Add);
+    try std.testing.expectEqual(tensor2.meta.op_tracker.ReduceOp.in[0].toTensor().*, tensor1);
+    try std.testing.expectEqual(tensor2.meta.op_tracker.ReduceOp.args.mask[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
+}
+
+test "multiple dim reduce" {
+    const tensor1 = comptime Tensor([2][3][4]i32).full(5);
+    const tensor2 = comptime tensor1.sum(.{ 0, 1 });
+    try std.testing.expectEqualSlices(u64, &[_]u64{ 1, 1, 4 }, tensor2.shape[0..tensor2.ndims]);
+    try std.testing.expect(tensor2.meta.op_tracker.ReduceOp.op == .Add);
+    try std.testing.expectEqual(tensor2.meta.op_tracker.ReduceOp.in[0].toTensor().*, tensor1);
+    try std.testing.expectEqualDeep(tensor2.meta.op_tracker.ReduceOp.args.mask[0..tensor2.ndims], &[_]bool{ true, true, false });
 }
 
 // =============================================================================
 // Expand
 // =============================================================================
 
-pub fn Expand(any: anytype, comptime new_shape: anytype) type {
-    const A = TensorTypeOf(any);
+pub fn Expand(input: anytype, comptime new_shape: anytype) type {
+    const A = TensorTypeOf(input);
     return TensorType(A.dtype, utils.broadcastShape(A.shape, new_shape));
 }
 /// Expand a tensor along 1 or more dimensions with size 1 and stride 0
 /// The new shape must broadcast with the old shape
-pub fn expand(any: anytype, comptime new_shape: anytype) Expand(any, new_shape) {
-    const A = TensorTypeOf(any);
-    const a = asTensor(any);
-    const Out = TensorType(a.dtype, utils.broadcastShape(A.shape, new_shape));
-    if (TensorTypeOf(a) == Out) {
+pub fn expand(input: anytype, comptime new_shape: anytype) Expand(input, new_shape) {
+    const A = TensorTypeOf(input);
+    const a = asTensor(input);
+    const Out = Expand(input, new_shape);
+    if (A == Out) {
         return a;
     }
     const bc_strides: [new_shape.len]u64 = blk: {
@@ -111,10 +170,10 @@ pub fn expand(any: anytype, comptime new_shape: anytype) Expand(any, new_shape) 
 // Flatten
 // =============================================================================
 
-pub fn Flatten(any: anytype, comptime dim_range: utils.DimRange) type {
-    const A = TensorTypeOf(any);
-    const from = A.signedToUnsignedDim(dim_range.from);
-    const to = A.signedToUnsignedDim(dim_range.to);
+pub fn Flatten(input: anytype, comptime dims: utils.DimRange) type {
+    const A = TensorTypeOf(input);
+    const from = utils.signedToUnsignedDim(A.ndims, dims.from);
+    const to = utils.signedToUnsignedDim(A.ndims, dims.to);
     if (from == to) {
         return @This();
     }
@@ -127,11 +186,11 @@ pub fn Flatten(any: anytype, comptime dim_range: utils.DimRange) type {
             new_shape[from] *= A.shape[d];
         }
     }
-    return Reshape(any, new_shape);
+    return Reshape(input, new_shape);
 }
 /// Flatten a range of dims, collapsing them to 1 dimension
-pub fn flatten(comptime any: anytype, comptime dim_range: utils.DimRange) Flatten(any, dim_range) {
-    return asTensor(any).reshape(Flatten(any, dim_range).shape);
+pub fn flatten(input: anytype, comptime dim_range: utils.DimRange) Flatten(input, dim_range) {
+    return asTensor(input).reshape(Flatten(input, dim_range).shape);
 }
 
 // =============================================================================
@@ -139,8 +198,8 @@ pub fn flatten(comptime any: anytype, comptime dim_range: utils.DimRange) Flatte
 // =============================================================================
 /// Get a mask of where padding values exist in the tensor
 /// This could be useful for packed padded sequences for NLP applications
-pub fn paddingMask(comptime any: anytype, comptime padding: anytype) TensorType(.bool, TensorTypeOf(any).shape) {
-    const a = asTensor(any);
+pub fn paddingMask(input: anytype, comptime padding: anytype) TensorType(.bool, TensorTypeOf(input).shape) {
+    const a = asTensor(input);
     const not_padding = TensorType(.bool, a.shape).full(true);
     return not_padding.pad(padding, .{ .Constant = .{ .value = false } });
 }
@@ -149,17 +208,17 @@ pub fn paddingMask(comptime any: anytype, comptime padding: anytype) TensorType(
 // Permute
 // =============================================================================
 
-pub fn Permute(comptime any: anytype, comptime perm: [TensorTypeOf(any).ndims]u8) type {
-    const A = TensorTypeOf(any);
-    return Reshape(any, utils.arrayPermute(u64, A.ndims, A.shape, perm));
+pub fn Permute(comptime input: anytype, comptime perm: [TensorTypeOf(input).ndims]u8) type {
+    const A = TensorTypeOf(input);
+    return Reshape(input, utils.arrayPermute(u64, A.ndims, A.shape, perm));
 }
-/// Permute the dimensions of the tensor. A valid permutation must contain
+/// Permute the dimensions of the  A valid permutation must contain
 /// values from 0 to ndims and each value must appear exactly once.
-pub fn permute(comptime any: anytype, comptime perm: [TensorTypeOf(any).ndims]u8) Permute(any, perm) {
-    const A = TensorTypeOf(any);
-    const a = asTensor(any);
+pub fn permute(comptime input: anytype, comptime perm: [TensorTypeOf(input).ndims]u8) Permute(input, perm) {
+    const A = TensorTypeOf(input);
+    const a = asTensor(input);
     return a.view(
-        Permute(any, perm).shape,
+        Permute(input, perm).shape,
         utils.arrayPermute(u64, A.ndims, a.strides[0..A.ndims].*, perm),
         a.offset,
     );
@@ -175,15 +234,15 @@ test "permute" {
 // Reshape
 // =============================================================================
 
-pub fn Reshape(comptime any: anytype, comptime new_shape: anytype) type {
-    const OldType = TensorTypeOf(any);
+pub fn Reshape(comptime input: anytype, comptime new_shape: anytype) type {
+    const OldType = TensorTypeOf(input);
     const NewType = TensorType(OldType.dtype, new_shape);
     std.debug.assert(OldType.num_entries == NewType.num_entries);
     return NewType;
 }
-/// Change the shape of the tensor. This changes the type too.
-pub fn reshape(comptime any: anytype, comptime new_shape: anytype) Reshape(any, new_shape) {
-    const a = asTensor(any);
+/// Change the shape of the  This changes the type too.
+pub fn reshape(comptime input: anytype, comptime new_shape: anytype) Reshape(input, new_shape) {
+    const a = asTensor(input);
     return a.contiguous().view(new_shape, Reshape(a, new_shape).contiguous_strides, a.offset);
 }
 test "reshape" {
@@ -200,20 +259,20 @@ test "reshape" {
 // Squeeze
 // =============================================================================
 
-pub fn Squeeze(comptime any: anytype, comptime dim: i16) type {
-    const A = TensorTypeOf(any);
-    if (A.shape[A.signedToUnsignedDim(dim)] != 1) {
+pub fn Squeeze(comptime input: anytype, comptime dim: i16) type {
+    const A = TensorTypeOf(input);
+    if (A.shape[utils.signedToUnsignedDim(A.ndims, dim)] != 1) {
         @compileError("Cannot squeeze as dimension size is not 1");
     }
-    return Reshape(any, utils.arrayDelete(A.ndims, A.shape, A.signedToUnsignedDim(dim)));
+    return Reshape(input, utils.arrayDelete(A.ndims, A.shape, utils.signedToUnsignedDim(A.ndims, dim)));
 }
-/// Remove a dim of size 1 from the shape of the tensor.
-pub fn squeeze(comptime any: anytype, comptime dim: i16) Squeeze(any, dim) {
-    const A = TensorTypeOf(any);
-    const a = asTensor(any);
+/// Remove a dim of size 1 from the shape of the
+pub fn squeeze(comptime input: anytype, comptime dim: i16) Squeeze(input, dim) {
+    const A = TensorTypeOf(input);
+    const a = asTensor(input);
     return a.view(
-        Squeeze(any, dim).shape,
-        utils.arrayDelete(A.ndims, a.strides[0..A.ndims].*, A.signedToUnsignedDim(dim)),
+        Squeeze(input, dim).shape,
+        utils.arrayDelete(A.ndims, a.strides[0..A.ndims].*, utils.signedToUnsignedDim(A.ndims, dim)),
         a.offset,
     );
 }
@@ -222,27 +281,27 @@ pub fn squeeze(comptime any: anytype, comptime dim: i16) Squeeze(any, dim) {
 // Transpose
 // =============================================================================
 
-pub fn Transpose(comptime any: anytype, comptime dim1: i16, comptime dim2: i16) type {
-    const Type = TensorTypeOf(any);
-    const norm1 = Type.signedToUnsignedDim(dim1);
-    const norm2 = Type.signedToUnsignedDim(dim2);
+pub fn Transpose(comptime input: anytype, comptime dim1: i16, comptime dim2: i16) type {
+    const Type = TensorTypeOf(input);
+    const norm1 = utils.signedToUnsignedDim(Type.ndims, dim1);
+    const norm2 = utils.signedToUnsignedDim(Type.ndims, dim2);
     var new_shape = Type.shape;
     new_shape[norm1] = Type.shape[norm2];
     new_shape[norm2] = Type.shape[norm1];
-    return Reshape(any, new_shape);
+    return Reshape(input, new_shape);
 }
-/// Transpose two dimensions of the tensor. Similar to permute, but only for two dimensions.
-pub fn transpose(comptime any: anytype, comptime dim1: i16, comptime dim2: i16) Transpose(any, dim1, dim2) {
-    const A = TensorTypeOf(any);
-    const a = asTensor(any);
-    const norm1 = A.signedToUnsignedDim(dim1);
-    const norm2 = A.signedToUnsignedDim(dim2);
+/// Transpose two dimensions of the  Similar to permute, but only for two dimensions.
+pub fn transpose(comptime input: anytype, comptime dim1: i16, comptime dim2: i16) Transpose(input, dim1, dim2) {
+    const A = TensorTypeOf(input);
+    const a = asTensor(input);
+    const norm1 = utils.signedToUnsignedDim(A.ndims, dim1);
+    const norm2 = utils.signedToUnsignedDim(A.ndims, dim2);
     if (norm1 != norm2) {
         var new_strides = a.strides[0..a.ndims].*;
         new_strides[norm1] = a.strides[norm2];
         new_strides[norm2] = a.strides[norm1];
         return a.view(
-            Transpose(any, norm1, norm2).shape,
+            Transpose(input, norm1, norm2).shape,
             new_strides,
             a.offset,
         );
@@ -251,8 +310,8 @@ pub fn transpose(comptime any: anytype, comptime dim1: i16, comptime dim2: i16) 
     }
 }
 /// Shorthand for transposing rightmost dimensions of tensor
-pub fn T(comptime a: anytype) Transpose(a, -2, -1) {
-    return asTensor(a).transpose(-2, -1);
+pub fn T(comptime input: anytype) Transpose(input, -2, -1) {
+    return asTensor(input).transpose(-2, -1);
 }
 test "transpose" {
     const tensor1 = comptime Tensor([2][1][4]i32).full(1);
@@ -267,17 +326,17 @@ test "transpose" {
 // Unsqueeze
 // =============================================================================
 
-pub fn Unsqueeze(comptime any: anytype, comptime dim: i16) type {
-    const A = TensorTypeOf(any);
-    return Reshape(any, utils.arrayInsert(A.ndims, A.shape, A.signedToUnsignedDim(dim), 1));
+pub fn Unsqueeze(comptime input: anytype, comptime dim: i16) type {
+    const A = TensorTypeOf(input);
+    return Reshape(input, utils.arrayInsert(A.ndims, A.shape, utils.signedToUnsignedDim(A.ndims, dim), 1));
 }
-/// Insert a dim of size 1 into the shape of the tensor.
-pub fn unsqueeze(comptime any: anytype, comptime dim: i16) Unsqueeze(any, dim) {
-    const A = TensorTypeOf(any);
-    const a = asTensor(any);
+/// Insert a dim of size 1 into the shape of the tensor
+pub fn unsqueeze(comptime input: anytype, comptime dim: i16) Unsqueeze(input, dim) {
+    const A = TensorTypeOf(input);
+    const a = asTensor(input);
     return a.view(
-        Unsqueeze(any, dim).shape,
-        utils.arrayInsert(a.ndims, a.strides[0..a.ndims].*, A.signedToUnsignedDim(dim), 0),
+        Unsqueeze(input, dim).shape,
+        utils.arrayInsert(a.ndims, a.strides[0..a.ndims].*, utils.signedToUnsignedDim(A.ndims, dim), 0),
         a.offset,
     );
 }
@@ -286,54 +345,54 @@ pub fn unsqueeze(comptime any: anytype, comptime dim: i16) Unsqueeze(any, dim) {
 // Compound functions
 // =============================================================================
 
-pub fn div(a: anytype, b: anytype) TensorTypeOf(a).BinaryFnResultType(b, .Add) {
-    return asTensor(a).startGroup("div").mul(tensor.asTensor(b).recip()).endGroup();
+pub fn div(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .Add) {
+    return asTensor(input).startGroup("div").mul(asTensor(other).recip()).endGroup();
 }
-pub fn sub(a: anytype, b: anytype) TensorTypeOf(a).BinaryFnResultType(b, .Add) {
-    return asTensor(a).add(tensor.asTensor(b).neg());
+pub fn sub(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .Add) {
+    return asTensor(input).add(asTensor(other).neg());
 }
-pub fn exp(a: anytype) FloatTensor(TensorTypeOf(a)) {
-    return asTensor(a).startGroup("exp").mul(INV_LN_2).exp2().endGroup();
+pub fn exp(input: anytype) FloatTensor(TensorTypeOf(input)) {
+    return asTensor(input).startGroup("exp").mul(INV_LN_2).exp2().endGroup();
 }
-pub fn log(a: anytype) FloatTensor(TensorTypeOf(a)) {
-    return asTensor(a).startGroup("log").log2().mul(LN_2).endGroup();
+pub fn log(input: anytype) FloatTensor(TensorTypeOf(input)) {
+    return asTensor(input).startGroup("log").log2().mul(LN_2).endGroup();
 }
-pub fn sigmoid(a: anytype) FloatTensor(TensorTypeOf(a)) {
-    const x = asTensor(a).startGroup("sigmoid");
+pub fn sigmoid(input: anytype) FloatTensor(TensorTypeOf(input)) {
+    const x = asTensor(input).startGroup("sigmoid");
     const x_pos = x.neg().exp().add(1.0).recip();
     const x_neg = x.exp().div(x.exp().add(1.0));
     const mask = x.lessThan(0.0);
     return mask.where(x_neg, x_pos).endGroup();
 }
-pub fn relu(a: anytype) TensorTypeOf(a) {
-    if (dtypes.isFloat(a.dtype)) {
-        return asTensor(a).startGroup("relu").maximum(0.0).endGroup();
-    } else if (dtypes.isInt(a.dtype)) {
-        return asTensor(a).startGroup("relu").maximum(0).endGroup();
+pub fn relu(input: anytype) TensorTypeOf(input) {
+    if (dtypes.isFloat(input.dtype)) {
+        return asTensor(input).startGroup("relu").maximum(0.0).endGroup();
+    } else if (dtypes.isInt(input.dtype)) {
+        return asTensor(input).startGroup("relu").maximum(0).endGroup();
     } else {
         unreachable;
     }
 }
-pub fn softmax(a: anytype, comptime dim: i16) FloatTensor(TensorTypeOf(a)) {
-    const x = asTensor(a).startGroup("softmax");
+pub fn softmax(input: anytype, comptime dim: i16) FloatTensor(TensorTypeOf(input)) {
+    const x = asTensor(input).startGroup("softmax");
     const minus_max_exp = x.sub(x.max({})).exp();
     const sumexp = minus_max_exp.sum(dim);
     return minus_max_exp.div(sumexp).endGroup();
 }
-pub fn mean(a: anytype, comptime dims: anytype) FloatTensor(TensorTypeOf(a).ReduceFnResultType(dims)) {
-    return a.div(a.sum(dims));
+pub fn mean(input: anytype, comptime dims: anytype) FloatTensor(TensorTypeOf(input).ReduceFnResultType(dims)) {
+    return input.div(input.sum(dims));
 }
-pub fn variance(a: anytype, comptime dims: anytype) FloatTensor(TensorTypeOf(a).ReduceFnResultType(dims)) {
-    const x = asTensor(a).startGroup("variance");
+pub fn variance(input: anytype, comptime dims: anytype) FloatTensor(TensorTypeOf(input).ReduceFnResultType(dims)) {
+    const x = asTensor(input).startGroup("variance");
     const mu = x.mean(dims);
     const N: f64 = @floatFromInt(@divExact(x.num_entries, mu.num_entries));
     const a_minus_mu = x.sub(mu);
     return (a_minus_mu.mul(a_minus_mu)).sum(dims).div(N);
 }
 
-pub fn MatMul(a: anytype, b: anytype) type {
-    const A = TensorTypeOf(a);
-    const B = TensorTypeOf(b);
+pub fn MatMul(input: anytype, other: anytype) type {
+    const A = TensorTypeOf(input);
+    const B = TensorTypeOf(other);
 
     // Matrix multiplication invariant
     // (n x m1) matmul (m2 x p) -> (n x p) iff m1 = m2
@@ -361,77 +420,35 @@ pub fn MatMul(a: anytype, b: anytype) type {
     mm_shape[mm_ndims - 1] = p;
     return TensorType(A.dtype, mm_shape);
 }
-pub fn matmul(a: anytype, b: anytype) MatMul(a, b) {
-    const A = TensorTypeOf(a);
-    const B = TensorTypeOf(b);
-    return asTensor(a).startGroup("matmul")
+pub fn matmul(input: anytype, other: anytype) MatMul(input, other) {
+    const A = TensorTypeOf(input);
+    const B = TensorTypeOf(other);
+    return asTensor(input).startGroup("matmul")
         .unsqueeze(A.ndims - 1)
-        .mul(asTensor(b).transpose(B.ndims - 2, B.ndims - 1).unsqueeze(B.ndims - 2))
+        .mul(asTensor(other).transpose(B.ndims - 2, B.ndims - 1).unsqueeze(B.ndims - 2))
         .sum(A.ndims)
         .squeeze(A.ndims)
         .endGroup();
 }
 
-// TODO: Might want to practice with Conv1d first
-// pub fn Conv2d(comptime Filter: type, _stride: anytype, _) type {
-//     const stride: [2]u64 = switch (@typeInfo(@TypeOf(_stride)) {
-//         .ComptimeInt, .Int => [2]u64{ _stride, _stride },
-//         .Array => blk: {
-//             if (_stride.len != 2) {
-//                 @compileError("2D convolution stride must be a 2 element tuple");
-//             }
-//             break :blk _stride;
-//         },
-//         else => {
-//             @compileError("2D convolution stride must be 1 number of a 2 element tuple");
-//         },
-//     };
-
-//     if (ndims == 4) {
-//         const batch_size = shape[0];
-//         const in_channels = shape[1];
-//         const in_height = shape[2];
-//         const in_width = shape[3];
-
-//         const out_height = @divFloor(in_height + 2 * , denominator: T)
-//     }
-
-// }
-
-test "unary" {
-    const tensor1 = comptime Tensor([2][3][4]i32).full(3);
-    const tensor2 = comptime tensor1.neg();
-    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor2.shape[0..tensor2.ndims]);
-    try std.testing.expect(tensor2.meta.op_tracker.UnaryOp.op == .Neg);
-    try std.testing.expectEqual(tensor2.meta.op_tracker.UnaryOp.in[0].toTensor().*, tensor1);
+pub fn Window1d(input: anytype, window: u64) type {
+    const I = TensorTypeOf(input);
+    return TensorType(I.dtype, I.shape[0 .. I.ndims - 1] ++ .{ I.shape[I.ndimws - 1] - window + 1, window });
+}
+pub fn window1d(input: anytype, window: u64) Window1d(input, window) {
+    const Result = Window1d(input, window);
+    const a = asTensor(input);
+    return a.view(Result.shape, a.strides.* ++ .{a.strides[a.ndims - 1]}, a.offset);
 }
 
-test "binary" {
-    const tensor1 = comptime Tensor([2][1][4]i32).full(2);
-    const tensor2 = comptime Tensor([3][1]i32).full(3);
-    const tensor3 = comptime tensor1.add(tensor2);
-    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor3.shape[0..tensor3.ndims]);
-    try std.testing.expect(tensor3.meta.op_tracker.BinaryOp.op == .Add);
-    try std.testing.expectEqualDeep(tensor3.meta.op_tracker.BinaryOp.in[0].meta.op_tracker.TypeOp.in[0].toTensor().*, tensor1);
-    try std.testing.expectEqualDeep(tensor3.meta.op_tracker.BinaryOp.in[1].meta.op_tracker.TypeOp.in[0].toTensor().*, tensor2);
-}
+pub fn SlidingWindowView(input: anytype, window_shape: anytype, window_dims: anytype) type {
+    const I = TensorTypeOf(input);
+    _ = window_shape;
+    _ = window_dims;
+    _ = I;
+    // var window = switch (@TypeOf(window_shape))
+    // var dims = switch (@TypeOf(window_dims))
 
-test "reduce" {
-    const tensor1 = comptime Tensor([2][3][4]i32).full(5);
-    const tensor2 = comptime tensor1.sum(1);
-    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 1, 4 }, tensor2.shape[0..tensor1.ndims]);
-    try std.testing.expect(tensor2.meta.op_tracker.ReduceOp.op == .Add);
-    try std.testing.expectEqual(tensor2.meta.op_tracker.ReduceOp.in[0].toTensor().*, tensor1);
-    try std.testing.expectEqual(tensor2.meta.op_tracker.ReduceOp.args.mask[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
-}
-
-test "multiple dim reduce" {
-    const tensor1 = comptime Tensor([2][3][4]i32).full(5);
-    const tensor2 = comptime tensor1.sum(.{ 0, 1 });
-    try std.testing.expectEqualSlices(u64, &[_]u64{ 1, 1, 4 }, tensor2.shape[0..tensor2.ndims]);
-    try std.testing.expect(tensor2.meta.op_tracker.ReduceOp.op == .Add);
-    try std.testing.expectEqual(tensor2.meta.op_tracker.ReduceOp.in[0].toTensor().*, tensor1);
-    try std.testing.expectEqualDeep(tensor2.meta.op_tracker.ReduceOp.args.mask[0..tensor2.ndims], &[_]bool{ true, true, false });
 }
 
 test "binary followed by reduce" {

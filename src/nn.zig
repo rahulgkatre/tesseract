@@ -5,6 +5,11 @@ const dtypes = @import("dtypes.zig");
 
 const F = @import("functions.zig");
 
+const typing = @import("typing.zig");
+const asTensor = typing.asTensor;
+const isTensorType = typing.isTensorType;
+const TensorTypeOf = typing.TensorTypeOf;
+
 pub const Module = struct {
     fn is(comptime T: type) bool {
         return @hasDecl(T, "forward") and T.IType == Module;
@@ -36,7 +41,7 @@ pub const ReLU = struct {
     const Self = @This();
     pub usingnamespace Module.IFace(Self, struct {
         pub fn forward(_: Self, comptime x: anytype) @TypeOf(x) {
-            std.debug.assert(tensor.isTensor(@TypeOf(x)));
+            std.debug.assert(isTensorType(@TypeOf(x)));
             return x.relu();
         }
     });
@@ -47,7 +52,7 @@ pub fn LazyLinear(out: u64, dtype: dtypes.DType, comptime label: []const u8) typ
         const Self = @This();
         pub usingnamespace LazyModule.IFace(Self, struct {
             pub fn RealModule(comptime in: anytype) type {
-                return Linear(tensor.asTensor(in).dimSize(-1), out, dtype, label);
+                return Linear(asTensor(in).dimSize(-1), out, dtype, label);
             }
         });
     };
@@ -75,10 +80,12 @@ test "lazy linear" {
 pub fn Linear(in: u64, out: u64, dtype: dtypes.DType, label: []const u8) type {
     return struct {
         const Self = @This();
+        const name = std.fmt.comptimePrint("Linear_{d}_{d}_{s}", .{ in, out, label });
 
         pub usingnamespace Module.IFace(Self, struct {
-            pub fn forward(self: Self, x: anytype) F.MatMul(x, self.weight) {
-                return tensor.asTensor(x).startGroup(std.fmt.comptimePrint("Linear_{d}_{d}_{s}", .{ in, out, label }))
+            pub fn forward(self: Self, input: anytype) F.MatMul(input, self.weight) {
+                return asTensor(input)
+                    .startGroup(name)
                     .matmul(self.weight)
                     .add(self.bias)
                     .endGroup();
@@ -88,30 +95,32 @@ pub fn Linear(in: u64, out: u64, dtype: dtypes.DType, label: []const u8) type {
         const Weight = tensor.Tensor([in][out]dtypes.ZigType(dtype));
         const Bias = tensor.Tensor([out]dtypes.ZigType(dtype));
 
-        weight: Weight = Weight.param(label ++ "_weight"),
-        bias: Bias = Bias.param(label ++ "_bias"),
+        weight: Weight = Weight.param(name ++ "_weight"),
+        bias: Bias = Bias.param(name ++ "_bias"),
     };
 }
 
-pub fn Sequential(comptime modules: anytype) type {
+pub fn Sequential(comptime label: []const u8, comptime modules: anytype) type {
     return struct {
         const Self = @This();
+        const name = std.fmt.comptimePrint("Sequential_{s}", .{label});
+
         pub usingnamespace Module.IFace(Self, struct {
             fn ReturnType(in: anytype) type {
-                var result: AnyTensor = tensor.asTensor(in).toAny();
+                var result: AnyTensor = asTensor(in).toAny().*;
                 for (modules) |module| {
                     std.debug.assert(Module.is(@TypeOf(module)));
-                    result = tensor.asTensor(module.forward(result.toTensor().*)).toAny();
+                    result = asTensor(module.forward(result.toTensor().*)).toAny().*;
                 }
-                return tensor.TensorTypeOf(result);
+                return TensorTypeOf(result);
             }
             pub fn forward(_: Self, in: anytype) ReturnType(in) {
-                var result: AnyTensor = tensor.asTensor(in).toAny();
+                var result: AnyTensor = asTensor(in).startGroup(name).toAny().*;
                 for (modules) |module| {
                     std.debug.assert(Module.is(@TypeOf(module)));
-                    result = tensor.asTensor(module.forward(result.toTensor().*)).toAny();
+                    result = asTensor(module.forward(result.toTensor().*)).toAny().*;
                 }
-                return result.toTensor().*;
+                return result.toTensor().*.endGroup();
             }
         });
     };
