@@ -5,12 +5,11 @@ pub const graph = @import("src/graph.zig");
 const tensor = @import("src/tensor.zig");
 
 // Expose only Tensor from tensor.zig
-pub const Tensor = tensor.Tensor;
+pub usingnamespace tensor;
 
 pub usingnamespace @import("src/functions.zig");
 pub const nn = @import("src/nn.zig");
 pub const debug = @import("src/debug.zig");
-pub const typing = @import("src/typing.zig");
 
 test "tesseract" {
     @setEvalBranchQuota(100000);

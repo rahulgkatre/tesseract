@@ -2,6 +2,7 @@ const ops = @import("ops.zig");
 const std = @import("std");
 const utils = @import("utils.zig");
 const AnyTensor = @import("anytensor.zig").AnyTensor;
+const tensor = @import("tensor.zig");
 
 /// Metadata for tensors, shared between the shape-typed Tensor and AnyTensor
 pub const Metadata = struct {
@@ -135,11 +136,7 @@ pub const OpGroupTracker = extern struct {
         };
     }
 
-    pub fn foldIntoGroup(self: OpGroupTracker, group: ?*const OpGroup) OpGroupTracker {
-        if (group == null) {
-            return self;
-        }
-
+    pub fn joinGroup(self: OpGroupTracker, group: ?*const OpGroup) OpGroupTracker {
         return .{
             .curr = group,
             .next = group,
@@ -147,10 +144,7 @@ pub const OpGroupTracker = extern struct {
         };
     }
 
-    pub fn keepGroup(self: OpGroupTracker) OpGroupTracker {
-        if (self.next == null and self.curr == null) {
-            return self;
-        }
+    pub fn nextGroup(self: OpGroupTracker) OpGroupTracker {
         return .{
             .curr = self.next,
             .next = self.next,
@@ -167,3 +161,68 @@ pub const OpGroupTracker = extern struct {
         };
     }
 };
+
+/// This is used to determine which higher level function the tensor is part of
+/// which is useful for finding a better gradient implementation if one exists
+/// than the one that would be found through simple backtracking of the graph.
+/// By default the op_group is null, so setting the op_group isn't necessary
+/// for simple functions with trivial gradients (e.g suogtraction)
+pub fn startGroup(comptime input: anytype, name: []const u8) tensor.TensorTypeOf(input) {
+    // OpGroup will not modify the computation graph so pass the other fields unmodified
+    const t = tensor.asTensor(input);
+    return .{
+        .meta = &.{
+            .op_tracker = t.meta.op_tracker,
+            .op_group_tracker = t.meta.op_group_tracker.startGroup(name ++ if (t.meta.label) |label| "_" ++ label else ""),
+            .constant = t.meta.constant,
+            .label = t.meta.label,
+        },
+        .strides = t.strides,
+        .offset = t.offset,
+    };
+}
+
+pub fn startGroupFromInputs(comptime name: []const u8, comptime tensors: anytype) tensor.TensorTuple(tensors) {
+    var grouped: tensor.TensorTuple(tensors) = undefined;
+    for (tensors, 0..) |in, i| {
+        grouped[i] = startGroup(in, name);
+    }
+    return grouped;
+}
+
+pub fn joinGroup(comptime input: anytype, other: anytype) tensor.TensorTypeOf(input) {
+    const a = tensor.asTensor(input);
+    const b = tensor.asTensor(other);
+    return a.updateMetadata(&.{
+        .op_tracker = a.meta.op_tracker,
+        .op_group_tracker = a.meta.op_group_tracker.joinGroup(b.meta.op_group_tracker.next),
+        .constant = a.meta.constant,
+        .label = a.meta.label,
+    });
+}
+
+/// End the current op_group by setting it to the outer op_group.
+/// Compile error if the current op_group is null.
+pub fn endGroup(comptime input: anytype) tensor.TensorTypeOf(input) {
+    const t = tensor.asTensor(input);
+    return t.updateMetadata(&.{
+        .op_tracker = t.meta.op_tracker,
+        .op_group_tracker = t.meta.op_group_tracker.endGroup(),
+        .constant = t.meta.constant,
+        .label = t.meta.label,
+    });
+}
+
+pub fn endGroupFromOutputs(comptime tensors: anytype) tensor.TensorTuple(tensors) {
+    var ungrouped: tensor.TensorTuple(tensors) = undefined;
+    for (tensors, 0..) |out, i| {
+        const t = tensor.asTensor(out);
+        ungrouped[i] = t.updateMetadata(&.{
+            .op_tracker = t.meta.op_tracker,
+            .op_group_tracker = t.meta.op_group_tracker.endGroup(),
+            .constant = t.meta.constant,
+            .label = t.meta.label,
+        });
+    }
+    return ungrouped;
+}

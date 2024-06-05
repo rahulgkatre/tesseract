@@ -3,9 +3,9 @@ const tensor = @import("tensor.zig");
 const utils = @import("utils.zig");
 const AnyTensor = @import("anytensor.zig").AnyTensor;
 
-const typing = @import("typing.zig");
-const isTensorType = typing.isTensorType;
-const TensorType = typing.TensorType;
+const typing = @import("tensor.zig");
+const isTensorType = tensor.isTensorType;
+const TensorType = tensor.TensorType;
 
 // For dtypes without a corresponding zig type, they are represented
 // as packed structs

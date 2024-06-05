@@ -2,13 +2,14 @@ const std = @import("std");
 const tensor = @import("tensor.zig");
 const AnyTensor = @import("anytensor.zig").AnyTensor;
 const dtypes = @import("dtypes.zig");
+const meta = @import("meta.zig");
 
 const F = @import("functions.zig");
 
-const typing = @import("typing.zig");
-const asTensor = typing.asTensor;
-const isTensorType = typing.isTensorType;
-const TensorTypeOf = typing.TensorTypeOf;
+const typing = @import("tensor.zig");
+const asTensor = tensor.asTensor;
+const isTensorType = tensor.isTensorType;
+const TensorTypeOf = tensor.TensorTypeOf;
 
 pub const Module = struct {
     fn is(comptime T: type) bool {
@@ -83,12 +84,8 @@ pub fn Linear(in: u64, out: u64, dtype: dtypes.DType, label: []const u8) type {
         const name = std.fmt.comptimePrint("Linear_{d}_{d}_{s}", .{ in, out, label });
 
         pub usingnamespace Module.IFace(Self, struct {
-            pub fn forward(self: Self, input: anytype) F.MatMul(input, self.weight) {
-                return asTensor(input)
-                    .startGroup(name)
-                    .matmul(self.weight)
-                    .add(self.bias)
-                    .endGroup();
+            pub fn forward(self: Self, input: anytype) F.MatMul(input, Weight.empty()) {
+                return asTensor(input).linear(self.weight, self.bias);
             }
         });
 
@@ -115,12 +112,12 @@ pub fn Sequential(comptime label: []const u8, comptime modules: anytype) type {
                 return TensorTypeOf(result);
             }
             pub fn forward(_: Self, in: anytype) ReturnType(in) {
-                var result: AnyTensor = asTensor(in).startGroup(name).toAny().*;
+                var result: AnyTensor = asTensor(in).toAny().*;
                 for (modules) |module| {
                     std.debug.assert(Module.is(@TypeOf(module)));
                     result = asTensor(module.forward(result.toTensor().*)).toAny().*;
                 }
-                return result.toTensor().*.endGroup();
+                return result.toTensor().*;
             }
         });
     };

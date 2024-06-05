@@ -9,15 +9,75 @@ const Metadata = meta.Metadata;
 const OpTracker = meta.OpTracker;
 const OpGroupTracker = meta.OpGroupTracker;
 
-const typing = @import("typing.zig");
-const TensorType = typing.TensorType;
-const TensorTypeOf = typing.TensorTypeOf;
-const asTensor = typing.asTensor;
+// =============================================================================
+// Type level utilities specifically for Tensor types
+// Equivalents for @as, @TypeOf, @Type
+// =============================================================================
+
+/// Like @TypeOf but any must either be a scalar (to construct a scalar Tensor)
+/// or a tensor (to reconstruct the Tensor from its dtype shape and ndims)
+pub fn TensorTypeOf(any: anytype) type {
+    var Type = @TypeOf(any);
+    switch (@typeInfo(Type)) {
+        .Pointer => |info| Type = info.child,
+        else => {},
+    }
+    switch (@typeInfo(Type)) {
+        .Struct => {},
+        .Int,
+        .Float,
+        .Bool,
+        .ComptimeInt,
+        .ComptimeFloat,
+        => return Tensor(Type),
+        else => @compileError(std.fmt.comptimePrint("Cannot convert {any} to a tensor type", .{Type})),
+    }
+    return TensorType(any.dtype, any.shape[0..any.ndims]);
+}
+
+/// Like @as but for casting to matching Tensor type
+/// Used for wrapping immediate values in single size tensors with the same dtype as the current tensor
+/// Will cause a compile error if any is not a Tensor or a scalar number.
+pub fn asTensor(any: anytype) TensorTypeOf(any) {
+    @setEvalBranchQuota(std.math.maxInt(u32));
+    return switch (@typeInfo(@TypeOf(any))) {
+        .Pointer => any.*,
+        .Struct => any,
+        .Int, .Float, .Bool, .ComptimeInt, .ComptimeFloat => TensorTypeOf(any).full(any),
+        else => unreachable,
+    };
+}
+
+/// Test if a type is a Tensor type
+pub fn isTensorType(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .Struct => Tensor(T.ArrayType()) == T,
+        else => false,
+    };
+}
+
+/// Like @Type but for constructing a Tensor type from its "type info"
+/// Given dtype and shape, recreate the array type and return the corresponing Tensor type
+pub fn TensorType(dtype: dtypes.DType, shape: anytype) type {
+    var ArrayType = dtypes.ZigType(dtype);
+    for (0..shape.len) |dim| {
+        ArrayType = [shape[shape.len - dim - 1]]ArrayType;
+    }
+    return Tensor(ArrayType);
+}
+
+pub fn TensorTuple(comptime tensors: anytype) type {
+    comptime var types: [tensors.len]type = undefined;
+    for (tensors, 0..) |in, i| {
+        types[i] = TensorTypeOf(in);
+    }
+    return std.meta.Tuple(&types);
+}
 
 pub fn Tensor(comptime TensorArrayType: type) type {
     return extern struct {
         const Self = @This();
-        pub const contiguous_strides: [ndims]u64 = utils.contiguousStrides(ndims, shape);
+        pub const contiguous_strides: [ndims]u64 = utils.contiguousStrides(&shape);
         pub const num_entries = utils.numEntries(ndims, shape);
 
         // All the functions for operations (that do not modify metadata directly)
@@ -47,24 +107,10 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return Child;
         }
 
-        /// Allows for negative dimension indexing to work by normalizing it to [0,ndims)
-        fn signedToUnsignedDim(dim: i16) u8 {
-            return utils.signedToUnsignedDim(Self.ndims, dim);
-        }
-
         /// Determine if the stride pattern of the tensor defines a fully contiguous section of memory at runtime
         pub fn isContiguous(self: Self) bool {
             // Strides need to be decreasing unless its a broadcasted stride (0)
-            var prev: u64 = std.math.maxInt(u64);
-            for (self.strides) |stride| {
-                if (stride > 0) {
-                    if (stride > prev) {
-                        return false;
-                    }
-                    prev = stride;
-                }
-            }
-            return true;
+            return utils.isContiguous(self.strides);
         }
 
         pub fn storageSize(self: Self) u128 {
@@ -88,6 +134,11 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return num_entries;
         }
 
+        /// Allows for negative dimension indexing to work by normalizing it to [0,ndims)
+        fn signedToUnsignedDim(dim: i16) u8 {
+            return utils.signedToUnsignedDim(Self.ndims, dim);
+        }
+
         /// Supports negative indexing sugar (e.g. -1 = ndims - 1)
         pub fn dimSize(_: Self, d: i16) u64 {
             return shape[signedToUnsignedDim(d)];
@@ -98,67 +149,21 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return self.strides[signedToUnsignedDim(d)];
         }
 
-        /// This is used to determine which higher level function the tensor is part of
-        /// which is useful for finding a better gradient implementation if one exists
-        /// than the one that would be found through simple backtracking of the graph.
-        /// By default the op_group is null, so setting the op_group isn't necessary
-        /// for simple functions with trivial gradients (e.g suogtraction)
-        pub fn startGroup(self: Self, op_group_name: []const u8) Self {
-            // OpGroup will not modify the computation graph so pass the other fields unmodified
+        pub fn updateMetadata(self: Self, new_metadata: *const Metadata) Self {
             return .{
-                .meta = &.{
-                    .op_tracker = self.meta.op_tracker,
-                    .op_group_tracker = self.meta.op_group_tracker.startGroup(op_group_name ++ if (self.meta.label) |label| "_" ++ label else ""),
-                    .constant = self.meta.constant,
-                    .label = self.meta.label,
-                },
-                .strides = self.strides,
-                .offset = self.offset,
-            };
-        }
-
-        pub fn foldConstIntoGroupOf(self: Self, group_of_tensor: anytype) Self {
-            if (!self.meta.constant) {
-                return self;
-            }
-            return .{
-                .meta = &.{
-                    .op_tracker = self.meta.op_tracker,
-                    .op_group_tracker = self.meta.op_group_tracker.foldIntoGroup(group_of_tensor.meta.op_group_tracker.next),
-                    .constant = self.meta.constant,
-                    .label = self.meta.label,
-                },
-                .strides = self.strides,
-                .offset = self.offset,
-            };
-        }
-
-        /// End the current op_group by setting it to the outer op_group.
-        /// Compile error if the current op_group is null.
-        pub fn endGroup(self: *const Self) Self {
-            return .{
-                .meta = &.{
-                    .op_tracker = self.meta.op_tracker,
-                    .op_group_tracker = self.meta.op_group_tracker.endGroup(),
-                    .constant = self.meta.constant,
-                    .label = self.meta.label,
-                },
+                .meta = new_metadata,
                 .strides = self.strides,
                 .offset = self.offset,
             };
         }
 
         pub fn assignLabel(self: Self, comptime label: []const u8) Self {
-            return .{
-                .meta = &.{
-                    .op_tracker = self.meta.op_tracker,
-                    .op_group_tracker = self.meta.op_group_tracker,
-                    .constant = self.meta.constant,
-                    .label = label,
-                },
-                .strides = self.strides,
-                .offset = self.offset,
-            };
+            return self.updateMetadata(&.{
+                .op_tracker = self.meta.op_tracker,
+                .op_group_tracker = self.meta.op_group_tracker,
+                .constant = self.meta.constant,
+                .label = label,
+            });
         }
 
         //
@@ -207,19 +212,17 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// A label can be given to make two tensors of the same shape/dtype
         /// correspond to different arrays at runtime (e.g. for two input images )
         pub fn input(comptime label: ?[]const u8) Self {
-            return .{
-                .meta = &.{
-                    .op_tracker = OpTracker.init(
-                        .InitOp,
-                        .Input,
-                        .{},
-                        {},
-                    ),
-                    .op_group_tracker = OpGroupTracker{},
-                    .constant = false,
-                    .label = label,
-                },
-            };
+            return .{ .meta = &.{
+                .op_tracker = OpTracker.init(
+                    .InitOp,
+                    .Input,
+                    .{},
+                    {},
+                ),
+                .op_group_tracker = OpGroupTracker{},
+                .constant = false,
+                .label = label,
+            } };
         }
 
         /// Used to mark a tensor as a learnable parameter,
@@ -227,12 +230,14 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// gradients can be accumulated for it,
         /// and optimizers can detect it,
         pub fn param(label: []const u8) Self {
-            return .{ .meta = &.{
-                .op_tracker = OpTracker.init(.InitOp, .Parameter, .{}, {}),
-                .op_group_tracker = OpGroupTracker{},
-                .constant = false,
-                .label = label,
-            } };
+            return .{
+                .meta = &.{
+                    .op_tracker = OpTracker.init(.InitOp, .Parameter, .{}, {}),
+                    .op_group_tracker = OpGroupTracker{},
+                    .constant = false,
+                    .label = label,
+                },
+            };
         }
 
         /// Fill a tensor with random generated numbers
@@ -265,7 +270,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                 return .{
                     .meta = &.{
                         .op_tracker = OpTracker.init(.TypeOp, .Cast, .{self.toAny()}, {}),
-                        .op_group_tracker = self.meta.op_group_tracker.keepGroup(),
+                        .op_group_tracker = self.meta.op_group_tracker.nextGroup(),
                         .constant = self.meta.constant,
                         .label = self.meta.label,
                     },
@@ -284,8 +289,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                 .meta = &Metadata{
                     .constant = false,
                     .label = self.meta.label,
-                    .op_group_tracker = self.meta.op_group_tracker.keepGroup(),
-                    .op_tracker = OpTracker.init(.TypeOp, .Contiguous, .{self.toAny()}, .{ .Contiguous = {} }),
+                    .op_group_tracker = self.meta.op_group_tracker.nextGroup(),
+                    .op_tracker = OpTracker.init(.TypeOp, .Contiguous, .{self.toAny()}, {}),
                 },
             };
         }
@@ -316,7 +321,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                             else => mode,
                         },
                     }),
-                    .op_group_tracker = self.meta.op_group_tracker.keepGroup(),
+                    .op_group_tracker = self.meta.op_group_tracker.nextGroup(),
                     .constant = false,
                     .label = self.meta.label,
                 },
@@ -334,7 +339,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             var out = View(new_shape){
                 .meta = &.{
                     .op_tracker = OpTracker.init(.TypeOp, .View, .{self.toAny()}, {}),
-                    .op_group_tracker = self.meta.op_group_tracker.keepGroup(),
+                    .op_group_tracker = self.meta.op_group_tracker.nextGroup(),
                     .constant = self.meta.constant,
                     .label = self.meta.label,
                 },
@@ -371,7 +376,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .op_tracker = OpTracker.init(.UnaryOp, op, .{self.toAny()}, {}),
-                    .op_group_tracker = self.meta.op_group_tracker.keepGroup(),
+                    .op_group_tracker = self.meta.op_group_tracker.nextGroup(),
                     .constant = self.meta.constant,
                     .label = self.meta.label,
                 },
@@ -392,7 +397,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// a and b must have the same "dtype class" meaning both must be float, bool, or int
         /// though different sizes are allowed.
         pub fn binaryFn(self: Self, other: anytype, comptime op: ops.BinaryOp) BinaryFnResultType(other, op) {
-            const tb = asTensor(other).foldConstIntoGroupOf(self);
+            const tb = meta.joinGroup(other, self);
             const bc_shape = utils.broadcastShape(shape[0..ndims].*, tb.shape[0..tb.ndims].*);
 
             const ta_bc = self.expand(bc_shape);
@@ -400,7 +405,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .op_tracker = OpTracker.init(.BinaryOp, op, .{ ta_bc.toAny(), tb_bc.toAny() }, {}),
-                    .op_group_tracker = self.meta.op_group_tracker.keepGroup(),
+                    .op_group_tracker = self.meta.op_group_tracker.nextGroup(),
                     .constant = self.meta.constant and tb.meta.constant,
                     .label = null,
                 },
@@ -474,7 +479,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .op_tracker = OpTracker.init(.ReduceOp, op, .{self.toAny()}, .{ .dims = reduce_dims_array, .mask = &reduce_dim_mask }),
-                    .op_group_tracker = self.meta.op_group_tracker.keepGroup(),
+                    .op_group_tracker = self.meta.op_group_tracker.nextGroup(),
                     .constant = false,
                     .label = self.meta.label,
                 },
@@ -500,7 +505,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .op_tracker = OpTracker.init(.TernaryOp, .Where, .{ mask_expand.toAny(), true_expand.asAny(), false_expand.asAny() }, {}),
-                    .op_group_tracker = mask.meta.op_group_tracker.keepGroup(),
+                    .op_group_tracker = mask.meta.op_group_tracker.nextGroup(),
                     .constant = false,
                     .label = null,
                 },

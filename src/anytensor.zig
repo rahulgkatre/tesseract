@@ -4,8 +4,8 @@ const tensor = @import("tensor.zig");
 const utils = @import("utils.zig");
 const std = @import("std");
 
-const typing = @import("typing.zig");
-const TensorTypeOf = typing.TensorTypeOf;
+const typing = @import("tensor.zig");
+const TensorTypeOf = tensor.TensorTypeOf;
 
 // AnyTensor and tensor need to have the exact same runtime layout for @ptrCast tricks to work
 comptime {
