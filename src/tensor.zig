@@ -336,9 +336,16 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// Powerful enough to be used to implement any reshaping or windowing operation on a
         /// There are guardrails to prevent out of bounds access into underlying memory!
         pub fn view(comptime self: Self, comptime new_shape: anytype, comptime new_strides: [new_shape.len]u64, comptime new_offset: u64) View(new_shape) {
+            // It is possible to directly view the first tensor that is not the result of a view op
+            // View ops only rely on the new shape and new strides, broadcasting rules no longer apply
+            // This greatly simplifies the graph as view ops are essentially compressed
+            var first_not_view_tensor = self.toAny();
+            while (std.meta.activeTag(first_not_view_tensor.meta.op_tracker) == .TypeOp and first_not_view_tensor.meta.op_tracker.TypeOp.op == .View) {
+                first_not_view_tensor = first_not_view_tensor.meta.op_tracker.TypeOp.in[0];
+            }
             var out = View(new_shape){
                 .meta = &.{
-                    .op_tracker = OpTracker.init(.TypeOp, .View, .{self.toAny()}, {}),
+                    .op_tracker = OpTracker.init(.TypeOp, .View, .{first_not_view_tensor}, {}),
                     .op_group_tracker = self.meta.op_group_tracker.nextGroup(),
                     .constant = self.meta.constant,
                     .label = self.meta.label,
