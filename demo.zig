@@ -37,13 +37,14 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     // Visualize the dataflow as a GraphViz, and also print the JSON representation of the program
 
-    try tesseract.debug.dataflowViz(.{out.toAny()}, debug.debug_writer, gpa.allocator(), true);
-    try tesseract.debug.dataflowJson(.{out.toAny()}, debug.debug_writer, gpa.allocator());
+    // try tesseract.debug.dataflowViz(.{out.toAny()}, debug.debug_writer, gpa.allocator());
+    // try tesseract.debug.dataflowJson(.{out.toAny()}, debug.debug_writer, gpa.allocator());
 
-    // var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    // defer arena.deinit();
-    // var graph = try tesseract.graph.Graph.init(&arena);
-    // try graph.trace(@ptrCast(&out));
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var graph = try tesseract.graph.Graph.init(&arena);
+    defer graph.deinit();
+
+    try graph.trace(out.toAny());
     // graph.inlineSingleConsumers();
     // for (graph.node_consumers.keys()) |k| {
     //     const consumers = try gpa.allocator().alloc(tesseract.AnyTensor.JsonFormat, graph.node_consumers.get(k).?.keys().len);

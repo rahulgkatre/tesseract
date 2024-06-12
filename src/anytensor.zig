@@ -6,6 +6,7 @@ const std = @import("std");
 
 const typing = @import("tensor.zig");
 const TensorTypeOf = tensor.TensorTypeOf;
+const graph = @import("graph.zig");
 
 // AnyTensor and tensor need to have the exact same runtime layout for @ptrCast tricks to work
 comptime {

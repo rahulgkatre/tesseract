@@ -17,7 +17,7 @@ const isTensor = tensor.isTensorType;
 const LN_2 = asTensor(0.69314718056);
 const INV_LN_2 = asTensor(1.4426950408888495760773985077695);
 
-const DimRange = struct {
+const Dimrange = struct {
     from: i16 = 0,
     to: i16 = -1,
 };
@@ -49,56 +49,56 @@ pub fn fullLike(comptime input: anytype, value: dtypes.ZigType(input.dtype)) Ten
 // =============================================================================
 
 pub fn exp2(input: anytype) FloatTensor(TensorTypeOf(input)) {
-    return asTensor(input).unaryFn(.Exp2);
+    return asTensor(input).unaryFn(.exp2);
 }
 pub fn log2(input: anytype) FloatTensor(TensorTypeOf(input)) {
-    return asTensor(input).unaryFn(.Log2);
+    return asTensor(input).unaryFn(.log2);
 }
 pub fn neg(input: anytype) TensorTypeOf(input) {
-    return asTensor(input).unaryFn(.Neg);
+    return asTensor(input).unaryFn(.neg);
 }
 pub fn recip(input: anytype) FloatTensor(TensorTypeOf(input)) {
-    return asTensor(input).unaryFn(.Rcp);
+    return asTensor(input).unaryFn(.recip);
 }
 pub fn sin(input: anytype) FloatTensor(TensorTypeOf(input)) {
-    return asTensor(input).unaryFn(.Sin);
+    return asTensor(input).unaryFn(.sin);
 }
 pub fn sqrt(input: anytype) FloatTensor(TensorTypeOf(input)) {
-    return asTensor(input).unaryFn(.Sqrt);
+    return asTensor(input).unaryFn(.sqrt);
 }
 
 test "unary" {
     const tensor1 = comptime Tensor([2][3][4]i32).full(3);
     const tensor2 = comptime tensor1.neg();
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor2.shape[0..tensor2.ndims]);
-    try std.testing.expect(tensor2.meta.op_tracker.UnaryOp.op == .Neg);
-    try std.testing.expectEqual(tensor2.meta.op_tracker.UnaryOp.in[0].toTensor().*, tensor1);
+    try std.testing.expect(tensor2.meta.instr.UnaryOp.op == .neg);
+    try std.testing.expectEqual(tensor2.meta.instr.UnaryOp.src[0].toTensor().*, tensor1);
 }
 
 // =============================================================================
 // Binary functions
 // =============================================================================
 
-pub fn add(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .Add) {
-    return asTensor(input).binaryFn(other, .Add);
+pub fn add(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .add) {
+    return asTensor(input).binaryFn(other, .add);
 }
-pub fn mul(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .Mul) {
-    return asTensor(input).binaryFn(other, .Mul);
+pub fn mul(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .mul) {
+    return asTensor(input).binaryFn(other, .mul);
 }
-pub fn maximum(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .Max) {
-    return asTensor(input).binaryFn(other, .Max);
+pub fn maximum(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .max) {
+    return asTensor(input).binaryFn(other, .max);
 }
-pub fn mod(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .Mod) {
-    return asTensor(input).binaryFn(other, .Mod);
+pub fn mod(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .mod) {
+    return asTensor(input).binaryFn(other, .mod);
 }
-pub fn lessThan(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .Lt) {
-    return asTensor(input).binaryFn(other, .Lt);
+pub fn lessThan(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .less_than) {
+    return asTensor(input).binaryFn(other, .less_than);
 }
-pub fn equals(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .Eq) {
-    return asTensor(input).binaryFn(other, .Eq);
+pub fn equals(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .equals) {
+    return asTensor(input).binaryFn(other, .equals);
 }
-pub fn xor(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .Xor) {
-    return asTensor(input).binaryFn(other, .Xor);
+pub fn xor(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .xor) {
+    return asTensor(input).binaryFn(other, .xor);
 }
 
 test "binary" {
@@ -106,9 +106,9 @@ test "binary" {
     const tensor2 = comptime Tensor([3][1]i32).full(3);
     const tensor3 = comptime tensor1.add(tensor2);
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor3.shape[0..tensor3.ndims]);
-    try std.testing.expect(tensor3.meta.op_tracker.BinaryOp.op == .Add);
-    try std.testing.expectEqualDeep(tensor3.meta.op_tracker.BinaryOp.in[0].meta.op_tracker.TypeOp.in[0].toTensor().*, tensor1);
-    try std.testing.expectEqualDeep(tensor3.meta.op_tracker.BinaryOp.in[1].meta.op_tracker.TypeOp.in[0].toTensor().*, tensor2);
+    try std.testing.expect(tensor3.meta.instr.BinaryOp.op == .add);
+    try std.testing.expectEqualDeep(tensor3.meta.instr.BinaryOp.src[0].meta.instr.TypeOp.src[0].toTensor().*, tensor1);
+    try std.testing.expectEqualDeep(tensor3.meta.instr.BinaryOp.src[1].meta.instr.TypeOp.src[0].toTensor().*, tensor2);
 }
 
 // =============================================================================
@@ -116,28 +116,28 @@ test "binary" {
 // =============================================================================
 
 pub fn sum(input: anytype, comptime dims: anytype) TensorTypeOf(input).ReduceFnResultType(dims) {
-    return asTensor(input).reduceFn(.Add, dims);
+    return asTensor(input).reduceFn(.add, dims);
 }
 pub fn max(input: anytype, comptime dims: anytype) TensorTypeOf(input).ReduceFnResultType(dims) {
-    return asTensor(input).reduceFn(.Max, dims);
+    return asTensor(input).reduceFn(.max, dims);
 }
 
 test "reduce" {
     const tensor1 = comptime Tensor([2][3][4]i32).full(5);
     const tensor2 = comptime tensor1.sum(1);
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 1, 4 }, tensor2.shape[0..tensor1.ndims]);
-    try std.testing.expect(tensor2.meta.op_tracker.ReduceOp.op == .Add);
-    try std.testing.expectEqual(tensor2.meta.op_tracker.ReduceOp.in[0].toTensor().*, tensor1);
-    try std.testing.expectEqual(tensor2.meta.op_tracker.ReduceOp.args.mask[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
+    try std.testing.expect(tensor2.meta.instr.ReduceOp.op == .add);
+    try std.testing.expectEqual(tensor2.meta.instr.ReduceOp.src[0].toTensor().*, tensor1);
+    try std.testing.expectEqual(tensor2.meta.instr.ReduceOp.args.mask[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
 }
 
 test "multiple dim reduce" {
     const tensor1 = comptime Tensor([2][3][4]i32).full(5);
     const tensor2 = comptime tensor1.sum(.{ 0, 1 });
     try std.testing.expectEqualSlices(u64, &[_]u64{ 1, 1, 4 }, tensor2.shape[0..tensor2.ndims]);
-    try std.testing.expect(tensor2.meta.op_tracker.ReduceOp.op == .Add);
-    try std.testing.expectEqual(tensor2.meta.op_tracker.ReduceOp.in[0].toTensor().*, tensor1);
-    try std.testing.expectEqualDeep(tensor2.meta.op_tracker.ReduceOp.args.mask[0..tensor2.ndims], &[_]bool{ true, true, false });
+    try std.testing.expect(tensor2.meta.instr.ReduceOp.op == .add);
+    try std.testing.expectEqual(tensor2.meta.instr.ReduceOp.src[0].toTensor().*, tensor1);
+    try std.testing.expectEqualDeep(tensor2.meta.instr.ReduceOp.args.mask[0..tensor2.ndims], &[_]bool{ true, true, false });
 }
 
 // =============================================================================
@@ -176,7 +176,7 @@ pub fn expand(input: anytype, comptime new_shape: anytype) Expand(input, new_sha
 // Flatten
 // =============================================================================
 
-pub fn Flatten(input: anytype, comptime dims: DimRange) type {
+pub fn Flatten(input: anytype, comptime dims: Dimrange) type {
     const A = TensorTypeOf(input);
     const from = utils.signedToUnsignedDim(A.ndims, dims.from);
     const to = utils.signedToUnsignedDim(A.ndims, dims.to);
@@ -195,7 +195,7 @@ pub fn Flatten(input: anytype, comptime dims: DimRange) type {
     return Reshape(input, new_shape);
 }
 /// Flatten a range of dims, collapsing them to 1 dimension
-pub fn flatten(input: anytype, comptime dims: DimRange) Flatten(input, dims) {
+pub fn flatten(input: anytype, comptime dims: Dimrange) Flatten(input, dims) {
     return asTensor(input).reshape(Flatten(input, dims).shape);
 }
 
@@ -207,7 +207,7 @@ pub fn flatten(input: anytype, comptime dims: DimRange) Flatten(input, dims) {
 pub fn paddingMask(input: anytype, comptime padding: anytype) TensorType(.bool, TensorTypeOf(input).shape) {
     const a = asTensor(input);
     const not_padding = TensorType(.bool, a.shape).full(true);
-    return not_padding.pad(padding, .{ .Constant = .{ .value = false } });
+    return not_padding.pad(padding, .{ .constant = .{ .value = false } });
 }
 
 // =============================================================================
@@ -351,26 +351,26 @@ pub fn unsqueeze(comptime input: anytype, comptime dim: i16) Unsqueeze(input, di
 // Compound functions
 // =============================================================================
 
-pub fn div(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .Add) {
+pub fn div(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .mul) {
     return asTensor(input).mul(asTensor(other).recip());
 }
-pub fn sub(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .Add) {
+pub fn sub(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .add) {
     return asTensor(input).add(asTensor(other).neg());
 }
 pub fn exp(input: anytype) FloatTensor(TensorTypeOf(input)) {
-    const x = meta.startGroup(input, "exp");
-    return meta.endGroup(x.mul(INV_LN_2).exp2());
+    const x = asTensor(input);
+    return x.mul(INV_LN_2).exp2();
 }
 pub fn log(input: anytype) FloatTensor(TensorTypeOf(input)) {
-    const x = meta.startGroup(input, "log");
-    return meta.endGroup(x.log2().mul(LN_2));
+    const x = asTensor(input);
+    return x.log2().mul(LN_2);
 }
 pub fn sigmoid(input: anytype) FloatTensor(TensorTypeOf(input)) {
-    const x = meta.startGroup(input);
+    const x = asTensor(input);
     const x_pos = x.neg().exp().add(1.0).recip();
     const x_neg = x.exp().div(x.exp().add(1.0));
     const mask = x.lessThan(0.0);
-    return mask.where(x_neg, x_pos).endGroup();
+    return mask.where(x_neg, x_pos);
 }
 pub fn relu(input: anytype) TensorTypeOf(input) {
     if (dtypes.isFloat(input.dtype)) {
@@ -382,20 +382,20 @@ pub fn relu(input: anytype) TensorTypeOf(input) {
     }
 }
 pub fn softmax(input: anytype, comptime dim: i16) FloatTensor(TensorTypeOf(input)) {
-    const x = meta.startGroup(input, "softmax");
+    const x = asTensor(input);
     const minus_max_exp = x.sub(x.max({})).exp();
     const sumexp = minus_max_exp.sum(dim);
-    return meta.endGroup(minus_max_exp.div(sumexp));
+    return minus_max_exp.div(sumexp);
 }
 pub fn mean(input: anytype, comptime dims: anytype) FloatTensor(TensorTypeOf(input).ReduceFnResultType(dims)) {
     return input.div(input.sum(dims));
 }
 pub fn variance(input: anytype, comptime dims: anytype) FloatTensor(TensorTypeOf(input).ReduceFnResultType(dims)) {
-    const x = meta.startGroup(input, "variance");
+    const x = asTensor(input);
     const mu = x.mean(dims);
     const N: f64 = @floatFromInt(@divExact(x.num_entries, mu.num_entries));
     const a_minus_mu = x.sub(mu);
-    return meta.endGroup((a_minus_mu.mul(a_minus_mu)).sum(dims).div(N));
+    return a_minus_mu.mul(a_minus_mu).sum(dims).div(N);
 }
 
 pub fn MatMul(input: anytype, other: anytype) type {

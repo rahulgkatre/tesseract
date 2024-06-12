@@ -3,67 +3,67 @@ const AnyTensor = @import("anytensor.zig").AnyTensor;
 // Arithmetic operations for unary functions, binary functions,
 // and reducing a dimension of a tensor to a single value by applying some binary function
 pub const UnaryOp = enum {
-    pub const Info = struct {
+    pub const Instr = struct {
         op: UnaryOp,
-        in: [1]*const AnyTensor,
+        src: [1]*const AnyTensor,
         args: Args = {},
     };
     pub const Args = void;
     pub const Json = struct {
         op: UnaryOp,
-        in: [1]usize,
-        out: usize,
+        src: [1]usize,
+        dst: usize,
     };
 
-    Neg,
-    Log2,
-    Exp2,
-    Sqrt,
-    Rcp,
-    Sin,
+    neg,
+    log2,
+    exp2,
+    sqrt,
+    recip,
+    sin,
 };
 // Lt, Eq, Xor will produce a bool tensor which can be used in mask based operations later on
 pub const BinaryOp = enum {
-    pub const Info = struct {
+    pub const Instr = struct {
         op: BinaryOp,
-        in: [2]*const AnyTensor,
+        src: [2]*const AnyTensor,
         args: Args = {},
     };
     pub const Args = void;
     pub const Json = struct {
         op: BinaryOp,
-        in: [2]usize,
-        out: usize,
+        src: [2]usize,
+        dst: usize,
     };
 
-    Add,
-    Mul,
-    Max,
-    Mod,
-    Lt,
-    Eq,
-    Xor,
+    add,
+    mul,
+    max,
+    mod,
+    less_than,
+    equals,
+    xor,
 };
 // Ternary ops take in 3 arguments which can have different purposes
 pub const TernaryOp = enum {
-    pub const Info = struct {
+    pub const Instr = struct {
         op: TernaryOp,
-        in: [3]*const AnyTensor,
+        src: [3]*const AnyTensor,
         args: Args = {},
     };
     pub const Args = void;
     pub const Json = struct {
         op: TernaryOp,
-        in: [3]usize,
-        out: usize,
+        src: [3]usize,
+        dst: usize,
     };
-    Where,
+    where,
 };
 // ReduceOps are just recurrently applied binary ops
 pub const ReduceOp = enum {
-    pub const Info = struct {
+    pub const Instr = struct {
         op: ReduceOp,
-        in: [1]*const AnyTensor,
+        src: [1]*const AnyTensor,
         args: Args,
     };
     pub const Args = struct {
@@ -72,15 +72,15 @@ pub const ReduceOp = enum {
     };
     pub const Json = struct {
         op: ReduceOp,
-        in: [1]usize,
+        src: [1]usize,
         args: Args,
-        out: usize,
+        dst: usize,
     };
 
-    Add,
-    Mul,
-    Max,
-    Xor,
+    add,
+    mul,
+    max,
+    xor,
 
     pub fn binaryOp(reduceOp: ReduceOp) BinaryOp {
         return @field(BinaryOp, @tagName(reduceOp));
@@ -90,79 +90,99 @@ pub const ReduceOp = enum {
 // the dtype but also the shape, so any shape affecting ops are TypeOps
 
 pub const TypeOp = enum {
-    pub const Info = struct {
+    pub const Instr = struct {
         op: TypeOp,
-        in: [1]*const AnyTensor,
+        src: [1]*const AnyTensor,
         args: Args,
     };
     pub const Args = union(TypeOp) {
         pub const Pad = struct {
             pub const Mode = enum {
-                Constant,
-                Reflect,
-                Replicate,
-                Circular,
+                constant,
+                reflect,
+                replicate,
+                circular,
             };
 
             padding: []const [2]u64,
             mode: union(Mode) {
-                Constant: struct {
-                    value: []const u8,
-                },
-                Reflect: void,
-                Replicate: void,
-                Circular: void,
+                constant: []const u8,
+                reflect: void,
+                replicate: void,
+                circular: void,
             },
         };
-        View: void,
-        Cast: void,
-        Pad: Pad,
-        Contiguous: void,
+        view: void,
+        cast: void,
+        pad: Pad,
+        contiguous: void,
     };
     pub const Json = struct {
         op: TypeOp,
-        in: [1]usize,
-        out: usize,
+        src: [1]usize,
+        dst: usize,
     };
 
-    View,
-    Cast,
-    Pad,
-    Contiguous,
+    view,
+    cast,
+    pad,
+    contiguous,
 };
 pub const InitOp = enum {
-    pub const Info = struct {
+    pub const Instr = struct {
         op: InitOp,
-        in: [0]*const AnyTensor,
+        src: [0]*const AnyTensor = .{},
         args: InitOp.Args,
     };
     pub const Args = union(InitOp) {
-        pub const Full = struct {
-            value: []const u8,
-        };
-
-        pub const Range = struct {
+        pub const full = []const u8;
+        pub const range = struct {
             start: []const u8,
             stop: []const u8,
         };
 
-        Empty: void,
-        Input: void,
-        Parameter: void,
-        Full: Full,
-        Rand: void,
-        Range: Range,
+        empty: void,
+        input: void,
+        parameter: void,
+        full: full,
+        random: void,
+        range: range,
     };
     pub const Json = struct {
         op: InitOp,
         args: Args,
-        out: usize,
+        dst: usize,
     };
-    Empty,
-    Input,
-    Parameter,
-    Full,
-    Rand,
-    Range,
+    empty,
+    input,
+    parameter,
+    full,
+    random,
+    range,
 };
-pub const OpTypes = enum { UnaryOp, BinaryOp, ReduceOp, TypeOp, InitOp, TernaryOp };
+pub const OpTypes = enum {
+    InitOp,
+    UnaryOp,
+    BinaryOp,
+    TernaryOp,
+    ReduceOp,
+    TypeOp,
+};
+
+pub const Instruction = union(OpTypes) {
+    InitOp: InitOp.Instr,
+    UnaryOp: UnaryOp.Instr,
+    BinaryOp: BinaryOp.Instr,
+    TernaryOp: TernaryOp.Instr,
+    ReduceOp: ReduceOp.Instr,
+    TypeOp: TypeOp.Instr,
+
+    pub const Json = union(OpTypes) {
+        InitOp: InitOp.Json,
+        UnaryOp: UnaryOp.Json,
+        BinaryOp: BinaryOp.Json,
+        TernaryOp: TernaryOp.Json,
+        ReduceOp: ReduceOp.Json,
+        TypeOp: TypeOp.Json,
+    };
+};
