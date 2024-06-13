@@ -229,7 +229,7 @@ pub fn permute(comptime input: anytype, comptime perm: [TensorTypeOf(input).ndim
         a.offset,
     );
 }
-test "permute" {
+test permute {
     const tensor1 = comptime Tensor([2][3][4]f32).full(0);
     const tensor2 = comptime tensor1.permute(.{ 0, 2, 1 });
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 4, 3 }, tensor2.shape[0..tensor2.ndims]);
@@ -251,7 +251,7 @@ pub fn reshape(comptime input: anytype, comptime new_shape: anytype) Reshape(inp
     const a = asTensor(input);
     return a.contiguous().view(new_shape, Reshape(a, new_shape).contiguous_strides, a.offset);
 }
-test "reshape" {
+test reshape {
     const tensor1 = comptime Tensor([2][3][4]i32).full(0);
     const tensor2 = comptime tensor1.reshape(.{ 12, 2 });
     const tensor3 = comptime tensor2.reshape(.{24});
@@ -319,7 +319,7 @@ pub fn transpose(comptime input: anytype, comptime dim1: i16, comptime dim2: i16
 pub fn T(comptime input: anytype) Transpose(input, -2, -1) {
     return asTensor(input).transpose(-2, -1);
 }
-test "transpose" {
+test transpose {
     const tensor1 = comptime Tensor([2][1][4]i32).full(1);
     const tensor2 = comptime tensor1.T();
     const ndims = tensor1.ndims;
@@ -445,7 +445,7 @@ pub fn linear(input: anytype, weight: anytype, bias: anytype) MatMul(input, weig
 
 pub fn Window1d(input: anytype, window: u64) type {
     const I = TensorTypeOf(input);
-    return TensorType(I.dtype, I.shape[0 .. I.ndims - 1] ++ .{ I.shape[I.ndimws - 1] - window + 1, window });
+    return TensorType(I.dtype, I.shape[0 .. I.ndims - 1] ++ .{ I.shape[I.ndims - 1] - window + 1, window });
 }
 pub fn window1d(input: anytype, window: u64) Window1d(input, window) {
     const Result = Window1d(input, window);

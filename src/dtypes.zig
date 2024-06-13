@@ -4,7 +4,6 @@ const utils = @import("utils.zig");
 const AnyTensor = @import("anytensor.zig").AnyTensor;
 
 const typing = @import("tensor.zig");
-const isTensorType = tensor.isTensorType;
 const TensorType = tensor.TensorType;
 
 // For dtypes without a corresponding zig type, they are represented
@@ -161,7 +160,6 @@ pub fn resultDType(dtype1: DType, dtype2: DType) DType {
 }
 
 pub fn FloatTensor(comptime T: type) type {
-    std.debug.assert(isTensorType(T));
     if (isFloat(T.dtype)) {
         return T;
     }
@@ -169,7 +167,6 @@ pub fn FloatTensor(comptime T: type) type {
 }
 
 pub fn BoolTensor(comptime T: type) type {
-    std.debug.assert(tensor.isTensorType(T));
     const Tensor = tensor.TensorType(.bool, T.shape);
     if (!isBool(T.dtype)) {
         @compileError("Must be bool datatype");
@@ -178,7 +175,6 @@ pub fn BoolTensor(comptime T: type) type {
 }
 
 pub fn IntTensor(comptime T: type) type {
-    std.debug.assert(tensor.isTensorType(T));
     if (!isInt(T.dtype)) {
         @compileError("Must cast to int datatype first");
     }

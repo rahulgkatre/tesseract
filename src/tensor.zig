@@ -38,20 +38,11 @@ pub fn TensorTypeOf(any: anytype) type {
 /// Used for wrapping immediate values in single size tensors with the same dtype as the current tensor
 /// Will cause a compile error if any is not a Tensor or a scalar number.
 pub fn asTensor(comptime any: anytype) TensorTypeOf(any) {
-    @setEvalBranchQuota(std.math.maxInt(u32));
     return switch (@typeInfo(@TypeOf(any))) {
-        .Pointer => any.*,
-        .Struct => any,
+        .Pointer => |info| (if (info.child == AnyTensor) @as(*const AnyTensor, any).toTensor() else any).*,
+        .Struct => if (@TypeOf(any) == AnyTensor) @as(AnyTensor, any).toTensor().* else any,
         .Int, .Float, .Bool, .ComptimeInt, .ComptimeFloat => TensorTypeOf(any).full(any),
         else => unreachable,
-    };
-}
-
-/// Test if a type is a Tensor type
-pub fn isTensorType(comptime T: type) bool {
-    return switch (@typeInfo(T)) {
-        .Struct => Tensor(T.ArrayType()) == T,
-        else => false,
     };
 }
 
@@ -87,15 +78,15 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         pub const contiguous_strides: [ndims]u64 = utils.contiguousStrides(&shape);
         pub const num_elements = utils.numElements(&shape);
 
+        meta: *const Metadata,
         dtype: dtypes.DType = dtype,
         ndims: u8 = ndims,
         shape: *const [ndims]u64 = &shape,
         strides: *const [ndims]u64 = &contiguous_strides,
         offset: u64 = 0,
-        meta: *const Metadata,
 
-        pub fn toAny(comptime self: Self) *const AnyTensor {
-            return @as(*const AnyTensor, @ptrCast(&self));
+        pub fn toAnyTensor(comptime self: *const Self) *const AnyTensor {
+            return @ptrCast(self);
         }
 
         pub fn ArrayType() type {
@@ -166,8 +157,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     .instr = instr,
                     .forward = struct {
                         pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
-                            const out_any = comptime asTensor(out).toAny();
-                            try g.compute(out_any, instr);
+                            const out_any = comptime asTensor(out).toAnyTensor();
+                            try g.compute(out_any);
                         }
                     }.forwardImpl,
                     .backward = struct {
@@ -198,8 +189,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     .label = null,
                     .forward = struct {
                         pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
-                            const out_any = comptime asTensor(out).toAny();
-                            try g.compute(out_any, instr);
+                            const out_any = comptime asTensor(out).toAnyTensor();
+                            try g.compute(out_any);
                         }
                     }.forwardImpl,
                     .backward = struct {
@@ -227,8 +218,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     .instr = instr,
                     .forward = struct {
                         pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
-                            const out_any = comptime asTensor(out).toAny();
-                            try g.compute(out_any, instr);
+                            const out_any = comptime asTensor(out).toAnyTensor();
+                            try g.compute(out_any);
                         }
                     }.forwardImpl,
                     .backward = struct {
@@ -242,15 +233,15 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             };
         }
 
-        /// Used to mark a tensor as a learnable parameter,
+        /// Used to mark a tensor as a learnable param,
         /// codegen will make this an argument of the function,
         /// gradients can be accumulated for it,
         /// and optimizers can detect it,
         pub fn param(label: []const u8) Self {
             const instr = .{
                 .InitOp = .{
-                    .op = .parameter,
-                    .args = .{ .parameter = {} },
+                    .op = .param,
+                    .args = .{ .param = {} },
                 },
             };
             return .{
@@ -258,8 +249,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     .instr = instr,
                     .forward = struct {
                         pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
-                            const out_any = comptime asTensor(out).toAny();
-                            try g.compute(out_any, instr);
+                            const out_any = comptime asTensor(out).toAnyTensor();
+                            try g.compute(out_any);
                         }
                     }.forwardImpl,
                     .backward = struct {
@@ -276,7 +267,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// Fill a tensor with random generated numbers
         /// By default, random tensors will be constant folded in codegen
         /// unless they are marked as requires_grad
-        /// Do not use this for random initialization of parameters!
+        /// Do not use this for random initialization of params!
         /// Note that some device backends do not support this
         pub fn random(label: []const u8) Self {
             std.debug.assert(dtypes.isFloat(dtype));
@@ -291,8 +282,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     .instr = instr,
                     .forward = struct {
                         pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
-                            const out_any = comptime asTensor(out).toAny();
-                            try g.compute(out_any, instr);
+                            const out_any = comptime asTensor(out).toAnyTensor();
+                            try g.compute(out_any);
                         }
                     }.forwardImpl,
                     .backward = struct {
@@ -315,7 +306,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             if (new_dtype != self.dtype) {
                 const instr = .{
                     .DataOp = .{
-                        .in = .{self.toAny()},
+                        .in = .{self.toAnyTensor()},
                         .op = .cast,
                         .args = .{ .cast = new_dtype },
                     },
@@ -326,8 +317,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                         .forward = struct {
                             pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
                                 try g.traceForward(self);
-                                const out_any = comptime asTensor(out).toAny();
-                                try g.compute(out_any, instr);
+                                const out_any = comptime asTensor(out).toAnyTensor();
+                                try g.compute(out_any);
                             }
                         }.forwardImpl,
                         .backward = struct {
@@ -351,7 +342,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             if (self.isContiguous()) return self;
             const instr = .{
                 .DataOp = .{
-                    .in = .{self.toAny()},
+                    .in = .{self.toAnyTensor()},
                     .op = .contiguous,
                     .args = .{
                         .contiguous = .{
@@ -368,8 +359,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     .forward = struct {
                         pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
                             try g.traceForward(self);
-                            const out_any = comptime asTensor(out).toAny();
-                            try g.compute(out_any, instr);
+                            const out_any = comptime asTensor(out).toAnyTensor();
+                            try g.compute(out_any);
                         }
                     }.forwardImpl,
                     .backward = struct {
@@ -402,7 +393,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         pub fn pad(comptime self: Self, comptime padding: anytype, comptime mode: PadMode) Pad(padding) {
             const instr = .{
                 .DataOp = .{
-                    .in = .{self.toAny()},
+                    .in = .{self.toAnyTensor()},
                     .op = .pad,
                     .args = .{
                         .pad = .{
@@ -421,8 +412,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     .forward = struct {
                         pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
                             try g.traceForward(self);
-                            const out_any = comptime asTensor(out).toAny();
-                            try g.compute(out_any, instr);
+                            const out_any = comptime asTensor(out).toAnyTensor();
+                            try g.compute(out_any);
                         }
                     }.forwardImpl,
                     .backward = struct {
@@ -448,7 +439,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             // View ops only rely on the new shape and new strides, broadcasting rules no longer apply
             // This greatly simplifies the graph as view ops are essentially compressed
             const first_not_view_tensor = blk: {
-                var t = self.toAny();
+                var t = self.toAnyTensor();
                 while (std.meta.activeTag(t.meta.instr) == .DataOp and t.meta.instr.DataOp.op == .view) {
                     t = t.meta.instr.DataOp.in[0];
                 }
@@ -471,8 +462,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     .forward = struct {
                         pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
                             try g.traceForward(first_not_view_tensor.toTensor());
-                            const out_any = comptime asTensor(out).toAny();
-                            try g.compute(out_any, instr);
+                            const out_any = comptime asTensor(out).toAnyTensor();
+                            try g.compute(out_any);
                         }
                     }.forwardImpl,
                     .backward = struct {
@@ -515,7 +506,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         pub fn unaryFn(self: Self, comptime op: ops.UnaryOp) Self {
             const instr: ops.Instruction = .{
                 .UnaryOp = .{
-                    .in = .{self.toAny()},
+                    .in = .{self.toAnyTensor()},
                     .op = op,
                 },
             };
@@ -525,8 +516,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     .forward = struct {
                         pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
                             try g.traceForward(self);
-                            const out_any = comptime asTensor(out).toAny();
-                            try g.compute(out_any, instr);
+                            const out_any = comptime asTensor(out).toAnyTensor();
+                            try g.compute(out_any);
                         }
                     }.forwardImpl,
                     .backward = struct {
@@ -561,7 +552,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             const b = asTensor(other).expand(bc_shape);
             const instr = .{
                 .BinaryOp = .{
-                    .in = .{ a.toAny(), b.toAny() },
+                    .in = .{ a.toAnyTensor(), b.toAnyTensor() },
                     .op = op,
                 },
             };
@@ -572,8 +563,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                         pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
                             try g.traceForward(a);
                             try g.traceForward(b);
-                            const out_any = comptime asTensor(out).toAny();
-                            try g.compute(out_any, instr);
+                            const out_any = comptime asTensor(out).toAnyTensor();
+                            try g.compute(out_any);
                         }
                     }.forwardImpl,
                     .backward = struct {
@@ -652,7 +643,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             };
             const instr = .{
                 .ReduceOp = .{
-                    .in = .{self.toAny()},
+                    .in = .{self.toAnyTensor()},
                     .op = op,
                     .args = .{
                         .dims = reduce_dims_array,
@@ -666,8 +657,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     .forward = struct {
                         pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
                             try g.traceForward(self);
-                            const out_any = comptime asTensor(out).toAny();
-                            try g.compute(out_any, instr);
+                            const out_any = comptime asTensor(out).toAnyTensor();
+                            try g.compute(out_any);
                         }
                     }.forwardImpl,
                     .backward = struct {
@@ -698,7 +689,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             const true_expand = asTensor(true_value).expand(Out.shape);
             const false_expand = asTensor(false_value).expand(Out.shape);
             const instr = .{ .TernaryOp = .{
-                .in = .{ mask_expand.toAny(), true_expand.toAny(), false_expand.toAny() },
+                .in = .{ mask_expand.toAnyTensor(), true_expand.toAnyTensor(), false_expand.toAnyTensor() },
                 .op = .where,
             } };
             return .{
@@ -709,8 +700,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                             try g.traceForward(mask_expand);
                             try g.traceForward(true_expand);
                             try g.traceForward(false_expand);
-                            const out_any = comptime asTensor(out).toAny();
-                            try g.compute(out_any, instr);
+                            const out_any = comptime asTensor(out).toAnyTensor();
+                            try g.compute(out_any);
                         }
                     }.forwardImpl,
                     .backward = struct {

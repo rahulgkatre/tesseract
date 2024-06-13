@@ -82,7 +82,7 @@ fn isSymbolic(comptime ndims: comptime_int, comptime dims: [ndims]Dim) bool {
 }
 
 fn Tensor(
-    // These generic parameters are private so they will be redeclare as pub consts in the result type
+    // These generic params are private so they will be redeclare as pub consts in the result type
     comptime tensor_dtype: dtypes.DType,
     comptime tensor_ndims: u8,
     comptime tensor_shape: [tensor_ndims]Dim,

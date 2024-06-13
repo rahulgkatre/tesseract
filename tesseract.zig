@@ -11,7 +11,8 @@ pub usingnamespace @import("src/functions.zig");
 pub const nn = @import("src/nn.zig");
 pub const debug = @import("src/debug.zig");
 
-test "tesseract" {
-    @setEvalBranchQuota(100000);
-    std.testing.refAllDecls(@This());
+const tesseract = @This();
+test tesseract {
+    _ = tensor;
+    _ = nn;
 }

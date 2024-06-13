@@ -37,7 +37,7 @@ Generated code comes in the form of a .so that follows the C ABI in order to be 
 - Computation graph is implicitly created which can be used to create the backwards graph for training
 - Computation graph is converted to a schedule graph where Halide-like API is used to define optimizations (which will be autotunable)
 - Optimized schedule graph is lowered and compiled to a .so or .dll file
-- To run, the caller passes buffers (e.g. NumPy) containing input data, model parameters, and pre-allocated output buffer to t
+- To run, the caller passes buffers (e.g. NumPy) containing input data, model params, and pre-allocated output buffer to t
 
 ## Roadmap
 

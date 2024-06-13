@@ -9,7 +9,6 @@ pub const ComputeNode = struct {
     // https://tvm.apache.org/docs/reference/api/python/te.html?highlight=compute_at#tvm.te.Stage
 
     output_node: *DataNode,
-    compute_instr: ops.Instruction,
     compute_location: ComputeLocation = .{ .Root = {} },
 
     const ComputeLocation = union(enum) {
@@ -42,15 +41,14 @@ pub const Graph = struct {
         graph.arena.deinit();
     }
 
-    pub fn compute(graph: *Graph, tensor: *const AnyTensor, instr: ops.Instruction) !void {
+    pub fn compute(graph: *Graph, tensor: *const AnyTensor) !void {
         if (!graph.compute_nodes.contains(tensor)) {
             try graph.data(tensor);
             try graph.compute_nodes.put(tensor, .{
                 .output_node = graph.data_nodes.getPtr(tensor).?,
-                .compute_instr = instr,
             });
-            std.debug.print("{s: <32} %{x} = {any}\n", .{
-                tensor.meta.label orelse " ",
+            std.debug.print("{s: <32}  @{x}  {any}\n", .{
+                tensor.meta.label orelse "",
                 @intFromPtr(tensor),
                 tensor.meta.instr,
             });

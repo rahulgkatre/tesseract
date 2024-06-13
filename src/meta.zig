@@ -7,7 +7,6 @@ const graph = @import("graph.zig");
 
 /// Metadata for tensors, shared between the shape-typed Tensor and AnyTensor
 pub const Metadata = struct {
-    const Forward = *const fn (comptime anytype, *graph.Graph) anyerror!void;
     instr: ops.Instruction,
     forward: *const anyopaque,
     backward: *const anyopaque,

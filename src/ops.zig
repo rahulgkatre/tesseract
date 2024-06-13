@@ -142,7 +142,7 @@ pub const DataOp = enum {
         ) anyerror!void {
             switch (self) {
                 .pad => |pad| try std.fmt.format(writer, "{}\t", .{pad}),
-                .cast => |cast| try std.fmt.format(writer, "{s}\t", .{utils.rawTagName(cast)}),
+                .cast => |cast| try std.fmt.format(writer, ".dtype = {s}\t", .{utils.rawTagName(cast)}),
                 .view, .contiguous => |view| {
                     try std.fmt.format(writer, ".shape = {[shape]any} .strides = {[strides]any} .offset = {[offset]d}", view);
                 },
@@ -175,7 +175,7 @@ pub const InitOp = enum {
 
         empty: void,
         input: void,
-        parameter: void,
+        param: void,
         full: Full,
         random: void,
         range: Range,
@@ -187,7 +187,7 @@ pub const InitOp = enum {
             writer: anytype,
         ) anyerror!void {
             switch (self) {
-                .input, .parameter, .empty, .random => {},
+                .input, .param, .empty, .random => {},
                 .full => |full| try std.fmt.format(writer, ".value = {s}", .{full}),
                 .range => |range| try std.fmt.format(writer, ".start = {[start]s} .stop = {[stop]s}", range),
             }
@@ -200,7 +200,7 @@ pub const InitOp = enum {
     };
     empty,
     input,
-    parameter,
+    param,
     full,
     random,
     range,
@@ -234,20 +234,24 @@ pub const Instruction = union(OpTypes) {
     pub fn format(
         self: Instruction,
         comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
+        _: std.fmt.FormatOptions,
         writer: anytype,
     ) anyerror!void {
         switch (self) {
             inline else => |instr| {
                 std.debug.assert(fmt.len == 0 or std.mem.eql(u8, fmt, "any"));
-                try std.fmt.format(writer, "{s: <10}\t", .{utils.rawTagName(instr.op)});
-                for (instr.in, 0..) |in, i| {
-                    try writer.writeAll(".in[");
-                    try std.fmt.formatInt(i, 10, .lower, options, writer);
-                    try writer.writeAll("] = %");
-                    try std.fmt.formatInt(@intFromPtr(in), 16, .lower, options, writer);
-                    try writer.writeAll(" ");
+                try std.fmt.format(writer, "{s: <8}", .{utils.rawTagName(instr.op)});
+                for (instr.in) |in| {
+                    try std.fmt.format(writer, "@{x: <9}", .{@intFromPtr(in)});
                 }
+                switch (instr.in.len) {
+                    0 => try std.fmt.format(writer, "  {s: <30}", .{""}),
+                    1 => try std.fmt.format(writer, "  {s: <20}", .{""}),
+                    2 => try std.fmt.format(writer, "  {s: <10}", .{""}),
+                    3 => {},
+                    else => unreachable,
+                }
+
                 if (@TypeOf(instr.args) != void) {
                     try std.fmt.format(writer, "{}", .{instr.args});
                 }

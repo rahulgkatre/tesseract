@@ -26,15 +26,15 @@ comptime {
 /// By making AnyTensor and generic tensor extern structs, they are guaranteed to have
 /// the same layout.
 pub const AnyTensor = extern struct {
+    meta: *const meta.Metadata,
     dtype: dtypes.DType,
     ndims: u8,
     shape: [*]const u64,
     strides: [*]const u64,
     offset: u64,
-    meta: *const meta.Metadata,
 
     /// Performs type narrowing to get back the shape-typed Tensor
-    pub fn toTensor(comptime self: *const AnyTensor) *const TensorTypeOf(self.*) {
+    pub fn toTensor(comptime self: *const AnyTensor) *const TensorTypeOf(self) {
         return @ptrCast(self);
     }
 
