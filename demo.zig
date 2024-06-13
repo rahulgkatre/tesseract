@@ -44,20 +44,5 @@ pub fn main() !void {
     var graph = try tesseract.graph.Graph.init(&arena);
     defer graph.deinit();
 
-    try graph.trace(out.toAny());
-    // graph.inlineSingleConsumers();
-    // for (graph.node_consumers.keys()) |k| {
-    //     const consumers = try gpa.allocator().alloc(tesseract.AnyTensor.JsonFormat, graph.node_consumers.get(k).?.keys().len);
-    //     defer gpa.allocator().free(consumers);
-
-    //     for (graph.node_consumers.get(k).?.keys(), consumers) |any, *json| {
-    //         json.* = any.toJsonFormat();
-    //     }
-
-    //     try std.json.stringify(.{
-    //         .producer = k.toJsonFormat(),
-    //         .consumers = consumers,
-    //     }, .{}, writer);
-    //     try writer.print("\n\n", .{});
-    // }
+    try graph.traceForward(out);
 }

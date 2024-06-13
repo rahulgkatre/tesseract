@@ -5,14 +5,14 @@ const AnyTensor = @import("anytensor.zig").AnyTensor;
 pub const UnaryOp = enum {
     pub const Instr = struct {
         op: UnaryOp,
-        src: [1]*const AnyTensor,
+        in: [1]*const AnyTensor,
         args: Args = {},
     };
     pub const Args = void;
     pub const Json = struct {
         op: UnaryOp,
-        src: [1]usize,
-        dst: usize,
+        in: [1]usize,
+        out: usize,
     };
 
     neg,
@@ -26,14 +26,14 @@ pub const UnaryOp = enum {
 pub const BinaryOp = enum {
     pub const Instr = struct {
         op: BinaryOp,
-        src: [2]*const AnyTensor,
+        in: [2]*const AnyTensor,
         args: Args = {},
     };
     pub const Args = void;
     pub const Json = struct {
         op: BinaryOp,
-        src: [2]usize,
-        dst: usize,
+        in: [2]usize,
+        out: usize,
     };
 
     add,
@@ -48,14 +48,14 @@ pub const BinaryOp = enum {
 pub const TernaryOp = enum {
     pub const Instr = struct {
         op: TernaryOp,
-        src: [3]*const AnyTensor,
+        in: [3]*const AnyTensor,
         args: Args = {},
     };
     pub const Args = void;
     pub const Json = struct {
         op: TernaryOp,
-        src: [3]usize,
-        dst: usize,
+        in: [3]usize,
+        out: usize,
     };
     where,
 };
@@ -63,7 +63,7 @@ pub const TernaryOp = enum {
 pub const ReduceOp = enum {
     pub const Instr = struct {
         op: ReduceOp,
-        src: [1]*const AnyTensor,
+        in: [1]*const AnyTensor,
         args: Args,
     };
     pub const Args = struct {
@@ -72,9 +72,9 @@ pub const ReduceOp = enum {
     };
     pub const Json = struct {
         op: ReduceOp,
-        src: [1]usize,
+        in: [1]usize,
         args: Args,
-        dst: usize,
+        out: usize,
     };
 
     add,
@@ -92,7 +92,7 @@ pub const ReduceOp = enum {
 pub const TypeOp = enum {
     pub const Instr = struct {
         op: TypeOp,
-        src: [1]*const AnyTensor,
+        in: [1]*const AnyTensor,
         args: Args,
     };
     pub const Args = union(TypeOp) {
@@ -119,8 +119,8 @@ pub const TypeOp = enum {
     };
     pub const Json = struct {
         op: TypeOp,
-        src: [1]usize,
-        dst: usize,
+        in: [1]usize,
+        out: usize,
     };
 
     view,
@@ -131,7 +131,7 @@ pub const TypeOp = enum {
 pub const InitOp = enum {
     pub const Instr = struct {
         op: InitOp,
-        src: [0]*const AnyTensor = .{},
+        in: [0]*const AnyTensor = .{},
         args: InitOp.Args,
     };
     pub const Args = union(InitOp) {
@@ -151,7 +151,7 @@ pub const InitOp = enum {
     pub const Json = struct {
         op: InitOp,
         args: Args,
-        dst: usize,
+        out: usize,
     };
     empty,
     input,

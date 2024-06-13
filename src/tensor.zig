@@ -4,7 +4,7 @@ const utils = @import("utils.zig");
 const ops = @import("ops.zig");
 const dtypes = @import("dtypes.zig");
 const graph = @import("graph.zig");
-
+const autograd = @import("autograd.zig");
 const meta = @import("meta.zig");
 const Metadata = meta.Metadata;
 
@@ -37,7 +37,7 @@ pub fn TensorTypeOf(any: anytype) type {
 /// Like @as but for casting to matching Tensor type
 /// Used for wrapping immediate values in single size tensors with the same dtype as the current tensor
 /// Will cause a compile error if any is not a Tensor or a scalar number.
-pub fn asTensor(any: anytype) TensorTypeOf(any) {
+pub fn asTensor(comptime any: anytype) TensorTypeOf(any) {
     @setEvalBranchQuota(std.math.maxInt(u32));
     return switch (@typeInfo(@TypeOf(any))) {
         .Pointer => any.*,
@@ -76,8 +76,6 @@ pub fn TensorTuple(comptime tensors: anytype) type {
 pub fn Tensor(comptime TensorArrayType: type) type {
     return extern struct {
         const Self = @This();
-        pub const contiguous_strides: [ndims]u64 = utils.contiguousStrides(&shape);
-        pub const num_entries = utils.numEntries(ndims, shape);
 
         // All the functions for operations (that do not modify metadata directly)
         // are implemented in another file
@@ -86,6 +84,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         pub const dtype: dtypes.DType = utils.extractDType(TensorArrayType);
         pub const ndims: u8 = utils.extractNdims(TensorArrayType);
         pub const shape: [ndims]u64 = utils.extractShape(TensorArrayType);
+        pub const contiguous_strides: [ndims]u64 = utils.contiguousStrides(&shape);
+        pub const num_elements = utils.numElements(&shape);
 
         dtype: dtypes.DType = dtype,
         ndims: u8 = ndims,
@@ -130,7 +130,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         }
 
         pub fn size(_: Self) u128 {
-            return num_entries;
+            return num_elements;
         }
 
         /// Allows for negative dimension indexing to work by normalizing it to [0,ndims)
@@ -155,13 +155,29 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// Create an empty tensor (i.e. allocate).
         /// Do not make any assumptions about data in the empty
         pub fn empty() Self {
+            const instr = .{
+                .InitOp = .{
+                    .op = .empty,
+                    .args = .{ .empty = {} },
+                },
+            };
             return .{
-                .meta = &meta.Metadata.init(.{
-                    .InitOp = .{
-                        .op = .empty,
-                        .args = .{ .empty = {} },
-                    },
-                }, false, null),
+                .meta = &.{
+                    .instr = instr,
+                    .forward = struct {
+                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
+                            const out_any = comptime asTensor(out).toAny();
+                            try g.compute(out_any, instr);
+                        }
+                    }.forwardImpl,
+                    .backward = struct {
+                        pub fn backwardImpl(grad_out: anytype) void {
+                            _ = grad_out;
+                        }
+                    }.backwardImpl,
+                    .constant = false,
+                    .label = null,
+                },
             };
         }
 
@@ -169,13 +185,29 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// By default, full tensors will be constant folded in codegen
         /// unless they are marked as requires_grad
         pub fn full(comptime value: dtypes.ZigType(dtype)) Self {
+            const instr = .{
+                .InitOp = .{
+                    .op = .full,
+                    .args = .{ .full = std.fmt.comptimePrint("{}", .{value}) },
+                },
+            };
             return .{
-                .meta = &meta.Metadata.init(.{
-                    .InitOp = .{
-                        .op = .full,
-                        .args = .{ .full = std.fmt.comptimePrint("{}", .{value}) },
-                    },
-                }, true, null),
+                .meta = &.{
+                    .instr = instr,
+                    .constant = true,
+                    .label = null,
+                    .forward = struct {
+                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
+                            const out_any = comptime asTensor(out).toAny();
+                            try g.compute(out_any, instr);
+                        }
+                    }.forwardImpl,
+                    .backward = struct {
+                        pub fn backwardImpl(grad_out: anytype) void {
+                            _ = grad_out;
+                        }
+                    }.backwardImpl,
+                },
             };
         }
 
@@ -184,17 +216,29 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// A label can be given to make two tensors of the same shape/dtype
         /// correspond to different arrays at runtime (e.g. for two input images )
         pub fn input(comptime label: ?[]const u8) Self {
+            const instr = .{
+                .InitOp = .{
+                    .op = .input,
+                    .args = .{ .input = {} },
+                },
+            };
             return .{
-                .meta = &meta.Metadata.init(
-                    .{
-                        .InitOp = .{
-                            .op = .input,
-                            .args = .{ .input = {} },
-                        },
-                    },
-                    false,
-                    label,
-                ),
+                .meta = &.{
+                    .instr = instr,
+                    .forward = struct {
+                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
+                            const out_any = comptime asTensor(out).toAny();
+                            try g.compute(out_any, instr);
+                        }
+                    }.forwardImpl,
+                    .backward = struct {
+                        pub fn backwardImpl(grad_out: anytype) void {
+                            _ = grad_out;
+                        }
+                    }.backwardImpl,
+                    .constant = false,
+                    .label = label,
+                },
             };
         }
 
@@ -203,13 +247,29 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// gradients can be accumulated for it,
         /// and optimizers can detect it,
         pub fn param(label: []const u8) Self {
+            const instr = .{
+                .InitOp = .{
+                    .op = .parameter,
+                    .args = .{ .parameter = {} },
+                },
+            };
             return .{
-                .meta = &meta.Metadata.init(.{
-                    .InitOp = .{
-                        .op = .parameter,
-                        .args = .{ .parameter = {} },
-                    },
-                }, false, label),
+                .meta = &.{
+                    .instr = instr,
+                    .forward = struct {
+                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
+                            const out_any = comptime asTensor(out).toAny();
+                            try g.compute(out_any, instr);
+                        }
+                    }.forwardImpl,
+                    .backward = struct {
+                        pub fn backwardImpl(grad_out: anytype) void {
+                            _ = grad_out;
+                        }
+                    }.backwardImpl,
+                    .constant = false,
+                    .label = label,
+                },
             };
         }
 
@@ -220,13 +280,29 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// Note that some device backends do not support this
         pub fn random(label: []const u8) Self {
             std.debug.assert(dtypes.isFloat(dtype));
+            const instr = .{
+                .InitOp = .{
+                    .op = .random,
+                    .args = .{ .random = {} },
+                },
+            };
             return .{
-                .meta = &meta.Metadata.init(.{
-                    .InitOp = .{
-                        .op = .random,
-                        .args = .{ .random = {} },
-                    },
-                }, false, label),
+                .meta = &.{
+                    .instr = instr,
+                    .forward = struct {
+                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
+                            const out_any = comptime asTensor(out).toAny();
+                            try g.compute(out_any, instr);
+                        }
+                    }.forwardImpl,
+                    .backward = struct {
+                        pub fn backwardImpl(grad_out: anytype) void {
+                            _ = grad_out;
+                        }
+                    }.backwardImpl,
+                    .constant = false,
+                    .label = label,
+                },
             };
         }
 
@@ -237,14 +313,31 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         ///Cast an array of a datatype to another datatype
         pub fn cast(comptime self: Self, comptime new_dtype: dtypes.DType) TensorType(new_dtype, shape) {
             if (new_dtype != self.dtype) {
+                const instr = .{
+                    .TypeOp = .{
+                        .in = .{self.toAny()},
+                        .op = .cast,
+                        .args = .{ .cast = {} },
+                    },
+                };
                 return .{
-                    .meta = &meta.Metadata.init(.{
-                        .TypeOp = .{
-                            .src = .{self.toAny()},
-                            .op = .cast,
-                            .args = .{ .cast = {} },
-                        },
-                    }, self.meta.constant, self.meta.label),
+                    .meta = &.{
+                        .instr = instr,
+                        .forward = struct {
+                            pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
+                                try g.traceForward(self);
+                                const out_any = comptime asTensor(out).toAny();
+                                try g.compute(out_any, instr);
+                            }
+                        }.forwardImpl,
+                        .backward = struct {
+                            pub fn backwardImpl(grad_out: anytype) void {
+                                _ = grad_out;
+                            }
+                        }.backwardImpl,
+                        .constant = self.meta.constant,
+                        .label = self.meta.label,
+                    },
                     .strides = self.strides,
                     .offset = self.offset,
                 };
@@ -256,14 +349,31 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// Make an array contguous (a full new copy) if it is not already
         pub fn contiguous(comptime self: Self) Self {
             if (self.isContiguous()) return self;
+            const instr = .{
+                .TypeOp = .{
+                    .in = .{self.toAny()},
+                    .op = .contiguous,
+                    .args = .{ .contiguous = {} },
+                },
+            };
             return .{
-                .meta = &meta.Metadata.init(.{
-                    .TypeOp = .{
-                        .src = .{self.toAny()},
-                        .op = .contiguous,
-                        .args = .{ .contiguous = {} },
-                    },
-                }, false, self.meta.label),
+                .meta = &.{
+                    .instr = instr,
+                    .forward = struct {
+                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
+                            try g.traceForward(self);
+                            const out_any = comptime asTensor(out).toAny();
+                            try g.compute(out_any, instr);
+                        }
+                    }.forwardImpl,
+                    .backward = struct {
+                        pub fn backwardImpl(grad_out: anytype) void {
+                            _ = grad_out;
+                        }
+                    }.backwardImpl,
+                    .constant = false,
+                    .label = self.meta.label,
+                },
             };
         }
 
@@ -284,22 +394,39 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return TensorType(dtype, new_shape);
         }
         pub fn pad(comptime self: Self, comptime padding: anytype, comptime mode: PadMode) Pad(padding) {
-            return .{
-                .meta = &meta.Metadata.init(.{
-                    .TypeOp = .{
-                        .src = .{self.toAny()},
-                        .op = .pad,
-                        .args = .{
-                            .pad = .{
-                                .padding = &padding,
-                                .mode = switch (mode) {
-                                    .constant => |constant| .{ .constant = std.fmt.comptimePrint("{}", .{constant}) },
-                                    else => mode,
-                                },
+            const instr = .{
+                .TypeOp = .{
+                    .in = .{self.toAny()},
+                    .op = .pad,
+                    .args = .{
+                        .pad = .{
+                            .padding = &padding,
+                            .mode = switch (mode) {
+                                .constant => |constant| .{ .constant = std.fmt.comptimePrint("{}", .{constant}) },
+                                else => mode,
                             },
                         },
                     },
-                }, false, self.meta.label),
+                },
+            };
+            return .{
+                .meta = &.{
+                    .instr = instr,
+                    .forward = struct {
+                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
+                            try g.traceForward(self);
+                            const out_any = comptime asTensor(out).toAny();
+                            try g.compute(out_any, instr);
+                        }
+                    }.forwardImpl,
+                    .backward = struct {
+                        pub fn backwardImpl(grad_out: anytype) void {
+                            _ = grad_out;
+                        }
+                    }.backwardImpl,
+                    .constant = false,
+                    .label = self.meta.label,
+                },
             };
         }
 
@@ -314,26 +441,42 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             // It is possible to directly view the first tensor that is not the result of a view op
             // View ops only rely on the new shape and new strides, broadcasting rules no longer apply
             // This greatly simplifies the graph as view ops are essentially compressed
-            var first_not_view_tensor = self.toAny();
-            while (std.meta.activeTag(first_not_view_tensor.meta.instr) == .TypeOp and first_not_view_tensor.meta.instr.TypeOp.op == .view) {
-                first_not_view_tensor = first_not_view_tensor.meta.instr.TypeOp.src[0];
-            }
-            var dst = View(new_shape){
-                .meta = &meta.Metadata.init(
-                    .{
-                        .TypeOp = .{
-                            .src = .{first_not_view_tensor},
-                            .op = .view,
-                            .args = .{ .view = {} },
-                        },
-                    },
-                    self.meta.constant,
-                    self.meta.label,
-                ),
+            const first_not_view_tensor = blk: {
+                var t = self.toAny();
+                while (std.meta.activeTag(t.meta.instr) == .TypeOp and t.meta.instr.TypeOp.op == .view) {
+                    t = t.meta.instr.TypeOp.in[0];
+                }
+                break :blk t;
+            };
+            const instr = .{
+                .TypeOp = .{
+                    .in = .{first_not_view_tensor},
+                    .op = .view,
+                    .args = .{ .view = {} },
+                },
+            };
+            const out = View(new_shape){
+                .meta = &.{
+                    .instr = instr,
+                    .forward = struct {
+                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
+                            try g.traceForward(self);
+                            const out_any = comptime asTensor(out).toAny();
+                            try g.compute(out_any, instr);
+                        }
+                    }.forwardImpl,
+                    .backward = struct {
+                        pub fn backwardImpl(grad_out: anytype) void {
+                            _ = grad_out;
+                        }
+                    }.backwardImpl,
+                    .constant = self.meta.constant,
+                    .label = self.meta.label,
+                },
                 .strides = &new_strides,
                 .offset = new_offset,
             };
-            if (dst.storageSize() > self.storageSize()) {
+            if (out.storageSize() > self.storageSize()) {
                 @compileError(std.fmt.comptimePrint(
                     \\View indexes elements outside defined storage
                     \\Old shape: {any}
@@ -349,26 +492,40 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     self.strides[0..self.ndims],
                     self.offset,
                     self.storageSize(),
-                    dst.shape[0..dst.ndims],
-                    dst.strides[0..dst.ndims],
-                    dst.offset,
-                    dst.storageSize(),
+                    out.shape[0..out.ndims],
+                    out.strides[0..out.ndims],
+                    out.offset,
+                    out.storageSize(),
                 }));
             }
-            return dst;
+            return out;
         }
 
         ///Apply an elementwise unary operation
         pub fn unaryFn(self: Self, comptime op: ops.UnaryOp) Self {
+            const instr: ops.Instruction = .{ .UnaryOp = .{
+                .in = .{self.toAny()},
+                .op = op,
+            } };
+
             return .{
-                .meta = &meta.Metadata.init(
-                    .{ .UnaryOp = .{
-                        .src = .{self.toAny()},
-                        .op = op,
-                    } },
-                    self.meta.constant,
-                    self.meta.label,
-                ),
+                .meta = &.{
+                    .instr = instr,
+                    .forward = struct {
+                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
+                            try g.traceForward(self);
+                            const out_any = comptime asTensor(out).toAny();
+                            try g.compute(out_any, instr);
+                        }
+                    }.forwardImpl,
+                    .backward = struct {
+                        pub fn backwardImpl(grad_out: anytype) void {
+                            _ = grad_out;
+                        }
+                    }.backwardImpl,
+                    .constant = self.meta.constant,
+                    .label = self.meta.label,
+                },
                 .strides = self.strides,
                 .offset = self.offset,
             };
@@ -391,15 +548,31 @@ pub fn Tensor(comptime TensorArrayType: type) type {
 
             const a = self.expand(bc_shape);
             const b = asTensor(other).expand(bc_shape);
+            const instr = .{
+                .BinaryOp = .{
+                    .in = .{ a.toAny(), b.toAny() },
+                    .op = op,
+                },
+            };
             return .{
-                .meta = &meta.Metadata.init(
-                    .{ .BinaryOp = .{
-                        .src = .{ a.toAny(), b.toAny() },
-                        .op = op,
-                    } },
-                    a.meta.constant and b.meta.constant,
-                    null,
-                ),
+                .meta = &.{
+                    .instr = instr,
+                    .forward = struct {
+                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
+                            try g.traceForward(a);
+                            try g.traceForward(b);
+                            const out_any = comptime asTensor(out).toAny();
+                            try g.compute(out_any, instr);
+                        }
+                    }.forwardImpl,
+                    .backward = struct {
+                        pub fn backwardImpl(grad_out: anytype) void {
+                            _ = grad_out;
+                        }
+                    }.backwardImpl,
+                    .constant = a.meta.constant and b.meta.constant,
+                    .label = null,
+                },
             };
         }
 
@@ -466,22 +639,34 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     break :blk tmp_mask;
                 },
             };
-
-            return .{
-                .meta = &meta.Metadata.init(
-                    .{
-                        .ReduceOp = .{
-                            .src = .{self.toAny()},
-                            .op = op,
-                            .args = .{
-                                .dims = reduce_dims_array,
-                                .mask = &reduce_dims_mask,
-                            },
-                        },
+            const instr = .{
+                .ReduceOp = .{
+                    .in = .{self.toAny()},
+                    .op = op,
+                    .args = .{
+                        .dims = reduce_dims_array,
+                        .mask = &reduce_dims_mask,
                     },
-                    false,
-                    self.meta.label,
-                ),
+                },
+            };
+            return .{
+                .meta = &.{
+                    .instr = instr,
+                    .forward = struct {
+                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
+                            try g.traceForward(self);
+                            const out_any = comptime asTensor(out).toAny();
+                            try g.compute(out_any, instr);
+                        }
+                    }.forwardImpl,
+                    .backward = struct {
+                        pub fn backwardImpl(grad_out: anytype) void {
+                            _ = grad_out;
+                        }
+                    }.backwardImpl,
+                    .constant = false,
+                    .label = self.meta.label,
+                },
             };
         }
 
@@ -494,22 +679,37 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return TensorType(True.dtype, bc_result_shape);
         }
         /// Conditional elementwise operator
-        /// dst[i] = if (mask[i]) true_value[i] else false_value[i]
+        /// out[i] = if (mask[i]) true_value[i] else false_value[i]
         /// Supports broadcasting between all 3 tensors, but true value and false value are broadcasted together first and must also have the same dtype
         pub fn where(mask: dtypes.BoolTensor(Self), true_value: anytype, false_value: anytype) where(true_value, false_value) {
             const Out = Where(true_value, false_value);
             const mask_expand = mask.expand(Out.shape);
             const true_expand = asTensor(true_value).expand(Out.shape);
             const false_expand = asTensor(false_value).expand(Out.shape);
+            const instr = .{ .TernaryOp = .{
+                .in = .{ mask_expand.toAny(), true_expand.toAny(), false_expand.toAny() },
+                .op = .where,
+            } };
             return .{
-                .meta = &meta.Metadata.init(
-                    .{ .TernaryOp = .{
-                        .src = .{ mask_expand.toAny(), true_expand.toAny(), false_expand.toAny() },
-                        .op = .where,
-                    } },
-                    false,
-                    null,
-                ),
+                .meta = &.{
+                    .instr = instr,
+                    .forward = struct {
+                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
+                            try g.traceForward(mask_expand);
+                            try g.traceForward(true_expand);
+                            try g.traceForward(false_expand);
+                            const out_any = comptime asTensor(out).toAny();
+                            try g.compute(out_any, instr);
+                        }
+                    }.forwardImpl,
+                    .backward = struct {
+                        pub fn backwardImpl(grad_out: anytype) void {
+                            _ = grad_out;
+                        }
+                    }.backwardImpl,
+                    .constant = false,
+                    .label = null,
+                },
             };
         }
     };

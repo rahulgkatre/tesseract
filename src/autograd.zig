@@ -3,43 +3,30 @@ const tensor = @import("tensor.zig");
 const dtypes = @import("dtypes.zig");
 const AnyTensor = @import("anytensor.zig").AnyTensor;
 
-const isTensor = tensor.isTensor;
+const asTensor = tensor.asTensor;
+const TensorTypeOf = tensor.TensorTypeOf;
 const IntTensor = dtypes.IntTensor;
 const BoolTensor = dtypes.BoolTensor;
 const FloatTensor = dtypes.FloatTensor;
 
-const LN_2 = tensor.asTensor(0.69314718056);
-const INV_LN_2 = LN_2.recip();
+const F = @import("functions.zig");
 
-pub fn Gradient(comptime T: type) type {
-    comptime std.debug.assert(isTensor(T));
-    const Tensor = tensor.Tensor(T.dtype, T.ndims, T.shape);
+pub fn dexp2(a: anytype, grad: anytype) TensorTypeOf(a).BinaryFnResultType(grad, .mul) {
+    return asTensor(a).exp2().mul(F.LN_2.mul(grad));
+}
 
-    return struct {
-        pub fn d_exp2(a: Tensor, grad: anytype) Tensor.BinaryFnResult(grad, .Mul) {
-            return a.exp2().mul(LN_2).mul(grad);
-        }
+pub fn dlog2(a: anytype, grad: anytype) TensorTypeOf(a).BinaryFnResultType(grad, .mul) {
+    return asTensor(a).recip().mul(F.INV_LN_2.mul(grad));
+}
 
-        pub fn d_log2(a: Tensor, grad: anytype) Tensor.BinaryFnResult(grad, .Mul) {
-            return a.recip().mul(INV_LN_2).mul(grad);
-        }
+pub fn dneg(a: anytype, grad: anytype) TensorTypeOf(a).BinaryFnResultType(grad, .mul) {
+    return asTensor(a).neg().mul(grad);
+}
 
-        pub fn d_neg(a: Tensor, grad: anytype) Tensor.BinaryFnResult(grad, .Mul) {
-            return a.neg().mul(grad);
-        }
+pub fn drecip(a: anytype, grad: anytype) TensorTypeOf(a).BinaryFnResultType(grad, .mul) {
+    return F.mul(a, a).recip().neg().mul(grad);
+}
 
-        pub fn d_recip(a: Tensor, grad: anytype) Tensor.BinaryFnResult(grad, .Mul) {
-            return a.mul(a).recip().neg().mul(grad);
-        }
-
-        pub fn d_sqrt(a: Tensor, grad: anytype) Tensor.BinaryFnResult(grad, .Mul) {
-            return a.sqrt().recip().mul(0.5).mul(grad);
-        }
-
-        pub fn d_id(_: Tensor, grad: anytype) @TypeOf(grad) {
-            return grad;
-        }
-
-        // pub fn d_where(a: Tensor, b: anytype, c: anytype, grad: anytype) Tensor.Whe
-    };
+pub fn dsqrt(a: anytype, grad: anytype) TensorTypeOf(a).BinaryFnResultType(grad, .mul) {
+    return asTensor(a).sqrt().recip().mul(0.5).mul(grad);
 }

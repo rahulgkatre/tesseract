@@ -14,10 +14,10 @@ const TensorTypeOf = tensor.TensorTypeOf;
 const asTensor = tensor.asTensor;
 const isTensor = tensor.isTensorType;
 
-const LN_2 = asTensor(0.69314718056);
-const INV_LN_2 = asTensor(1.4426950408888495760773985077695);
+pub const LN_2 = asTensor(0.69314718056);
+pub const INV_LN_2 = asTensor(1.4426950408888495760773985077695);
 
-const Dimrange = struct {
+const DimRange = struct {
     from: i16 = 0,
     to: i16 = -1,
 };
@@ -72,7 +72,7 @@ test "unary" {
     const tensor2 = comptime tensor1.neg();
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor2.shape[0..tensor2.ndims]);
     try std.testing.expect(tensor2.meta.instr.UnaryOp.op == .neg);
-    try std.testing.expectEqual(tensor2.meta.instr.UnaryOp.src[0].toTensor().*, tensor1);
+    try std.testing.expectEqual(tensor2.meta.instr.UnaryOp.in[0].toTensor().*, tensor1);
 }
 
 // =============================================================================
@@ -107,8 +107,8 @@ test "binary" {
     const tensor3 = comptime tensor1.add(tensor2);
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor3.shape[0..tensor3.ndims]);
     try std.testing.expect(tensor3.meta.instr.BinaryOp.op == .add);
-    try std.testing.expectEqualDeep(tensor3.meta.instr.BinaryOp.src[0].meta.instr.TypeOp.src[0].toTensor().*, tensor1);
-    try std.testing.expectEqualDeep(tensor3.meta.instr.BinaryOp.src[1].meta.instr.TypeOp.src[0].toTensor().*, tensor2);
+    try std.testing.expectEqualDeep(tensor3.meta.instr.BinaryOp.in[0].meta.instr.TypeOp.in[0].toTensor().*, tensor1);
+    try std.testing.expectEqualDeep(tensor3.meta.instr.BinaryOp.in[1].meta.instr.TypeOp.in[0].toTensor().*, tensor2);
 }
 
 // =============================================================================
@@ -127,7 +127,7 @@ test "reduce" {
     const tensor2 = comptime tensor1.sum(1);
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 1, 4 }, tensor2.shape[0..tensor1.ndims]);
     try std.testing.expect(tensor2.meta.instr.ReduceOp.op == .add);
-    try std.testing.expectEqual(tensor2.meta.instr.ReduceOp.src[0].toTensor().*, tensor1);
+    try std.testing.expectEqual(tensor2.meta.instr.ReduceOp.in[0].toTensor().*, tensor1);
     try std.testing.expectEqual(tensor2.meta.instr.ReduceOp.args.mask[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
 }
 
@@ -136,7 +136,7 @@ test "multiple dim reduce" {
     const tensor2 = comptime tensor1.sum(.{ 0, 1 });
     try std.testing.expectEqualSlices(u64, &[_]u64{ 1, 1, 4 }, tensor2.shape[0..tensor2.ndims]);
     try std.testing.expect(tensor2.meta.instr.ReduceOp.op == .add);
-    try std.testing.expectEqual(tensor2.meta.instr.ReduceOp.src[0].toTensor().*, tensor1);
+    try std.testing.expectEqual(tensor2.meta.instr.ReduceOp.in[0].toTensor().*, tensor1);
     try std.testing.expectEqualDeep(tensor2.meta.instr.ReduceOp.args.mask[0..tensor2.ndims], &[_]bool{ true, true, false });
 }
 
@@ -176,7 +176,7 @@ pub fn expand(input: anytype, comptime new_shape: anytype) Expand(input, new_sha
 // Flatten
 // =============================================================================
 
-pub fn Flatten(input: anytype, comptime dims: Dimrange) type {
+pub fn Flatten(input: anytype, comptime dims: DimRange) type {
     const A = TensorTypeOf(input);
     const from = utils.signedToUnsignedDim(A.ndims, dims.from);
     const to = utils.signedToUnsignedDim(A.ndims, dims.to);
@@ -195,7 +195,7 @@ pub fn Flatten(input: anytype, comptime dims: Dimrange) type {
     return Reshape(input, new_shape);
 }
 /// Flatten a range of dims, collapsing them to 1 dimension
-pub fn flatten(input: anytype, comptime dims: Dimrange) Flatten(input, dims) {
+pub fn flatten(input: anytype, comptime dims: DimRange) Flatten(input, dims) {
     return asTensor(input).reshape(Flatten(input, dims).shape);
 }
 
@@ -243,7 +243,7 @@ test "permute" {
 pub fn Reshape(comptime input: anytype, comptime new_shape: anytype) type {
     const OldType = TensorTypeOf(input);
     const NewType = TensorType(OldType.dtype, new_shape);
-    std.debug.assert(OldType.num_entries == NewType.num_entries);
+    std.debug.assert(OldType.num_elements == NewType.num_elements);
     return NewType;
 }
 /// Change the shape of the  This changes the type too.
@@ -393,7 +393,7 @@ pub fn mean(input: anytype, comptime dims: anytype) FloatTensor(TensorTypeOf(inp
 pub fn variance(input: anytype, comptime dims: anytype) FloatTensor(TensorTypeOf(input).ReduceFnResultType(dims)) {
     const x = asTensor(input);
     const mu = x.mean(dims);
-    const N: f64 = @floatFromInt(@divExact(x.num_entries, mu.num_entries));
+    const N: f64 = @floatFromInt(@divExact(x.num_elements, mu.num_elements));
     const a_minus_mu = x.sub(mu);
     return a_minus_mu.mul(a_minus_mu).sum(dims).div(N);
 }

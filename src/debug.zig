@@ -12,18 +12,18 @@ pub const debug_writer = std.io.Writer(std.fs.File, std.fs.File.WriteError, std.
 pub fn dataflowViz(entrypoints: anytype, writer: anytype, allocator: std.mem.Allocator) !void {
     const anytensor_entrypoints: [entrypoints.len]*const AnyTensor = entrypoints;
     const Viz = struct {
-        fn inputViz(src: *const AnyTensor, dst: *const AnyTensor, viz_writer: anytype) !void {
+        fn inputViz(in: *const AnyTensor, out: *const AnyTensor, viz_writer: anytype) !void {
             try viz_writer.print(
-                \\    T_{[src]x}->{[op]s}_{[dst]x}[label="{[dtype]s}{[shape]any}"];
+                \\    T_{[in]x}->{[op]s}_{[out]x}[label="{[dtype]s}{[shape]any}"];
                 \\
             , .{
-                .op = switch (dst.meta.instr) {
+                .op = switch (out.meta.instr) {
                     inline else => |info| utils.rawTagName(info.op),
                 },
-                .dst = @intFromPtr(dst),
-                .src = @intFromPtr(src),
-                .dtype = utils.rawTagName(src.dtype),
-                .shape = src.shape[0..src.ndims],
+                .out = @intFromPtr(out),
+                .in = @intFromPtr(in),
+                .dtype = utils.rawTagName(in.dtype),
+                .shape = in.shape[0..in.ndims],
             });
         }
     };
@@ -42,130 +42,130 @@ pub fn dataflowViz(entrypoints: anytype, writer: anytype, allocator: std.mem.All
         try queue.append(@ptrCast(entry));
     }
 
-    while (queue.popOrNull()) |dst| {
-        if (written.contains(dst)) {
+    while (queue.popOrNull()) |out| {
+        if (written.contains(out)) {
             continue;
         }
-        try written.putNoClobber(dst, {});
+        try written.putNoClobber(out, {});
 
-        switch (dst.meta.instr) {
+        switch (out.meta.instr) {
             .TypeOp => |info| {
                 try switch (info.op) {
                     .cast => writer.print(
-                        \\    {[op]s}_{[dst]x}[label="{[type]s}.{[op]s}\ndtype: {[data]s}"];
+                        \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ndtype: {[data]s}"];
                         \\
                     , .{
                         .type = utils.rawTypeName(@TypeOf(info.op)),
                         .op = utils.rawTagName(info.op),
-                        .dst = @intFromPtr(dst),
-                        .data = utils.rawTagName(dst.dtype),
+                        .out = @intFromPtr(out),
+                        .data = utils.rawTagName(out.dtype),
                     }),
                     .view => writer.print(
-                        \\    {[op]s}_{[dst]x}[label="{[type]s}.{[op]s}\nshape {[shape]any}\nstrides {[strides]any}\noffset {[offset]d}"];
+                        \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\nshape {[shape]any}\nstrides {[strides]any}\noffset {[offset]d}"];
                         \\
                     , .{
                         .type = utils.rawTypeName(@TypeOf(info.op)),
                         .op = utils.rawTagName(info.op),
-                        .dst = @intFromPtr(dst),
-                        .shape = dst.shape[0..dst.ndims],
-                        .strides = dst.strides[0..dst.ndims],
-                        .offset = dst.offset,
+                        .out = @intFromPtr(out),
+                        .shape = out.shape[0..out.ndims],
+                        .strides = out.strides[0..out.ndims],
+                        .offset = out.offset,
                     }),
                     else => writer.print(
-                        \\    {[op]s}_{[dst]x}[label="{[type]s}.{[op]s}\nshape: {[data]any}"];
+                        \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\nshape: {[data]any}"];
                         \\
                     , .{
                         .type = utils.rawTypeName(@TypeOf(info.op)),
                         .op = utils.rawTagName(info.op),
-                        .dst = @intFromPtr(dst),
-                        .data = dst.shape[0..dst.ndims],
+                        .out = @intFromPtr(out),
+                        .data = out.shape[0..out.ndims],
                     }),
                 };
             },
             .InitOp => |info| try switch (info.op) {
                 .full => writer.print(
-                    \\    {[op]s}_{[dst]x}[label="{[type]s}.{[op]s}\nvalue: {[value]s}"];
+                    \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\nvalue: {[value]s}"];
                     \\
                 , .{
                     .type = utils.rawTypeName(@TypeOf(info.op)),
                     .op = utils.rawTagName(info.op),
-                    .dst = @intFromPtr(dst),
+                    .out = @intFromPtr(out),
                     .value = info.args.full,
                 }),
                 .input => writer.print(
-                    \\    {[op]s}_{[dst]x}[label="{[type]s}.{[op]s}\nlabel: {[label]s}"];
+                    \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\nlabel: {[label]s}"];
                     \\
                 , .{
                     .type = utils.rawTypeName(@TypeOf(info.op)),
                     .op = utils.rawTagName(info.op),
-                    .dst = @intFromPtr(dst),
-                    .label = dst.meta.label orelse "null",
+                    .out = @intFromPtr(out),
+                    .label = out.meta.label orelse "null",
                 }),
                 .range => writer.print(
-                    \\    {[op]s}_{[dst]x}[label="{[type]s}.{[op]s}\nstart: {[start]s}, stop: {[stop]s}"];
+                    \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\nstart: {[start]s}, stop: {[stop]s}"];
                     \\
                 , .{
                     .type = utils.rawTypeName(@TypeOf(info.op)),
                     .op = utils.rawTagName(info.op),
-                    .dst = @intFromPtr(dst),
+                    .out = @intFromPtr(out),
                     .start = info.args.range.start,
                     .stop = info.args.range.stop,
                 }),
                 else => writer.print(
-                    \\    {[op]s}_{[dst]x}[label="{[type]s}.{[op]s}"];
+                    \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}"];
                     \\
                 , .{
                     .type = utils.rawTypeName(@TypeOf(info.op)),
                     .op = utils.rawTagName(info.op),
-                    .dst = @intFromPtr(dst),
+                    .out = @intFromPtr(out),
                 }),
             },
             inline else => |info| try writer.print(
-                \\    {[op]s}_{[dst]x}[label="{[type]s}.{[op]s}\nargs: {[args]any}"];
+                \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\nargs: {[args]any}"];
                 \\
             , .{
                 .type = utils.rawTypeName(@TypeOf(info.op)),
                 .op = utils.rawTagName(info.op),
-                .dst = @intFromPtr(dst),
+                .out = @intFromPtr(out),
                 .args = info.args,
             }),
         }
 
-        switch (dst.meta.instr) {
+        switch (out.meta.instr) {
             .InitOp => {},
             inline else => |info| {
-                for (info.src) |src| {
-                    try Viz.inputViz(src, dst, writer);
+                for (info.in) |in| {
+                    try Viz.inputViz(in, out, writer);
                 }
             },
         }
 
         try writer.print("\n", .{});
 
-        switch (dst.meta.instr) {
+        switch (out.meta.instr) {
             inline else => |info| {
                 try writer.print(
-                    \\    T_{[dst]x}[label="dtype: {[dtype]s}\nshape: {[shape]any}\nstrides: {[strides]any}\noffset: {[offset]d}\nconstant: {[fc]}\nlabel: {[label]s}"shape=box];
-                    \\    {[op]s}_{[dst]x}->T_{[dst]x}[label="{[dtype]s}{[shape]any}"];
+                    \\    T_{[out]x}[label="dtype: {[dtype]s}\nshape: {[shape]any}\nstrides: {[strides]any}\noffset: {[offset]d}\nconstant: {[fc]}\nlabel: {[label]s}"shape=box];
+                    \\    {[op]s}_{[out]x}->T_{[out]x}[label="{[dtype]s}{[shape]any}"];
                     \\
                 , .{
                     .op = utils.rawTagName(info.op),
-                    .dst = @intFromPtr(dst),
-                    .dtype = utils.rawTagName(dst.dtype),
-                    .shape = dst.shape[0..dst.ndims],
-                    .strides = dst.strides[0..dst.ndims],
-                    .offset = dst.offset,
-                    .fc = dst.meta.constant,
-                    .label = dst.meta.label orelse "null",
+                    .out = @intFromPtr(out),
+                    .dtype = utils.rawTagName(out.dtype),
+                    .shape = out.shape[0..out.ndims],
+                    .strides = out.strides[0..out.ndims],
+                    .offset = out.offset,
+                    .fc = out.meta.constant,
+                    .label = out.meta.label orelse "null",
                 });
             },
         }
 
-        switch (dst.meta.instr) {
+        switch (out.meta.instr) {
             .InitOp => {},
             inline else => |info| {
-                for (info.src) |src| {
-                    try queue.append(src);
+                for (info.in) |in| {
+                    try queue.append(in);
                 }
             },
         }
@@ -193,17 +193,17 @@ pub fn dataflowJson(entrypoints: anytype, writer: anytype, allocator: std.mem.Al
         try queue.append(@ptrCast(entry));
     }
 
-    while (queue.popOrNull()) |dst| {
-        if (tensors_json.contains(dst)) {
+    while (queue.popOrNull()) |out| {
+        if (tensors_json.contains(out)) {
             continue;
         }
-        try tensors_json.put(dst, dst.toJson());
-        try instructions_json.append(dst.meta.instr.toJson(dst));
-        switch (dst.meta.instr) {
+        try tensors_json.put(out, out.toJson());
+        try instructions_json.append(out.meta.instr.toJson(out));
+        switch (out.meta.instr) {
             .InitOp => {},
             inline else => |info| {
-                for (info.src) |src| {
-                    try queue.append(src);
+                for (info.in) |in| {
+                    try queue.append(in);
                 }
             },
         }

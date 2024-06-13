@@ -129,7 +129,7 @@ pub fn broadcastShape(shape1: anytype, shape2: anytype) [@max(shape1.len, shape2
     return bc_shape;
 }
 
-pub fn numEntries(comptime ndims: u8, shape: [ndims]u64) u128 {
+pub fn numElements(shape: []const u64) u128 {
     var prod: u128 = 1;
     for (shape) |s| {
         prod *= s;
