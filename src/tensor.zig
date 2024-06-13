@@ -155,11 +155,11 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .instr = instr,
-                    .backward = struct {
-                        pub fn backwardImpl(grad_out: anytype) void {
+                    .grad_fn = struct {
+                        pub fn gradFnImpl(grad_out: anytype) void {
                             _ = grad_out;
                         }
-                    }.backwardImpl,
+                    }.gradFnImpl,
                     .constant = false,
                     .label = null,
                 },
@@ -181,11 +181,11 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     .instr = instr,
                     .constant = true,
                     .label = null,
-                    .backward = struct {
-                        pub fn backwardImpl(grad_out: anytype) void {
+                    .grad_fn = struct {
+                        pub fn gradFnImpl(grad_out: anytype) void {
                             _ = grad_out;
                         }
-                    }.backwardImpl,
+                    }.gradFnImpl,
                 },
             };
         }
@@ -204,11 +204,11 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .instr = instr,
-                    .backward = struct {
-                        pub fn backwardImpl(grad_out: anytype) void {
+                    .grad_fn = struct {
+                        pub fn gradFnImpl(grad_out: anytype) void {
                             _ = grad_out;
                         }
-                    }.backwardImpl,
+                    }.gradFnImpl,
                     .constant = false,
                     .label = label,
                 },
@@ -229,11 +229,11 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .instr = instr,
-                    .backward = struct {
-                        pub fn backwardImpl(grad_out: anytype) void {
+                    .grad_fn = struct {
+                        pub fn gradFnImpl(grad_out: anytype) void {
                             _ = grad_out;
                         }
-                    }.backwardImpl,
+                    }.gradFnImpl,
                     .constant = false,
                     .label = label,
                 },
@@ -256,11 +256,11 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .instr = instr,
-                    .backward = struct {
-                        pub fn backwardImpl(grad_out: anytype) void {
+                    .grad_fn = struct {
+                        pub fn gradFnImpl(grad_out: anytype) void {
                             _ = grad_out;
                         }
-                    }.backwardImpl,
+                    }.gradFnImpl,
                     .constant = false,
                     .label = label,
                 },
@@ -284,11 +284,11 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                 return .{
                     .meta = &.{
                         .instr = instr,
-                        .backward = struct {
-                            pub fn backwardImpl(grad_out: anytype) void {
+                        .grad_fn = struct {
+                            pub fn gradFnImpl(grad_out: anytype) void {
                                 _ = grad_out;
                             }
-                        }.backwardImpl,
+                        }.gradFnImpl,
                         .constant = self.meta.constant,
                         .label = self.meta.label,
                     },
@@ -319,11 +319,11 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .instr = instr,
-                    .backward = struct {
-                        pub fn backwardImpl(grad_out: anytype) void {
+                    .grad_fn = struct {
+                        pub fn gradFnImpl(grad_out: anytype) void {
                             _ = grad_out;
                         }
-                    }.backwardImpl,
+                    }.gradFnImpl,
                     .constant = false,
                     .label = self.meta.label,
                 },
@@ -365,11 +365,11 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .instr = instr,
-                    .backward = struct {
-                        pub fn backwardImpl(grad_out: anytype) void {
+                    .grad_fn = struct {
+                        pub fn gradFnImpl(grad_out: anytype) void {
                             _ = grad_out;
                         }
-                    }.backwardImpl,
+                    }.gradFnImpl,
                     .constant = false,
                     .label = self.meta.label,
                 },
@@ -408,11 +408,11 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             const out = View(new_shape){
                 .meta = &.{
                     .instr = instr,
-                    .backward = struct {
-                        pub fn backwardImpl(grad_out: anytype) void {
+                    .grad_fn = struct {
+                        pub fn gradFnImpl(grad_out: anytype) void {
                             _ = grad_out;
                         }
-                    }.backwardImpl,
+                    }.gradFnImpl,
                     .constant = self.meta.constant,
                     .label = self.meta.label,
                 },
@@ -455,11 +455,11 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .instr = instr,
-                    .backward = struct {
-                        pub fn backwardImpl(grad_out: anytype) void {
+                    .grad_fn = struct {
+                        pub fn gradFnImpl(grad_out: anytype) void {
                             _ = grad_out;
                         }
-                    }.backwardImpl,
+                    }.gradFnImpl,
                     .constant = self.meta.constant,
                     .label = self.meta.label,
                 },
@@ -485,20 +485,25 @@ pub fn Tensor(comptime TensorArrayType: type) type {
 
             const a = self.expand(bc_shape);
             const b = asTensor(other).expand(bc_shape);
-            const instr = .{
-                .BinaryOp = .{
-                    .in = .{ a.toAnyTensor(), b.toAnyTensor() },
-                    .op = op,
-                },
+            const Impl =
+                struct {
+                pub fn GradFnReturnTypeImpl(grad_out: anytype) type {
+                    return autograd.BinaryBackwardReturnType(op, a, b, grad_out);
+                }
+                pub fn gradFnImpl(grad_out: anytype) GradFnReturnTypeImpl(grad_out) {
+                    return autograd.binaryBackward(op, a, b, grad_out);
+                }
             };
             return .{
                 .meta = &.{
-                    .instr = instr,
-                    .backward = struct {
-                        pub fn backwardImpl(grad_out: anytype) void {
-                            _ = grad_out;
-                        }
-                    }.backwardImpl,
+                    .instr = .{
+                        .BinaryOp = .{
+                            .in = .{ a.toAnyTensor(), b.toAnyTensor() },
+                            .op = op,
+                        },
+                    },
+                    .grad_fn = Impl.gradFnImpl,
+                    .get_grad_fn_return_type = Impl.GradFnReturnTypeImpl,
                     .constant = a.meta.constant and b.meta.constant,
                     .label = null,
                 },
@@ -581,11 +586,11 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .instr = instr,
-                    .backward = struct {
-                        pub fn backwardImpl(grad_out: anytype) void {
+                    .grad_fn = struct {
+                        pub fn gradFnImpl(grad_out: anytype) void {
                             _ = grad_out;
                         }
-                    }.backwardImpl,
+                    }.gradFnImpl,
                     .constant = false,
                     .label = self.meta.label,
                 },
@@ -615,11 +620,11 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .instr = instr,
-                    .backward = struct {
-                        pub fn backwardImpl(grad_out: anytype) void {
+                    .grad_fn = struct {
+                        pub fn gradFnImpl(grad_out: anytype) void {
                             _ = grad_out;
                         }
-                    }.backwardImpl,
+                    }.gradFnImpl,
                     .constant = false,
                     .label = null,
                 },
