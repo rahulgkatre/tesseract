@@ -8,10 +8,11 @@ const graph = @import("graph.zig");
 /// Metadata for tensors, shared between the shape-typed Tensor and AnyTensor
 pub const Metadata = struct {
     instr: ops.Instruction,
-    forward: *const anyopaque,
     backward: *const anyopaque,
-    // forward: *const fn (*const AnyTensor, *graph.Graph) anyerror!void,
     // backward: ?*const fn (*const AnyTensor, *graph.Graph) anyerror!void = null,
+    // const getBackwardReturnType: *const fn () type = comptime @ptrCast(grad_out.meta.backwardReturnType);
+    // const backwardImpl: *const fn (comptime anytype) getBackwardReturnType() = comptime @ptrCast(grad_out.meta.backward);
+    // try backwardImpl(grad_out, graph);
     constant: bool,
     label: ?[]const u8,
 };

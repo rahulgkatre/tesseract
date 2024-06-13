@@ -14,8 +14,8 @@ const TensorTypeOf = tensor.TensorTypeOf;
 const asTensor = tensor.asTensor;
 const isTensor = tensor.isTensorType;
 
-pub const LN_2 = asTensor(0.69314718056);
 pub const INV_LN_2 = asTensor(1.4426950408888495760773985077695);
+pub const LN_2 = INV_LN_2.recip();
 
 const DimRange = struct {
     from: i16 = 0,
@@ -91,11 +91,11 @@ pub fn maximum(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResul
 pub fn mod(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .mod) {
     return asTensor(input).binaryFn(other, .mod);
 }
-pub fn lessThan(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .less_than) {
-    return asTensor(input).binaryFn(other, .less_than);
+pub fn lessThan(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .lt) {
+    return asTensor(input).binaryFn(other, .lt);
 }
-pub fn equals(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .equals) {
-    return asTensor(input).binaryFn(other, .equals);
+pub fn eq(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .eq) {
+    return asTensor(input).binaryFn(other, .eq);
 }
 pub fn xor(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .xor) {
     return asTensor(input).binaryFn(other, .xor);
@@ -429,14 +429,12 @@ pub fn MatMul(input: anytype, other: anytype) type {
     return TensorType(A.dtype, mm_shape);
 }
 pub fn matmul(input: anytype, other: anytype) MatMul(input, other) {
-    const A = TensorTypeOf(input);
-    const B = TensorTypeOf(other);
     const a = asTensor(input);
     const b = asTensor(other);
-    return a.unsqueeze(A.ndims - 1)
-        .mul(b.transpose(B.ndims - 2, B.ndims - 1).unsqueeze(B.ndims - 2))
-        .sum(A.ndims)
-        .squeeze(A.ndims);
+    return a.unsqueeze(a.ndims - 1)
+        .mul(b.transpose(a.ndims - 2, b.ndims - 1).unsqueeze(b.ndims - 2))
+        .sum(a.ndims)
+        .squeeze(a.ndims);
 }
 
 pub fn linear(input: anytype, weight: anytype, bias: anytype) MatMul(input, weight) {

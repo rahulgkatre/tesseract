@@ -155,12 +155,6 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .instr = instr,
-                    .forward = struct {
-                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
-                            const out_any = comptime asTensor(out).toAnyTensor();
-                            try g.compute(out_any);
-                        }
-                    }.forwardImpl,
                     .backward = struct {
                         pub fn backwardImpl(grad_out: anytype) void {
                             _ = grad_out;
@@ -187,12 +181,6 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     .instr = instr,
                     .constant = true,
                     .label = null,
-                    .forward = struct {
-                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
-                            const out_any = comptime asTensor(out).toAnyTensor();
-                            try g.compute(out_any);
-                        }
-                    }.forwardImpl,
                     .backward = struct {
                         pub fn backwardImpl(grad_out: anytype) void {
                             _ = grad_out;
@@ -216,12 +204,6 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .instr = instr,
-                    .forward = struct {
-                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
-                            const out_any = comptime asTensor(out).toAnyTensor();
-                            try g.compute(out_any);
-                        }
-                    }.forwardImpl,
                     .backward = struct {
                         pub fn backwardImpl(grad_out: anytype) void {
                             _ = grad_out;
@@ -247,12 +229,6 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .instr = instr,
-                    .forward = struct {
-                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
-                            const out_any = comptime asTensor(out).toAnyTensor();
-                            try g.compute(out_any);
-                        }
-                    }.forwardImpl,
                     .backward = struct {
                         pub fn backwardImpl(grad_out: anytype) void {
                             _ = grad_out;
@@ -280,12 +256,6 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .instr = instr,
-                    .forward = struct {
-                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
-                            const out_any = comptime asTensor(out).toAnyTensor();
-                            try g.compute(out_any);
-                        }
-                    }.forwardImpl,
                     .backward = struct {
                         pub fn backwardImpl(grad_out: anytype) void {
                             _ = grad_out;
@@ -314,13 +284,6 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                 return .{
                     .meta = &.{
                         .instr = instr,
-                        .forward = struct {
-                            pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
-                                try g.traceForward(self);
-                                const out_any = comptime asTensor(out).toAnyTensor();
-                                try g.compute(out_any);
-                            }
-                        }.forwardImpl,
                         .backward = struct {
                             pub fn backwardImpl(grad_out: anytype) void {
                                 _ = grad_out;
@@ -356,13 +319,6 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .instr = instr,
-                    .forward = struct {
-                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
-                            try g.traceForward(self);
-                            const out_any = comptime asTensor(out).toAnyTensor();
-                            try g.compute(out_any);
-                        }
-                    }.forwardImpl,
                     .backward = struct {
                         pub fn backwardImpl(grad_out: anytype) void {
                             _ = grad_out;
@@ -409,13 +365,6 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .instr = instr,
-                    .forward = struct {
-                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
-                            try g.traceForward(self);
-                            const out_any = comptime asTensor(out).toAnyTensor();
-                            try g.compute(out_any);
-                        }
-                    }.forwardImpl,
                     .backward = struct {
                         pub fn backwardImpl(grad_out: anytype) void {
                             _ = grad_out;
@@ -459,13 +408,6 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             const out = View(new_shape){
                 .meta = &.{
                     .instr = instr,
-                    .forward = struct {
-                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
-                            try g.traceForward(first_not_view_tensor.toTensor());
-                            const out_any = comptime asTensor(out).toAnyTensor();
-                            try g.compute(out_any);
-                        }
-                    }.forwardImpl,
                     .backward = struct {
                         pub fn backwardImpl(grad_out: anytype) void {
                             _ = grad_out;
@@ -513,13 +455,6 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .instr = instr,
-                    .forward = struct {
-                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
-                            try g.traceForward(self);
-                            const out_any = comptime asTensor(out).toAnyTensor();
-                            try g.compute(out_any);
-                        }
-                    }.forwardImpl,
                     .backward = struct {
                         pub fn backwardImpl(grad_out: anytype) void {
                             _ = grad_out;
@@ -536,7 +471,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         pub fn BinaryFnResultType(comptime other: anytype, comptime op: ops.BinaryOp) type {
             const Other = TensorTypeOf(other);
             const new_dtype: dtypes.DType = switch (op) {
-                .equals, .less_than => .bool,
+                .eq, .lt => .bool,
                 else => dtypes.resultDType(Self.dtype, Other.dtype),
             };
             return TensorType(new_dtype, utils.broadcastShape(shape, Other.shape));
@@ -559,14 +494,6 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .instr = instr,
-                    .forward = struct {
-                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
-                            try g.traceForward(a);
-                            try g.traceForward(b);
-                            const out_any = comptime asTensor(out).toAnyTensor();
-                            try g.compute(out_any);
-                        }
-                    }.forwardImpl,
                     .backward = struct {
                         pub fn backwardImpl(grad_out: anytype) void {
                             _ = grad_out;
@@ -620,9 +547,9 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             comptime reduce_dims: anytype,
         ) ReduceFnResultType(reduce_dims) {
             // Use u16 here because []const u8 shows up as a string
-            const reduce_dims_array: []const u16 = switch (@typeInfo(@TypeOf(reduce_dims))) {
-                .ComptimeInt, .Int => &[1]u16{signedToUnsignedDim(reduce_dims)},
-                .Null, .Void => @as([ndims]u16, std.simd.iota(u16, ndims))[0..],
+            const reduce_dims_array: []const u8 = switch (@typeInfo(@TypeOf(reduce_dims))) {
+                .ComptimeInt, .Int => &[1]u8{signedToUnsignedDim(reduce_dims)},
+                .Void => @as([ndims]u8, std.simd.iota(u8, ndims))[0..],
                 else => &reduce_dims,
             };
             const reduce_dims_mask: [ndims]bool = switch (@typeInfo(@TypeOf(reduce_dims))) {
@@ -632,7 +559,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     tmp_mask[signedToUnsignedDim(dim)] = true;
                     break :blk tmp_mask;
                 },
-                .Null, .Void => [_]bool{true} ** ndims,
+                .Void => [_]bool{true} ** ndims,
                 else => blk: {
                     var tmp_mask: [ndims]bool = [_]bool{false} ** ndims;
                     for (reduce_dims) |dim| {
@@ -654,13 +581,6 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .instr = instr,
-                    .forward = struct {
-                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
-                            try g.traceForward(self);
-                            const out_any = comptime asTensor(out).toAnyTensor();
-                            try g.compute(out_any);
-                        }
-                    }.forwardImpl,
                     .backward = struct {
                         pub fn backwardImpl(grad_out: anytype) void {
                             _ = grad_out;
@@ -695,15 +615,6 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .instr = instr,
-                    .forward = struct {
-                        pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
-                            try g.traceForward(mask_expand);
-                            try g.traceForward(true_expand);
-                            try g.traceForward(false_expand);
-                            const out_any = comptime asTensor(out).toAnyTensor();
-                            try g.compute(out_any);
-                        }
-                    }.forwardImpl,
                     .backward = struct {
                         pub fn backwardImpl(grad_out: anytype) void {
                             _ = grad_out;

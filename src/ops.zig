@@ -43,11 +43,11 @@ pub const BinaryOp = enum {
     mul,
     max,
     mod,
-    less_than,
-    equals,
+    lt,
+    eq,
     xor,
 };
-// Ternary ops take in 3 arguments which can have different purposes
+///Ternary ops take in 3 arguments which can have different purposes
 pub const TernaryOp = enum {
     pub const Instr = struct {
         op: TernaryOp,
@@ -62,7 +62,7 @@ pub const TernaryOp = enum {
     };
     where,
 };
-// ReduceOps are just recurrently applied binary ops
+///ReduceOps are just recurrently applied binary ops
 pub const ReduceOp = enum {
     pub const Instr = struct {
         op: ReduceOp,
@@ -70,7 +70,7 @@ pub const ReduceOp = enum {
         args: Args,
     };
     pub const Args = struct {
-        dims: []const u16,
+        dims: []const u8,
         mask: []const bool,
 
         pub fn format(
@@ -79,7 +79,7 @@ pub const ReduceOp = enum {
             _: std.fmt.FormatOptions,
             writer: anytype,
         ) anyerror!void {
-            try std.fmt.format(writer, ".dims = {any} .mask = {any}\t", .{ self.dims, self.mask });
+            try std.fmt.format(writer, "dims {any} mask {any}", .{ self.dims, self.mask });
         }
     };
     pub const Json = struct {
@@ -92,7 +92,6 @@ pub const ReduceOp = enum {
     add,
     mul,
     max,
-    xor,
 
     pub fn binaryOp(reduceOp: ReduceOp) BinaryOp {
         return @field(BinaryOp, @tagName(reduceOp));
@@ -141,10 +140,14 @@ pub const DataOp = enum {
             writer: anytype,
         ) anyerror!void {
             switch (self) {
-                .pad => |pad| try std.fmt.format(writer, "{}\t", .{pad}),
-                .cast => |cast| try std.fmt.format(writer, ".dtype = {s}\t", .{utils.rawTagName(cast)}),
+                .pad => |pad| try std.fmt.format(writer, "padding {any} mode {s} {s}", .{
+                    pad.padding,
+                    utils.rawTagName(pad.mode),
+                    if (std.meta.activeTag(pad.mode) == .constant) pad.mode.constant else "",
+                }),
+                .cast => |cast| try std.fmt.format(writer, "{s}", .{utils.rawTagName(cast)}),
                 .view, .contiguous => |view| {
-                    try std.fmt.format(writer, ".shape = {[shape]any} .strides = {[strides]any} .offset = {[offset]d}", view);
+                    try std.fmt.format(writer, "shape {[shape]any} strides {[strides]any} offset {[offset]d}", view);
                 },
             }
         }
@@ -188,8 +191,8 @@ pub const InitOp = enum {
         ) anyerror!void {
             switch (self) {
                 .input, .param, .empty, .random => {},
-                .full => |full| try std.fmt.format(writer, ".value = {s}", .{full}),
-                .range => |range| try std.fmt.format(writer, ".start = {[start]s} .stop = {[stop]s}", range),
+                .full => |full| try std.fmt.format(writer, "{s}", .{full}),
+                .range => |range| try std.fmt.format(writer, "start {[start]s} stop {[stop]s}", range),
             }
         }
     };
@@ -237,17 +240,28 @@ pub const Instruction = union(OpTypes) {
         _: std.fmt.FormatOptions,
         writer: anytype,
     ) anyerror!void {
+        std.debug.assert(fmt.len == 0 or std.mem.eql(u8, fmt, "any"));
+        const op_type: []const u8 = switch (self) {
+            .UnaryOp => "unary",
+            .BinaryOp => "binary",
+            .TernaryOp => "ternary",
+            .ReduceOp => "reduce",
+            .InitOp => "init",
+            .DataOp => "data",
+        };
         switch (self) {
             inline else => |instr| {
-                std.debug.assert(fmt.len == 0 or std.mem.eql(u8, fmt, "any"));
-                try std.fmt.format(writer, "{s: <8}", .{utils.rawTagName(instr.op)});
+                try std.fmt.format(writer, "{s}.{s}", .{ op_type, utils.rawTagName(instr.op) });
+                for (0..(16 - (op_type.len + utils.rawTagName(instr.op).len))) |_| {
+                    try writer.writeAll(" ");
+                }
+
                 for (instr.in) |in| {
                     try std.fmt.format(writer, "@{x: <9}", .{@intFromPtr(in)});
                 }
                 switch (instr.in.len) {
-                    0 => try std.fmt.format(writer, "  {s: <30}", .{""}),
-                    1 => try std.fmt.format(writer, "  {s: <20}", .{""}),
-                    2 => try std.fmt.format(writer, "  {s: <10}", .{""}),
+                    0 => try std.fmt.format(writer, "{s: <20}", .{""}),
+                    1, 2 => try std.fmt.format(writer, "{s: <10}", .{""}),
                     3 => {},
                     else => unreachable,
                 }
