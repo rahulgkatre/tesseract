@@ -49,7 +49,7 @@ pub fn dataflowViz(entrypoints: anytype, writer: anytype, allocator: std.mem.All
         try written.putNoClobber(out, {});
 
         switch (out.meta.instr) {
-            .TypeOp => |info| {
+            .DataOp => |info| {
                 try switch (info.op) {
                     .cast => writer.print(
                         \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\ndtype: {[data]s}"];

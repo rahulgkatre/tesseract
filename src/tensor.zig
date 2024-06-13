@@ -314,10 +314,10 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         pub fn cast(comptime self: Self, comptime new_dtype: dtypes.DType) TensorType(new_dtype, shape) {
             if (new_dtype != self.dtype) {
                 const instr = .{
-                    .TypeOp = .{
+                    .DataOp = .{
                         .in = .{self.toAny()},
                         .op = .cast,
-                        .args = .{ .cast = {} },
+                        .args = .{ .cast = new_dtype },
                     },
                 };
                 return .{
@@ -350,10 +350,16 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         pub fn contiguous(comptime self: Self) Self {
             if (self.isContiguous()) return self;
             const instr = .{
-                .TypeOp = .{
+                .DataOp = .{
                     .in = .{self.toAny()},
                     .op = .contiguous,
-                    .args = .{ .contiguous = {} },
+                    .args = .{
+                        .contiguous = .{
+                            .shape = self.shape,
+                            .strides = &contiguous_strides,
+                            .offset = 0,
+                        },
+                    },
                 },
             };
             return .{
@@ -377,7 +383,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             };
         }
 
-        const PadMode = union(ops.TypeOp.Args.Pad.Mode) {
+        const PadMode = union(ops.DataOp.Args.Pad.Mode) {
             constant: dtypes.ZigType(dtype),
             reflect: void,
             replicate: void,
@@ -395,7 +401,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         }
         pub fn pad(comptime self: Self, comptime padding: anytype, comptime mode: PadMode) Pad(padding) {
             const instr = .{
-                .TypeOp = .{
+                .DataOp = .{
                     .in = .{self.toAny()},
                     .op = .pad,
                     .args = .{
@@ -443,16 +449,20 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             // This greatly simplifies the graph as view ops are essentially compressed
             const first_not_view_tensor = blk: {
                 var t = self.toAny();
-                while (std.meta.activeTag(t.meta.instr) == .TypeOp and t.meta.instr.TypeOp.op == .view) {
-                    t = t.meta.instr.TypeOp.in[0];
+                while (std.meta.activeTag(t.meta.instr) == .DataOp and t.meta.instr.DataOp.op == .view) {
+                    t = t.meta.instr.DataOp.in[0];
                 }
                 break :blk t;
             };
             const instr = .{
-                .TypeOp = .{
+                .DataOp = .{
                     .in = .{first_not_view_tensor},
                     .op = .view,
-                    .args = .{ .view = {} },
+                    .args = .{ .view = .{
+                        .shape = &new_shape,
+                        .strides = &new_strides,
+                        .offset = new_offset,
+                    } },
                 },
             };
             const out = View(new_shape){
@@ -460,7 +470,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     .instr = instr,
                     .forward = struct {
                         pub fn forwardImpl(comptime out: anytype, g: *graph.Graph) !void {
-                            try g.traceForward(self);
+                            try g.traceForward(first_not_view_tensor.toTensor());
                             const out_any = comptime asTensor(out).toAny();
                             try g.compute(out_any, instr);
                         }
@@ -503,11 +513,12 @@ pub fn Tensor(comptime TensorArrayType: type) type {
 
         ///Apply an elementwise unary operation
         pub fn unaryFn(self: Self, comptime op: ops.UnaryOp) Self {
-            const instr: ops.Instruction = .{ .UnaryOp = .{
-                .in = .{self.toAny()},
-                .op = op,
-            } };
-
+            const instr: ops.Instruction = .{
+                .UnaryOp = .{
+                    .in = .{self.toAny()},
+                    .op = op,
+                },
+            };
             return .{
                 .meta = &.{
                     .instr = instr,

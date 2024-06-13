@@ -49,7 +49,11 @@ pub const Graph = struct {
                 .output_node = graph.data_nodes.getPtr(tensor).?,
                 .compute_instr = instr,
             });
-            std.debug.print("{x}\n", .{@intFromPtr(tensor)});
+            std.debug.print("{s: <32} %{x} = {any}\n", .{
+                tensor.meta.label orelse " ",
+                @intFromPtr(tensor),
+                tensor.meta.instr,
+            });
         }
     }
 
@@ -60,12 +64,13 @@ pub const Graph = struct {
     }
 
     pub fn traceForward(graph: *Graph, comptime out: anytype) !void {
-        const forwardImpl: *const fn (comptime anytype, *Graph) anyerror!void = @ptrCast(out.meta.forward);
+        const forwardImpl: *const fn (comptime anytype, *Graph) anyerror!void = comptime @ptrCast(out.meta.forward);
         try forwardImpl(out, graph);
     }
 
     pub fn traceBackward(graph: *Graph, comptime grad_out: anytype) !void {
-        const backwardImpl: *const fn (comptime anytype) void = @ptrCast(grad_out.meta.backward);
+        const getBackwardReturnType: *const fn () type = comptime @ptrCast(grad_out.meta.backwardReturnType);
+        const backwardImpl: *const fn (comptime anytype) getBackwardReturnType() = comptime @ptrCast(grad_out.meta.backward);
         try backwardImpl(grad_out, graph);
     }
 };

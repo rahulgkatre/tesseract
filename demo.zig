@@ -10,7 +10,7 @@ const debug = tesseract.debug;
 // All tensor code should run in comptime
 // This can mean in the top level of a file or in a function that is called at comptime
 // Here the model is defined by a Sequential module, just like in PyTorch
-const x = Tensor([16][28][28]u8).input("digit")
+const x = Tensor([16][28][28]u8).input("mnist_batched_input")
     .flatten(.{ .from = -2, .to = -1 })
     .cast(.f16)
     .div(255.0);

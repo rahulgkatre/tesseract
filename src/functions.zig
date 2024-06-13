@@ -107,8 +107,8 @@ test "binary" {
     const tensor3 = comptime tensor1.add(tensor2);
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor3.shape[0..tensor3.ndims]);
     try std.testing.expect(tensor3.meta.instr.BinaryOp.op == .add);
-    try std.testing.expectEqualDeep(tensor3.meta.instr.BinaryOp.in[0].meta.instr.TypeOp.in[0].toTensor().*, tensor1);
-    try std.testing.expectEqualDeep(tensor3.meta.instr.BinaryOp.in[1].meta.instr.TypeOp.in[0].toTensor().*, tensor2);
+    try std.testing.expectEqualDeep(tensor3.meta.instr.BinaryOp.in[0].meta.instr.DataOp.in[0].toTensor().*, tensor1);
+    try std.testing.expectEqualDeep(tensor3.meta.instr.BinaryOp.in[1].meta.instr.DataOp.in[0].toTensor().*, tensor2);
 }
 
 // =============================================================================
