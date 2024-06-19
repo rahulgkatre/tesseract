@@ -282,7 +282,7 @@ pub fn paramsOf(comptime entrypoint: anytype) []const *const AnyTensor {
             }
         }
         const SortContext = struct {
-            values: []*const AnyTensor,
+            values: []const *const AnyTensor,
             pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
                 return ctx.values[a].meta.label.?.len < ctx.values[b].meta.label.?.len or blk: {
                     if (ctx.values[a].meta.label.?.len > ctx.values[b].meta.label.?.len) {
@@ -343,6 +343,10 @@ pub fn ComptimeLinkedList(comptime T: type) type {
         },
         len: usize = 0,
 
+        pub fn init(data: T) Self {
+            return (Self{}).appendLeft(data);
+        }
+
         pub fn appendLeft(self: Self, data: T) Self {
             return .{
                 .head = .{
@@ -364,6 +368,22 @@ pub fn ComptimeLinkedList(comptime T: type) type {
                 };
             } else {
                 return null;
+            }
+        }
+
+        pub fn format(
+            self: Self,
+            comptime _: []const u8,
+            _: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            if (self.head) |head| {
+                var node: ?*const Node = &head;
+                while (node) |curr| {
+                    try std.fmt.format(writer, "{x}->", .{@intFromPtr(curr)});
+                    node = curr.next;
+                }
+                try std.fmt.format(writer, "null", .{});
             }
         }
     };
