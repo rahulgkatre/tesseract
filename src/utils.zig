@@ -11,23 +11,12 @@ pub fn arrayPermute(comptime T: type, comptime len: u8, array: [len]u64, comptim
         if (p < len and !used[p]) {
             used[p] = true;
         } else {
-            const msg = comptimePrint("Invalid permutation {any}", .{perm});
-            if (@inComptime()) {
-                @compileError(msg);
-            } else {
-                @panic(msg);
-            }
+            @compileError(comptimePrint("Invalid permutation {any}", .{perm}));
         }
     }
     for (used) |u| {
         if (!u) {
-            std.log.err("Invalid permutation {any}", .{perm});
-            const msg = "An error occurred in tensor validation";
-            if (@inComptime()) {
-                @compileError(msg);
-            } else {
-                @panic(msg);
-            }
+            @compileError("Not all dims in permutation were used");
         }
     }
     var new_array: [len]T = undefined;
@@ -261,3 +250,121 @@ pub fn simplifiedView(input: anytype) struct {
 //     try std.testing.expectEqual(s2.shape[0..s2.ndims].*, .{ 4, 2 });
 //     try std.testing.expectEqual(s2.strides[0..s2.ndims].*, .{ 0, 1 });
 // }
+
+pub fn paramsOf(comptime entrypoint: anytype) []const *const AnyTensor {
+    const params, const len = comptime blk: {
+        var list = ComptimeLinkedList(*const AnyTensor){};
+        var curr = tensor.asTensor(entrypoint).toAnyTensor();
+        var stack = (ComptimeLinkedList(*const AnyTensor){}).appendLeft(curr);
+        while (stack.popLeft()) |tup| {
+            @setEvalBranchQuota(500 * stack.len + 1000);
+            curr, stack = tup;
+            switch (tensor.asTensor(curr).meta.instr) {
+                .InitOp => |instr| switch (instr.op) {
+                    .param => {
+                        list = list.appendLeft(curr);
+                    },
+                    else => {},
+                },
+                inline else => |instr| for (instr.in) |in| {
+                    stack = stack.appendLeft(in);
+                },
+            }
+        }
+        var params: [list.len]*const AnyTensor = .{undefined} ** list.len;
+        var i: usize = 0;
+        while (list.popLeft()) |tup| {
+            curr, list = tup;
+            params[i] = curr;
+            i += 1;
+            if (list.len == 0) {
+                break;
+            }
+        }
+        const SortContext = struct {
+            values: []*const AnyTensor,
+            pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
+                return ctx.values[a].meta.label.?.len < ctx.values[b].meta.label.?.len or blk: {
+                    if (ctx.values[a].meta.label.?.len > ctx.values[b].meta.label.?.len) {
+                        break :blk false;
+                    }
+                    for (ctx.values[a].meta.label.?, ctx.values[b].meta.label.?) |char_a, char_b| {
+                        if (char_a == char_b) {
+                            continue;
+                        } else {
+                            break :blk char_a < char_b;
+                        }
+                    }
+                    break :blk false;
+                };
+            }
+
+            pub fn swap(ctx: @This(), a: usize, b: usize) void {
+                return std.mem.swap(*const AnyTensor, &ctx.values[a], &ctx.values[b]);
+            }
+        };
+        std.mem.sortUnstableContext(0, params.len, SortContext{ .values = &params });
+
+        var active: ?*const AnyTensor = null;
+        var deduped_params: [params.len]*const AnyTensor = undefined;
+        i = 0;
+        for (params) |param| {
+            if (active) |act| {
+                if (!std.mem.eql(u8, act.meta.label.?, param.meta.label.?)) {
+                    active = param;
+                    deduped_params[i] = param;
+                    i += 1;
+                } else {
+                    continue;
+                }
+            } else {
+                active = param;
+                deduped_params[i] = param;
+                i += 1;
+            }
+        }
+        break :blk .{ deduped_params, i };
+    };
+
+    return params[0..len];
+}
+
+pub fn ComptimeLinkedList(comptime T: type) type {
+    return struct {
+        const Self = @This();
+        const Node = struct {
+            data: T,
+            next: ?*const Node,
+        };
+
+        head: Node = .{
+            .data = undefined,
+            .next = null,
+        },
+        len: usize = 0,
+
+        pub fn appendLeft(self: Self, data: T) Self {
+            return .{
+                .head = .{
+                    .data = data,
+                    .next = &self.head,
+                },
+                .len = self.len + 1,
+            };
+        }
+
+        pub fn popLeft(self: Self) ?std.meta.Tuple(&.{ T, Self }) {
+            if (self.head.next) |next| {
+                return .{
+                    self.head.data,
+                    .{
+                        .head = next.*,
+                        .len = self.len - 1,
+                    },
+                };
+            } else {
+                return null;
+            }
+        }
+    };
+}

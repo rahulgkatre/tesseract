@@ -6,6 +6,8 @@ const Tensor = tesseract.Tensor;
 const nn = tesseract.nn;
 const debug = tesseract.debug;
 
+const utils = @import("src/utils.zig");
+
 // Here is a small neural network that can be used for MNIST
 // All tensor code should run in comptime
 // This can mean in the top level of a file or in a function that is called at comptime
@@ -28,6 +30,11 @@ const model = nn.Sequential("model", .{
 const out = model.forward(x).softmax(-1);
 
 pub fn main() !void {
+    // Here are all the model's parameters
+    for (utils.paramsOf(out), 0..) |anyten, i| {
+        std.debug.print("params[{d}] : {s} = {x}\n", .{ i, anyten.meta.label.?, @intFromPtr(anyten) });
+    }
+
     // Try uncommenting this line to see how the shape of the output has already been determined at compile time!
     // Not shown here, but all the operations that produce this output are also stored as a DAG by the op trackers
     // @compileLog(@TypeOf(out));
