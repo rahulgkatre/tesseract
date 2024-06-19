@@ -13,40 +13,64 @@ const BoolTensor = dtypes.BoolTensor;
 const FloatTensor = dtypes.FloatTensor;
 const F = @import("functions.zig");
 
-pub const Trace = utils.ComptimeLinkedList(*const AnyTensor);
-
-pub fn backprop(comptime x: anytype) []const *const AnyTensor {
+pub fn backwards(x: anytype) []const *const AnyTensor {
     const initial_grad = tensor.asTensor(1.0);
     const params = utils.paramsOf(x);
-    _, const updated_params = applyGradFn(x, initial_grad, null, params);
-    return updated_params;
+
+    var zero_grads: [params.len]*const AnyTensor = undefined;
+    for (params, 0..) |p, i| {
+        zero_grads[i] = asTensor(0.0).setLabel("grad_" ++ p.meta.label.?).toAnyTensor();
+    }
+
+    return backpropStep(x, initial_grad, &zero_grads);
 }
 
-pub fn applyGradFn(comptime x: anytype, comptime grad: anytype, trace: ?Trace, params: []const *const AnyTensor) std.meta.Tuple(&.{ Trace, []const *const AnyTensor }) {
-    const gradFn: *const fn (anytype, ?Trace, []const *const AnyTensor) Trace = @ptrCast(x.meta.grad_fn);
-    return gradFn(grad, trace, params);
+pub fn backpropStep(x: anytype, grad: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
+    const gradFn: *const fn (anytype, []const *const AnyTensor) []const *const AnyTensor = @ptrCast(x.meta.grad_fn);
+    return gradFn(grad, param_grads);
 }
 
-pub fn noOpGradFn(_: anytype, trace: ?Trace, _: []const *const AnyTensor) Trace {
-    return trace.?;
+pub fn noGrad(_: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
+    return param_grads;
 }
 
-pub fn unaryGradFn(comptime op: ops.UnaryOp, a: anytype, grad: anytype, trace: ?Trace, params: []const *const AnyTensor) std.meta.Tuple(&.{ Trace, []const *const AnyTensor }) {
-    const local_grad = switch (op) {
-        .exp2 => F.exp2(a).mul(F.LN_2),
-        .log2 => F.div(F.INV_LN_2, a),
-        .neg => F.neg(a),
-        .recip => F.mul(a, a).neg(),
-        .sqrt => F.div(0.5, F.sqrt(a)),
-        .sin => F.add(a, F.div(asTensor(3.14159, 2))).sin(),
-    }.mul(grad).setLabel("grad" ++ (if (a.meta.label) |label| ("_" ++ label) else ""));
-
-    const local_updated_trace = if (trace) |t| t.appendLeft(local_grad.toAnyTensor()) else Trace.init(local_grad.toAnyTensor());
-    return applyGradFn(a, local_grad, local_updated_trace, params);
+pub fn accumulateGrad(label: []const u8, grad: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
+    const param_i: usize = blk: {
+        for (param_grads, 0..) |p, i| {
+            if (p.meta.label) |param_label| {
+                if (std.mem.eql(u8, param_label, "grad_" ++ label)) {
+                    break :blk i;
+                }
+            } else {
+                @compileLog(p.meta);
+                unreachable;
+            }
+        }
+        unreachable;
+    };
+    var updated_params: [param_grads.len]*const AnyTensor = param_grads[0..param_grads.len].*;
+    updated_params[param_i] = F.add(param_grads[param_i].toTensor(), grad).setLabel(param_grads[param_i].meta.label.?).toAnyTensor();
+    return &updated_params;
 }
 
-pub fn binaryGradFn(comptime op: ops.BinaryOp, a: anytype, b: anytype, grad: anytype, trace: ?Trace, params: []const *const AnyTensor) std.meta.Tuple(&.{ Trace, []const *const AnyTensor }) {
-    const local_grad_a, const local_grad_b = switch (op) {
+pub fn unaryGrad(op: ops.UnaryOp, a: anytype, grad: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
+    const grad_a = blk: {
+        const local_grad = switch (op) {
+            .exp2 => F.exp2(a).mul(F.LN_2),
+            .log2 => F.div(F.INV_LN_2, a),
+            .neg => F.neg(a),
+            .recip => F.mul(a, a).neg(),
+            .sqrt => F.div(0.5, F.sqrt(a)),
+            .sin => F.add(a, F.div(asTensor(3.14159, 2))).sin(),
+        };
+        break :blk local_grad.mul(grad).setLabel("grad" ++ (if (a.meta.label) |label| ("_" ++ label) else ""));
+    };
+
+    return backpropStep(a, grad_a, param_grads);
+}
+
+pub fn binaryGrad(op: ops.BinaryOp, a: anytype, b: anytype, grad: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
+    const grad_a, const grad_b = switch (op) {
         .add => .{ grad, grad },
         .mul => .{
             F.mul(b, grad).setLabel("grad" ++ (if (a.meta.label) |label| ("_" ++ label) else "")),
@@ -55,22 +79,17 @@ pub fn binaryGradFn(comptime op: ops.BinaryOp, a: anytype, b: anytype, grad: any
         else => unreachable,
     };
 
-    const a_local_updated_trace = if (trace) |t| t.appendLeft(local_grad_a.toAnyTensor()) else Trace.init(local_grad_a.toAnyTensor());
-    _, const a_updated_params = applyGradFn(a, local_grad_a, a_local_updated_trace, params);
-    const b_local_updated_trace = if (trace) |t| t.appendLeft(local_grad_b.toAnyTensor()) else Trace.init(local_grad_b.toAnyTensor());
-    return applyGradFn(b, local_grad_b, b_local_updated_trace, a_updated_params);
+    return backpropStep(b, grad_b, backpropStep(a, grad_a, param_grads));
 }
 
 test "example" {
-    const updated_params = comptime blk: {
-        const x1 = tensor.Tensor([1]f32).param("x1");
-        const x2 = tensor.Tensor([1]f32).param("x2");
-        const a = F.mul(x1, x2).setLabel("a");
-        const y1 = a.log2().setLabel("y1");
-        const y2 = x2.exp2().setLabel("y2");
-        const w = F.mul(y1, y2).setLabel("w");
-        const backprop_results = backprop(w);
-        break :blk backprop_results[0..backprop_results.len].*;
+    const f, const df = comptime blk: {
+        const x = tensor.Tensor(f32).param("x");
+        const y = tensor.Tensor(f32).param("y");
+        const s = F.add(x.mul(2.0), y.mul(3.0)).setLabel("s");
+        const f = F.add(s, s).setLabel("f");
+        const df = f.backwards();
+        break :blk .{ f, df[0..df.len].* };
     };
 
     const graph = @import("graph.zig");
@@ -79,15 +98,16 @@ test "example" {
     defer g.deinit();
 
     std.debug.print("\n", .{});
-    inline for (updated_params) |update| {
+    try g.trace(f, true);
+    inline for (df) |update| {
         try g.trace(update, true);
     }
 
     const debug = @import("debug.zig");
-    try debug.dataflowViz(updated_params, debug.debug_writer, arena1.allocator());
+    try debug.dataflowViz(.{f.toAnyTensor()} ++ df, debug.debug_writer, arena1.allocator());
 }
 
-test binaryGradFn {
+test binaryGrad {
     // const xt, const dx = comptime blk: {
     //     const a = tensor.Tensor(f32).input("a");
     //     const v0 = tensor.Tensor(f32).input("v0");

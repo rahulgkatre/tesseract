@@ -178,8 +178,8 @@ pub fn expand(input: anytype, comptime new_shape: anytype) Expand(input, new_sha
 
 pub fn Flatten(input: anytype, comptime dims: DimRange) type {
     const A = TensorTypeOf(input);
-    const from = utils.signedToUnsignedDim(A.ndims, dims.from);
-    const to = utils.signedToUnsignedDim(A.ndims, dims.to);
+    const from = A.signedToUnsignedDim(dims.from);
+    const to = A.signedToUnsignedDim(dims.to);
     if (from == to) {
         return A;
     }
@@ -267,10 +267,10 @@ test reshape {
 
 pub fn Squeeze(comptime input: anytype, comptime dim: i16) type {
     const A = TensorTypeOf(input);
-    if (A.shape[utils.signedToUnsignedDim(A.ndims, dim)] != 1) {
+    if (A.shape[A.signedToUnsignedDim(dim)] != 1) {
         @compileError("Cannot squeeze as dimension size is not 1");
     }
-    return Reshape(input, utils.arrayDelete(A.ndims, A.shape, utils.signedToUnsignedDim(A.ndims, dim)));
+    return Reshape(input, utils.arrayDelete(A.ndims, A.shape, A.signedToUnsignedDim(dim)));
 }
 /// Remove a dim of size 1 from the shape of the
 pub fn squeeze(comptime input: anytype, comptime dim: i16) Squeeze(input, dim) {
@@ -278,7 +278,7 @@ pub fn squeeze(comptime input: anytype, comptime dim: i16) Squeeze(input, dim) {
     const a = asTensor(input);
     return a.view(
         Squeeze(input, dim).shape,
-        utils.arrayDelete(A.ndims, a.strides[0..A.ndims].*, utils.signedToUnsignedDim(A.ndims, dim)),
+        utils.arrayDelete(A.ndims, a.strides[0..A.ndims].*, A.signedToUnsignedDim(dim)),
         a.offset,
     );
 }
@@ -289,8 +289,8 @@ pub fn squeeze(comptime input: anytype, comptime dim: i16) Squeeze(input, dim) {
 
 pub fn Transpose(comptime input: anytype, comptime dim1: i16, comptime dim2: i16) type {
     const Type = TensorTypeOf(input);
-    const norm1 = utils.signedToUnsignedDim(Type.ndims, dim1);
-    const norm2 = utils.signedToUnsignedDim(Type.ndims, dim2);
+    const norm1 = utils.signedToUnsignedDimNdims(Type.ndims, dim1);
+    const norm2 = utils.signedToUnsignedDimNdims(Type.ndims, dim2);
     var new_shape = Type.shape;
     new_shape[norm1] = Type.shape[norm2];
     new_shape[norm2] = Type.shape[norm1];
@@ -300,8 +300,8 @@ pub fn Transpose(comptime input: anytype, comptime dim1: i16, comptime dim2: i16
 pub fn transpose(comptime input: anytype, comptime dim1: i16, comptime dim2: i16) Transpose(input, dim1, dim2) {
     const A = TensorTypeOf(input);
     const a = asTensor(input);
-    const norm1 = utils.signedToUnsignedDim(A.ndims, dim1);
-    const norm2 = utils.signedToUnsignedDim(A.ndims, dim2);
+    const norm1 = A.signedToUnsignedDim(dim1);
+    const norm2 = A.signedToUnsignedDim(dim2);
     if (norm1 != norm2) {
         var new_strides = a.strides[0..a.ndims].*;
         new_strides[norm1] = a.strides[norm2];
@@ -334,7 +334,7 @@ test transpose {
 
 pub fn Unsqueeze(comptime input: anytype, comptime dim: i16) type {
     const A = TensorTypeOf(input);
-    return Reshape(input, utils.arrayInsert(A.ndims, A.shape, utils.signedToUnsignedDim(A.ndims, dim), 1));
+    return Reshape(input, utils.arrayInsert(A.ndims, A.shape, A.signedToUnsignedDim(dim), 1));
 }
 /// Insert a dim of size 1 into the shape of the tensor
 pub fn unsqueeze(comptime input: anytype, comptime dim: i16) Unsqueeze(input, dim) {
@@ -342,7 +342,7 @@ pub fn unsqueeze(comptime input: anytype, comptime dim: i16) Unsqueeze(input, di
     const a = asTensor(input);
     return a.view(
         Unsqueeze(input, dim).shape,
-        utils.arrayInsert(a.ndims, a.strides[0..a.ndims].*, utils.signedToUnsignedDim(A.ndims, dim), 0),
+        utils.arrayInsert(a.ndims, a.strides[0..a.ndims].*, A.signedToUnsignedDim(dim), 0),
         a.offset,
     );
 }
