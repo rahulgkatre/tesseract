@@ -41,7 +41,7 @@ Generated code comes in the form of a .so that follows the C ABI in order to be 
 
 ## Roadmap
 
-### MVP Feature Checklist
+### Minimum Feature Checklist
 
 - Shape-based types
     - [x] Broadcasting, reduction
@@ -51,17 +51,16 @@ Generated code comes in the form of a .so that follows the C ABI in order to be 
     - [ ] Symbolic shapes and strides
 - Computation graph 
     - [x] Building up the compute graph
-    - [ ] Operator fusion
+    - [x] Automatic differentiation, backwards compute graph
     - [ ] Generating code to evaluate the compute graph
-    - [ ] Automatic differentiation, backwards compute graph
-- Optimization passes
-    - [x] Fusing of map, zip, reduce ops where possible and optimal
-    - [ ] Polyhedral analysis and optimization of nested loops
-    - [ ] Automatic parallelization with OpenMP for CPU and GPU groups, blocks, warps
-    - [ ] Applying machine learning to learn a heuristic for optimization
 
 ### Future Goals
 
+- Optimization passes
+    - Fusing of map, zip, reduce ops where possible and optimal
+    - Polyhedral analysis and optimization of nested loops
+    - Automatic parallelization with OpenMP for CPU and GPU groups, blocks, warps
+    - Applying machine learning to learn a heuristic for optimization
 - Support for accelerator frameworks like CUDA, HIP/ROCm, Metal, WebGPU, etc.
     - Use codegen or LLVM targets to generate device specific code
     - Target as many platform specific instructions/functions as possible (e.g. SIMD, FMA, MMA)
@@ -77,4 +76,4 @@ Generated code comes in the form of a .so that follows the C ABI in order to be 
     - Be able to run Tesseract on closed-source hardware (e.g. TPU)
 - Distributed computing
     - Multiple GPUs
-    - Multiple computers with multiple GPUs
+    - Multiple computers with multiple GPUs (clusters)

@@ -29,11 +29,16 @@ const model = nn.Sequential("model", .{
 
 const out = model.forward(x).softmax(-1);
 
+const true_label = Tensor([16][10]u8).input("mnist_batched_true_label").cast(.f16);
+const loss = true_label.sub(out);
+
 pub fn main() !void {
     // Here are all the model's parameters
     for (utils.paramsOf(out), 0..) |anyten, i| {
         std.debug.print("params[{d}] : {s} = {x}\n", .{ i, anyten.meta.label.?, @intFromPtr(anyten) });
     }
+
+    std.debug.print("{}\n", .{comptime loss.backwards().len});
 
     // Try uncommenting this line to see how the shape of the output has already been determined at compile time!
     // Not shown here, but all the operations that produce this output are also stored as a DAG by the op trackers
