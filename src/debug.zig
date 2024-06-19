@@ -9,8 +9,7 @@ const utils = @import("utils.zig");
 pub const debug_writer = std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write){ .context = std.io.getStdOut() };
 
 /// Utility function for visualizing the full graph that is created at compile time, no scheduling is done yet
-pub fn dataflowViz(entrypoints: anytype, writer: anytype, allocator: std.mem.Allocator) !void {
-    const anytensor_entrypoints: [entrypoints.len]*const AnyTensor = entrypoints;
+pub fn dataflowViz(comptime entrypoints: anytype, writer: anytype, allocator: std.mem.Allocator) !void {
     const Viz = struct {
         fn inputViz(in: *const AnyTensor, out: *const AnyTensor, viz_writer: anytype) !void {
             try viz_writer.print(
@@ -38,8 +37,8 @@ pub fn dataflowViz(entrypoints: anytype, writer: anytype, allocator: std.mem.All
     var queue = std.ArrayList(*const AnyTensor).init(allocator);
     defer queue.deinit();
 
-    for (anytensor_entrypoints[0..]) |entry| {
-        try queue.append(@ptrCast(entry));
+    inline for (0..entrypoints.len) |i| {
+        try queue.append(@ptrCast(entrypoints[i]));
     }
 
     while (queue.popOrNull()) |out| {

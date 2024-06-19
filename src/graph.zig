@@ -44,13 +44,13 @@ pub const Graph = struct {
 
     pub fn compute(graph: *Graph, t: *const AnyTensor) !void {
         try graph.data(t);
-        try graph.compute_nodes.putNoClobber(t, .{
+        try graph.compute_nodes.put(t, .{
             .output_node = graph.data_nodes.getPtr(t).?,
         });
     }
 
     pub fn data(graph: *Graph, t: *const AnyTensor) !void {
-        try graph.data_nodes.putNoClobber(t, .{ .tensor = t });
+        try graph.data_nodes.put(t, .{ .tensor = t });
     }
 
     pub fn trace(graph: *Graph, comptime out: anytype, printBytecode: bool) !void {
@@ -63,14 +63,16 @@ pub const Graph = struct {
                 }
             },
         }
-        try graph.compute(out_any);
-        if (printBytecode) {
-            std.debug.print("{s: <32}  {:<24}@{x}  {any}\n", .{
-                out_any.meta.label orelse "",
-                tensor.TensorTypeOf(out_any).ArrayType(),
-                @intFromPtr(out_any),
-                out_any.meta.instr,
-            });
+        if (!graph.compute_nodes.contains(out_any)) {
+            try graph.compute(out_any);
+            if (printBytecode) {
+                std.debug.print("{s: <32}  {:<24}@{x}  {any}\n", .{
+                    out_any.meta.label orelse "",
+                    tensor.TensorTypeOf(out_any).ArrayType(),
+                    @intFromPtr(out_any),
+                    out_any.meta.instr,
+                });
+            }
         }
     }
 };

@@ -18,6 +18,10 @@ pub const bf16 = packed struct {
     mantissa: u7 = 0,
 };
 
+test bf16 {
+    try std.testing.expectEqual(tensor.Tensor([2][3]bf16).dtype, .bf16);
+}
+
 /// Nvidia Tensor Float
 pub const TF32 = packed struct {
     sign: u1 = 0,

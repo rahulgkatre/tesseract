@@ -252,7 +252,7 @@ pub const Instruction = union(OpTypes) {
         switch (self) {
             inline else => |instr| {
                 try std.fmt.format(writer, "{s}.{s}", .{ op_type, utils.rawTagName(instr.op) });
-                for (0..(16 - (op_type.len + utils.rawTagName(instr.op).len))) |_| {
+                for (0..(15 - (op_type.len + utils.rawTagName(instr.op).len))) |_| {
                     try writer.writeAll(" ");
                 }
 

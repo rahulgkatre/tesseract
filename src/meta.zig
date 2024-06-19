@@ -9,11 +9,7 @@ const autograd = @import("autograd.zig");
 /// Metadata for tensors, shared between the shape-typed Tensor and AnyTensor
 pub const Metadata = struct {
     instr: ops.Instruction,
-
-    /// *const fn (comptime anytype) get_grad_fn_return_type()
-    grad_fn: *const anyopaque = autograd.NoBackwardReturnType,
-    /// *const fn (comptime anytype) type
-    get_grad_fn_return_type: *const anyopaque = autograd.noBackwardFn,
+    grad_fn: *const anyopaque, // = autograd.NoBackwardReturnType,
     constant: bool,
     label: ?[]const u8,
 };
