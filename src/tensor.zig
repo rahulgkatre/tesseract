@@ -57,7 +57,7 @@ pub fn TensorType(dtype: dtypes.DType, shape: anytype) type {
 }
 
 pub fn TensorTuple(comptime tensors: anytype) type {
-    comptime var types: [tensors.len]type = undefined;
+    var types: [tensors.len]type = undefined;
     for (tensors, 0..) |in, i| {
         types[i] = TensorTypeOf(in);
     }
@@ -147,6 +147,21 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{ .meta = &new_meta };
         }
 
+        pub fn requiresGrad(self: Self, label: ?[]const u8) Self {
+            const new_meta = blk: {
+                var metadata = self.meta.*;
+                metadata.label = label;
+                metadata.requires_grad = true;
+                metadata.grad_fn = struct {
+                    pub fn gradFnImpl(grad: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
+                        return autograd.accumulateGrad(label, grad, param_grads);
+                    }
+                }.gradFnImpl;
+                break :blk metadata;
+            };
+            return .{ .meta = &new_meta };
+        }
+
         //
         // Initialization functions (init ops)
         //
@@ -225,6 +240,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     },
                     .constant = false,
                     .label = label,
+                    .requires_grad = true,
                     .grad_fn = struct {
                         pub fn gradFnImpl(grad: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
                             return autograd.accumulateGrad(label, grad, param_grads);

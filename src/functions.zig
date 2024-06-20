@@ -88,7 +88,7 @@ pub fn mul(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultTyp
 pub fn maximum(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .max) {
     return asTensor(input).binaryFn(other, .max);
 }
-pub fn mod(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .mod) {
+pub fn mod(input: anytype, other: anytype) IntTensor(TensorTypeOf(input)).BinaryFnResultType(other, .mod) {
     return asTensor(input).binaryFn(other, .mod);
 }
 pub fn lessThan(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .lt) {
@@ -203,7 +203,6 @@ pub fn flatten(input: anytype, comptime dims: DimRange) Flatten(input, dims) {
 //
 // =============================================================================
 /// Get a mask of where padding values exist in the tensor
-/// This could be useful for packed padded sequences for NLP applications
 pub fn paddingMask(input: anytype, comptime padding: anytype) TensorType(.bool, TensorTypeOf(input).shape) {
     const a = asTensor(input);
     const not_padding = TensorType(.bool, a.shape).full(true);
@@ -213,7 +212,6 @@ pub fn paddingMask(input: anytype, comptime padding: anytype) TensorType(.bool, 
 // =============================================================================
 // Permute
 // =============================================================================
-
 pub fn Permute(comptime input: anytype, comptime perm: [TensorTypeOf(input).ndims]u8) type {
     const A = TensorTypeOf(input);
     return Reshape(input, utils.arrayPermute(u64, A.ndims, A.shape, perm));
@@ -264,7 +262,6 @@ test reshape {
 // =============================================================================
 // Squeeze
 // =============================================================================
-
 pub fn Squeeze(comptime input: anytype, comptime dim: i16) type {
     const A = TensorTypeOf(input);
     if (A.shape[A.signedToUnsignedDim(dim)] != 1) {
@@ -272,7 +269,7 @@ pub fn Squeeze(comptime input: anytype, comptime dim: i16) type {
     }
     return Reshape(input, utils.arrayDelete(A.ndims, A.shape, A.signedToUnsignedDim(dim)));
 }
-/// Remove a dim of size 1 from the shape of the
+/// Remove a dim of size 1 from the shape of the input
 pub fn squeeze(comptime input: anytype, comptime dim: i16) Squeeze(input, dim) {
     const A = TensorTypeOf(input);
     const a = asTensor(input);
@@ -286,7 +283,6 @@ pub fn squeeze(comptime input: anytype, comptime dim: i16) Squeeze(input, dim) {
 // =============================================================================
 // Transpose
 // =============================================================================
-
 pub fn Transpose(comptime input: anytype, comptime dim1: i16, comptime dim2: i16) type {
     const Type = TensorTypeOf(input);
     const norm1 = utils.signedToUnsignedDimNdims(Type.ndims, dim1);
@@ -331,7 +327,6 @@ test transpose {
 // =============================================================================
 // Unsqueeze
 // =============================================================================
-
 pub fn Unsqueeze(comptime input: anytype, comptime dim: i16) type {
     const A = TensorTypeOf(input);
     return Reshape(input, utils.arrayInsert(A.ndims, A.shape, A.signedToUnsignedDim(dim), 1));
@@ -350,8 +345,7 @@ pub fn unsqueeze(comptime input: anytype, comptime dim: i16) Unsqueeze(input, di
 // =============================================================================
 // Compound functions
 // =============================================================================
-
-pub fn div(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .mul) {
+pub fn div(input: anytype, other: anytype) FloatTensor(TensorTypeOf(input).BinaryFnResultType(other, .mul)) {
     return asTensor(input).mul(asTensor(other).recip());
 }
 pub fn sub(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .add) {
@@ -412,10 +406,11 @@ pub fn MatMul(input: anytype, other: anytype) type {
 
     if (m != b_m) {
         @compileError(std.fmt.comptimePrint(
-            \\Tensors do not satisfy the matrix multiplication invariant, m must equal other_m
+            \\
+            \\Tensors do not satisfy the matrix multiplication invariant, dim n-1 of A must equal dim n-2 of B
             \\Tensor A: {a}
             \\Tensor B: {a}
-            \\n = {d}, m = {d}, other_m = {d}, p = {d}
+            \\A.shape[n-2] = {d}, A.shape[n-1] = {d}, B.shape[n-2] = {d}, B.shape[n-1] = {d}
         , .{ A.shape, B.shape, n, m, b_m, p }));
     }
 

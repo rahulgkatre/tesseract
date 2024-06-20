@@ -163,6 +163,7 @@ pub fn resultDType(dtype1: DType, dtype2: DType) DType {
     @compileError("Cannot combine " ++ utils.rawTagName(dtype1) ++ " and " ++ utils.rawTagName(dtype2));
 }
 
+/// Utility function to enforce that T must be float-like
 pub fn FloatTensor(comptime T: type) type {
     if (isFloat(T.dtype)) {
         return T;
@@ -170,6 +171,7 @@ pub fn FloatTensor(comptime T: type) type {
     return TensorType(default_float, T.shape);
 }
 
+/// Utility function to enforce that T must be bool-like
 pub fn BoolTensor(comptime T: type) type {
     const Tensor = tensor.TensorType(.bool, T.shape);
     if (!isBool(T.dtype)) {
@@ -178,6 +180,7 @@ pub fn BoolTensor(comptime T: type) type {
     return Tensor;
 }
 
+/// Utility function to enforce that T must be int-like
 pub fn IntTensor(comptime T: type) type {
     if (!isInt(T.dtype)) {
         @compileError("Must cast to int datatype first");

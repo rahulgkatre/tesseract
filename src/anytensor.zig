@@ -39,7 +39,7 @@ pub const AnyTensor = extern struct {
     }
 
     pub const Json = struct {
-        uid: usize,
+        ptr: usize,
         dtype: dtypes.DType,
         ndims: u8,
         shape: []const u64,
@@ -49,7 +49,7 @@ pub const AnyTensor = extern struct {
 
     pub fn toJson(self: *const AnyTensor) Json {
         return .{
-            .uid = @intFromPtr(self),
+            .ptr = @intFromPtr(self),
             .dtype = self.dtype,
             .ndims = self.ndims,
             .shape = self.shape[0..self.ndims],

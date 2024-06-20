@@ -61,6 +61,7 @@ pub const TernaryOp = enum {
         out: usize,
     };
     where,
+    fusedMulAdd,
 };
 ///ReduceOps are just recurrently applied binary ops
 pub const ReduceOp = enum {
