@@ -13,7 +13,7 @@ const TensorTypeOf = tensor.TensorTypeOf;
 
 pub const Module = struct {
     fn is(comptime T: type) bool {
-        return @hasDecl(T, "forward") and T.IType == Module;
+        return @hasDecl(T, "forward") and @hasDecl(T, "IType") and T.IType == Module;
     }
 
     pub fn IFace(comptime T: type, comptime Impl: type) type {
@@ -41,9 +41,8 @@ pub const LazyModule = struct {
 pub const ReLU = struct {
     const Self = @This();
     pub usingnamespace Module.IFace(Self, struct {
-        pub fn forward(_: Self, comptime x: anytype) @TypeOf(x) {
-            std.debug.assert(isTensorType(@TypeOf(x)));
-            return x.relu();
+        pub fn forward(_: Self, comptime x: anytype) TensorTypeOf(x) {
+            return asTensor(x).relu();
         }
     });
 };
@@ -59,29 +58,21 @@ pub fn LazyLinear(out: u64, dtype: dtypes.DType, comptime label: []const u8) typ
     };
 }
 
-test "lazy linear" {
-    const x = comptime tensor.Tensor([16][784]f32).input(null);
-    const linear = comptime LazyLinear(256, .f32, "lazy_fc"){};
-    const y1 = comptime linear.forward(x);
-
-    const x2 = comptime tensor.Tensor([16][1]f32).input("x2");
-    const y2 = comptime linear.forward(x2);
-
-    const x3 = comptime tensor.Tensor([16][1]f32).input("x3");
-    const y3 = comptime linear.forward(x3);
-
-    _ = y1;
-    _ = y2;
-    _ = y3;
-
-    // const writer = std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write){ .context = std.io.getStdOut() };
-    // try @import("utils.zig").dataflowViz(&[_]*const AnyTensor{ &y1.widen(), &y2.widen(), &y3.widen() }, writer, std.testing.allocator);
+test LazyLinear {
+    comptime {
+        const x1 = tensor.Tensor([16][784]f32).input("x1");
+        const linear = LazyLinear(256, .f32, "lazy_fc"){};
+        _ = linear.forward(x1);
+        const x2 = tensor.Tensor([16][1]f32).input("x2");
+        _ = linear.forward(x2);
+        const x3 = tensor.Tensor([16][1]f32).input("x3");
+        _ = linear.forward(x3);
+    }
 }
 
 pub fn Linear(in: u64, out: u64, dtype: dtypes.DType, label: []const u8) type {
     return struct {
         const Self = @This();
-        const name = std.fmt.comptimePrint("Linear_{d}_{d}_{s}", .{ in, out, label });
 
         pub usingnamespace Module.IFace(Self, struct {
             pub fn forward(self: Self, input: anytype) F.MatMul(input, Weight.empty()) {
@@ -92,8 +83,8 @@ pub fn Linear(in: u64, out: u64, dtype: dtypes.DType, label: []const u8) type {
         const Weight = tensor.Tensor([in][out]dtypes.ZigType(dtype));
         const Bias = tensor.Tensor([out]dtypes.ZigType(dtype));
 
-        weight: Weight = Weight.param(name ++ "_weight"),
-        bias: Bias = Bias.param(name ++ "_bias"),
+        weight: Weight = Weight.param(label ++ "_weight"),
+        bias: Bias = Bias.param(label ++ "_bias"),
     };
 }
 
@@ -104,28 +95,29 @@ pub fn Sequential(comptime label: []const u8, comptime modules: anytype) type {
 
         pub usingnamespace Module.IFace(Self, struct {
             fn ReturnType(in: anytype) type {
-                var result: AnyTensor = asTensor(in).toAny().*;
+                var result: *const AnyTensor = asTensor(in).toAnyTensor();
                 for (modules) |module| {
                     std.debug.assert(Module.is(@TypeOf(module)));
-                    result = asTensor(module.forward(result.toTensor().*)).toAny().*;
+                    result = asTensor(module.forward(result.toTensor())).toAnyTensor();
                 }
                 return TensorTypeOf(result);
             }
             pub fn forward(_: Self, in: anytype) ReturnType(in) {
-                var result: AnyTensor = asTensor(in).toAny().*;
+                var result: *const AnyTensor = asTensor(in).toAnyTensor();
                 for (modules) |module| {
                     std.debug.assert(Module.is(@TypeOf(module)));
-                    result = asTensor(module.forward(result.toTensor().*)).toAny().*;
+                    result = asTensor(module.forward(result.toTensor())).toAnyTensor();
                 }
-                return result.toTensor().*;
+                return asTensor(result);
             }
         });
     };
 }
 
-test "linear" {
-    const x = comptime tensor.Tensor([16][784]f32).input("input");
-    const linear = comptime Linear(784, 256, .f32, "fc"){};
-    const y = comptime linear.forward(x);
-    _ = y;
+test Linear {
+    comptime {
+        const x = tensor.Tensor([16][784]f32).input("input");
+        const linear = Linear(784, 256, .f32, "fc"){};
+        _ = linear.forward(x);
+    }
 }

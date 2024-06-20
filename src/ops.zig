@@ -1,9 +1,12 @@
 const AnyTensor = @import("anytensor.zig").AnyTensor;
+const std = @import("std");
+const utils = @import("utils.zig");
+const dtypes = @import("dtypes.zig");
 
 // Arithmetic operations for unary functions, binary functions,
 // and reducing a dimension of a tensor to a single value by applying some binary function
 pub const UnaryOp = enum {
-    pub const Info = struct {
+    pub const Instr = struct {
         op: UnaryOp,
         in: [1]*const AnyTensor,
         args: Args = {},
@@ -15,16 +18,16 @@ pub const UnaryOp = enum {
         out: usize,
     };
 
-    Neg,
-    Log2,
-    Exp2,
-    Sqrt,
-    Rcp,
-    Sin,
+    neg,
+    log2,
+    exp2,
+    sqrt,
+    recip,
+    sin,
 };
 // Lt, Eq, Xor will produce a bool tensor which can be used in mask based operations later on
 pub const BinaryOp = enum {
-    pub const Info = struct {
+    pub const Instr = struct {
         op: BinaryOp,
         in: [2]*const AnyTensor,
         args: Args = {},
@@ -36,17 +39,17 @@ pub const BinaryOp = enum {
         out: usize,
     };
 
-    Add,
-    Mul,
-    Max,
-    Mod,
-    Lt,
-    Eq,
-    Xor,
+    add,
+    mul,
+    max,
+    mod,
+    lt,
+    eq,
+    xor,
 };
-// Ternary ops take in 3 arguments which can have different purposes
+///Ternary ops take in 3 arguments which can have different purposes
 pub const TernaryOp = enum {
-    pub const Info = struct {
+    pub const Instr = struct {
         op: TernaryOp,
         in: [3]*const AnyTensor,
         args: Args = {},
@@ -57,18 +60,28 @@ pub const TernaryOp = enum {
         in: [3]usize,
         out: usize,
     };
-    Where,
+    where,
+    fusedMulAdd,
 };
-// ReduceOps are just recurrently applied binary ops
+///ReduceOps are just recurrently applied binary ops
 pub const ReduceOp = enum {
-    pub const Info = struct {
+    pub const Instr = struct {
         op: ReduceOp,
         in: [1]*const AnyTensor,
         args: Args,
     };
     pub const Args = struct {
-        dims: []const u16,
+        dims: []const u8,
         mask: []const bool,
+
+        pub fn format(
+            self: Args,
+            comptime _: []const u8,
+            _: std.fmt.FormatOptions,
+            writer: anytype,
+        ) anyerror!void {
+            try std.fmt.format(writer, "dims {any} mask {any}", .{ self.dims, self.mask });
+        }
     };
     pub const Json = struct {
         op: ReduceOp,
@@ -77,10 +90,9 @@ pub const ReduceOp = enum {
         out: usize,
     };
 
-    Add,
-    Mul,
-    Max,
-    Xor,
+    add,
+    mul,
+    max,
 
     pub fn binaryOp(reduceOp: ReduceOp) BinaryOp {
         return @field(BinaryOp, @tagName(reduceOp));
@@ -89,80 +101,176 @@ pub const ReduceOp = enum {
 // TypeOps mutate the type of the tensor, in Tesseract's case this not only changes
 // the dtype but also the shape, so any shape affecting ops are TypeOps
 
-pub const TypeOp = enum {
-    pub const Info = struct {
-        op: TypeOp,
+pub const DataOp = enum {
+    pub const Instr = struct {
+        op: DataOp,
         in: [1]*const AnyTensor,
         args: Args,
     };
-    pub const Args = union(TypeOp) {
+    pub const Args = union(DataOp) {
+        pub const View = struct {
+            shape: []const u64,
+            strides: []const u64,
+            offset: u64,
+        };
         pub const Pad = struct {
             pub const Mode = enum {
-                Constant,
-                Reflect,
-                Replicate,
-                Circular,
+                constant,
+                reflect,
+                replicate,
+                circular,
             };
 
             padding: []const [2]u64,
             mode: union(Mode) {
-                Constant: struct {
-                    value: []const u8,
-                },
-                Reflect: void,
-                Replicate: void,
-                Circular: void,
+                constant: []const u8,
+                reflect: void,
+                replicate: void,
+                circular: void,
             },
         };
-        View: void,
-        Cast: void,
-        Pad: Pad,
-        Contiguous: void,
+        view: View,
+        cast: dtypes.DType,
+        pad: Pad,
+        contiguous: View,
+
+        pub fn format(
+            self: Args,
+            comptime _: []const u8,
+            _: std.fmt.FormatOptions,
+            writer: anytype,
+        ) anyerror!void {
+            switch (self) {
+                .pad => |pad| try std.fmt.format(writer, "padding {any} mode {s} {s}", .{
+                    pad.padding,
+                    utils.rawTagName(pad.mode),
+                    if (std.meta.activeTag(pad.mode) == .constant) pad.mode.constant else "",
+                }),
+                .cast => |cast| try std.fmt.format(writer, "{s}", .{utils.rawTagName(cast)}),
+                .view, .contiguous => |view| {
+                    try std.fmt.format(writer, "shape {[shape]any} strides {[strides]any} offset {[offset]d}", view);
+                },
+            }
+        }
     };
     pub const Json = struct {
-        op: TypeOp,
+        op: DataOp,
         in: [1]usize,
         out: usize,
     };
 
-    View,
-    Cast,
-    Pad,
-    Contiguous,
+    view,
+    cast,
+    pad,
+    contiguous,
 };
 pub const InitOp = enum {
-    pub const Info = struct {
+    pub const Instr = struct {
         op: InitOp,
-        in: [0]*const AnyTensor,
+        in: [0]*const AnyTensor = .{},
         args: InitOp.Args,
     };
     pub const Args = union(InitOp) {
-        pub const Full = struct {
-            value: []const u8,
-        };
-
+        pub const Full = []const u8;
         pub const Range = struct {
             start: []const u8,
             stop: []const u8,
         };
 
-        Empty: void,
-        Input: void,
-        Parameter: void,
-        Full: Full,
-        Rand: void,
-        Range: Range,
+        empty: void,
+        input: void,
+        param: void,
+        full: Full,
+        random: void,
+        range: Range,
+
+        pub fn format(
+            self: Args,
+            comptime _: []const u8,
+            _: std.fmt.FormatOptions,
+            writer: anytype,
+        ) anyerror!void {
+            switch (self) {
+                .input, .param, .empty, .random => {},
+                .full => |full| try std.fmt.format(writer, "{s}", .{full}),
+                .range => |range| try std.fmt.format(writer, "start {[start]s} stop {[stop]s}", range),
+            }
+        }
     };
     pub const Json = struct {
         op: InitOp,
         args: Args,
         out: usize,
     };
-    Empty,
-    Input,
-    Parameter,
-    Full,
-    Rand,
-    Range,
+    empty,
+    input,
+    param,
+    full,
+    random,
+    range,
 };
-pub const OpTypes = enum { UnaryOp, BinaryOp, ReduceOp, TypeOp, InitOp, TernaryOp };
+pub const OpTypes = enum {
+    InitOp,
+    UnaryOp,
+    BinaryOp,
+    TernaryOp,
+    ReduceOp,
+    DataOp,
+};
+
+pub const Instruction = union(OpTypes) {
+    InitOp: InitOp.Instr,
+    UnaryOp: UnaryOp.Instr,
+    BinaryOp: BinaryOp.Instr,
+    TernaryOp: TernaryOp.Instr,
+    ReduceOp: ReduceOp.Instr,
+    DataOp: DataOp.Instr,
+
+    pub const Json = union(OpTypes) {
+        InitOp: InitOp.Json,
+        UnaryOp: UnaryOp.Json,
+        BinaryOp: BinaryOp.Json,
+        TernaryOp: TernaryOp.Json,
+        ReduceOp: ReduceOp.Json,
+        DataOp: DataOp.Json,
+    };
+
+    pub fn format(
+        self: Instruction,
+        comptime fmt: []const u8,
+        _: std.fmt.FormatOptions,
+        writer: anytype,
+    ) anyerror!void {
+        std.debug.assert(fmt.len == 0 or std.mem.eql(u8, fmt, "any"));
+        const op_type: []const u8 = switch (self) {
+            .UnaryOp => "unary",
+            .BinaryOp => "binary",
+            .TernaryOp => "ternary",
+            .ReduceOp => "reduce",
+            .InitOp => "init",
+            .DataOp => "data",
+        };
+        switch (self) {
+            inline else => |instr| {
+                try std.fmt.format(writer, "{s}.{s}", .{ op_type, utils.rawTagName(instr.op) });
+                for (0..(15 - (op_type.len + utils.rawTagName(instr.op).len))) |_| {
+                    try writer.writeAll(" ");
+                }
+
+                for (instr.in) |in| {
+                    try std.fmt.format(writer, "@{x: <9}", .{@intFromPtr(in)});
+                }
+                switch (instr.in.len) {
+                    0 => try std.fmt.format(writer, "{s: <20}", .{""}),
+                    1, 2 => try std.fmt.format(writer, "{s: <10}", .{""}),
+                    3 => {},
+                    else => unreachable,
+                }
+
+                if (@TypeOf(instr.args) != void) {
+                    try std.fmt.format(writer, "{}", .{instr.args});
+                }
+            },
+        }
+    }
+};

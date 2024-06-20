@@ -3,11 +3,10 @@ const AnyTensor = @import("anytensor.zig").AnyTensor;
 const utils = @import("utils.zig");
 const ops = @import("ops.zig");
 const dtypes = @import("dtypes.zig");
-
+const graph = @import("graph.zig");
+const autograd = @import("autograd.zig");
 const meta = @import("meta.zig");
-const Metadata = meta.Metadata;
-const OpTracker = meta.OpTracker;
-const OpGroupTracker = meta.OpGroupTracker;
+const F = @import("functions.zig");
 
 // =============================================================================
 // Type level utilities specifically for Tensor types
@@ -38,21 +37,12 @@ pub fn TensorTypeOf(any: anytype) type {
 /// Like @as but for casting to matching Tensor type
 /// Used for wrapping immediate values in single size tensors with the same dtype as the current tensor
 /// Will cause a compile error if any is not a Tensor or a scalar number.
-pub fn asTensor(any: anytype) TensorTypeOf(any) {
-    @setEvalBranchQuota(std.math.maxInt(u32));
+pub fn asTensor(comptime any: anytype) TensorTypeOf(any) {
     return switch (@typeInfo(@TypeOf(any))) {
-        .Pointer => any.*,
-        .Struct => any,
+        .Pointer => |info| (if (info.child == AnyTensor) @as(*const AnyTensor, any).toTensor() else any).*,
+        .Struct => if (@TypeOf(any) == AnyTensor) @as(AnyTensor, any).toTensor().* else any,
         .Int, .Float, .Bool, .ComptimeInt, .ComptimeFloat => TensorTypeOf(any).full(any),
         else => unreachable,
-    };
-}
-
-/// Test if a type is a Tensor type
-pub fn isTensorType(comptime T: type) bool {
-    return switch (@typeInfo(T)) {
-        .Struct => Tensor(T.ArrayType()) == T,
-        else => false,
     };
 }
 
@@ -67,7 +57,7 @@ pub fn TensorType(dtype: dtypes.DType, shape: anytype) type {
 }
 
 pub fn TensorTuple(comptime tensors: anytype) type {
-    comptime var types: [tensors.len]type = undefined;
+    var types: [tensors.len]type = undefined;
     for (tensors, 0..) |in, i| {
         types[i] = TensorTypeOf(in);
     }
@@ -77,26 +67,25 @@ pub fn TensorTuple(comptime tensors: anytype) type {
 pub fn Tensor(comptime TensorArrayType: type) type {
     return extern struct {
         const Self = @This();
-        pub const contiguous_strides: [ndims]u64 = utils.contiguousStrides(&shape);
-        pub const num_entries = utils.numEntries(ndims, shape);
 
-        // All the functions for operations (that do not modify metadata directly)
-        // are implemented in another file
-        pub usingnamespace @import("functions.zig");
+        // All the functions for operations that do not modify metadata directly
+        pub usingnamespace F;
 
         pub const dtype: dtypes.DType = utils.extractDType(TensorArrayType);
         pub const ndims: u8 = utils.extractNdims(TensorArrayType);
         pub const shape: [ndims]u64 = utils.extractShape(TensorArrayType);
+        pub const contiguous_strides: [ndims]u64 = utils.contiguousStrides(&shape);
+        pub const num_elements = utils.numElements(&shape);
 
+        meta: *const meta.Metadata,
         dtype: dtypes.DType = dtype,
         ndims: u8 = ndims,
         shape: *const [ndims]u64 = &shape,
         strides: *const [ndims]u64 = &contiguous_strides,
         offset: u64 = 0,
-        meta: *const Metadata,
 
-        pub fn toAny(comptime self: Self) *const AnyTensor {
-            return @as(*const AnyTensor, @ptrCast(&self));
+        pub fn toAnyTensor(comptime self: *const Self) *const AnyTensor {
+            return @ptrCast(self);
         }
 
         pub fn ArrayType() type {
@@ -131,12 +120,12 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         }
 
         pub fn size(_: Self) u128 {
-            return num_entries;
+            return num_elements;
         }
 
         /// Allows for negative dimension indexing to work by normalizing it to [0,ndims)
-        fn signedToUnsignedDim(dim: i16) u8 {
-            return utils.signedToUnsignedDim(Self.ndims, dim);
+        pub fn signedToUnsignedDim(dim: i16) u8 {
+            return utils.signedToUnsignedDimNdims(Self.ndims, dim);
         }
 
         /// Supports negative indexing sugar (e.g. -1 = ndims - 1)
@@ -149,21 +138,28 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return self.strides[signedToUnsignedDim(d)];
         }
 
-        pub fn updateMetadata(self: Self, new_metadata: *const Metadata) Self {
-            return .{
-                .meta = new_metadata,
-                .strides = self.strides,
-                .offset = self.offset,
+        pub fn setLabel(self: Self, label: ?[]const u8) Self {
+            const new_meta = blk: {
+                var metadata = self.meta.*;
+                metadata.label = label;
+                break :blk metadata;
             };
+            return .{ .meta = &new_meta };
         }
 
-        pub fn assignLabel(self: Self, comptime label: []const u8) Self {
-            return self.updateMetadata(&.{
-                .op_tracker = self.meta.op_tracker,
-                .op_group_tracker = self.meta.op_group_tracker,
-                .constant = self.meta.constant,
-                .label = label,
-            });
+        pub fn requiresGrad(self: Self, label: ?[]const u8) Self {
+            const new_meta = blk: {
+                var metadata = self.meta.*;
+                metadata.label = label;
+                metadata.requires_grad = true;
+                metadata.grad_fn = struct {
+                    pub fn gradFnImpl(grad: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
+                        return autograd.accumulateGrad(label, grad, param_grads);
+                    }
+                }.gradFnImpl;
+                break :blk metadata;
+            };
+            return .{ .meta = &new_meta };
         }
 
         //
@@ -173,17 +169,18 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// Create an empty tensor (i.e. allocate).
         /// Do not make any assumptions about data in the empty
         pub fn empty() Self {
+            const instr = .{
+                .InitOp = .{
+                    .op = .empty,
+                    .args = .{ .empty = {} },
+                },
+            };
             return .{
                 .meta = &.{
-                    .op_tracker = OpTracker.init(
-                        .InitOp,
-                        .Empty,
-                        .{},
-                        {},
-                    ),
-                    .op_group_tracker = OpGroupTracker{},
+                    .instr = instr,
                     .constant = false,
                     .label = null,
+                    .grad_fn = autograd.noGrad,
                 },
             };
         }
@@ -192,50 +189,63 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// By default, full tensors will be constant folded in codegen
         /// unless they are marked as requires_grad
         pub fn full(comptime value: dtypes.ZigType(dtype)) Self {
-            return .{
-                .meta = &.{
-                    .op_tracker = OpTracker.init(
-                        .InitOp,
-                        .Full,
-                        .{},
-                        .{ .value = std.fmt.comptimePrint("{}", .{value}) },
-                    ),
-                    .op_group_tracker = OpGroupTracker{},
-                    .constant = true,
-                    .label = null,
+            const instr = .{
+                .InitOp = .{
+                    .op = .full,
+                    .args = .{ .full = std.fmt.comptimePrint("{}", .{value}) },
                 },
             };
+            return (Self{
+                .meta = &.{
+                    .instr = instr,
+                    .constant = true,
+                    .label = null,
+                    .grad_fn = autograd.noGrad,
+                },
+            }).setLabel("const_" ++ instr.InitOp.args.full[0..@min(instr.InitOp.args.full.len, 6)]);
         }
 
         /// Used to mark a tensor as an input to a graph,
         /// codegen will make this an argument of the function
         /// A label can be given to make two tensors of the same shape/dtype
         /// correspond to different arrays at runtime (e.g. for two input images )
-        pub fn input(comptime label: ?[]const u8) Self {
-            return .{ .meta = &.{
-                .op_tracker = OpTracker.init(
-                    .InitOp,
-                    .Input,
-                    .{},
-                    {},
-                ),
-                .op_group_tracker = OpGroupTracker{},
-                .constant = false,
-                .label = label,
-            } };
+        pub fn input(comptime label: []const u8) Self {
+            return .{
+                .meta = &.{
+                    .instr = .{
+                        .InitOp = .{
+                            .op = .input,
+                            .args = .{ .input = {} },
+                        },
+                    },
+                    .grad_fn = autograd.noGrad,
+                    .constant = false,
+                    .label = label,
+                },
+            };
         }
 
-        /// Used to mark a tensor as a learnable parameter,
+        /// Used to mark a tensor as a learnable param,
         /// codegen will make this an argument of the function,
         /// gradients can be accumulated for it,
         /// and optimizers can detect it,
         pub fn param(label: []const u8) Self {
             return .{
                 .meta = &.{
-                    .op_tracker = OpTracker.init(.InitOp, .Parameter, .{}, {}),
-                    .op_group_tracker = OpGroupTracker{},
+                    .instr = .{
+                        .InitOp = .{
+                            .op = .param,
+                            .args = .{ .param = {} },
+                        },
+                    },
                     .constant = false,
                     .label = label,
+                    .requires_grad = true,
+                    .grad_fn = struct {
+                        pub fn gradFnImpl(grad: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
+                            return autograd.accumulateGrad(label, grad, param_grads);
+                        }
+                    }.gradFnImpl,
                 },
             };
         }
@@ -243,21 +253,22 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// Fill a tensor with random generated numbers
         /// By default, random tensors will be constant folded in codegen
         /// unless they are marked as requires_grad
-        /// Do not use this for random initialization of parameters!
+        /// Do not use this for random initialization of param_grads!
         /// Note that some device backends do not support this
         pub fn random(label: []const u8) Self {
             std.debug.assert(dtypes.isFloat(dtype));
-            return .{ .meta = &.{
-                .op_tracker = &OpTracker.init(
-                    .InitOp,
-                    .Rand,
-                    .{},
-                    .{ .Rand = {} },
-                ),
-                .op_group_tracker = .{},
-                .constant = false,
-                .label = label,
-            } };
+            return .{
+                .meta = &.{
+                    .instr = .{
+                        .InitOp = .{
+                            .op = .random,
+                            .args = .{ .random = {} },
+                        },
+                    },
+                    .constant = false,
+                    .label = label,
+                },
+            };
         }
 
         //
@@ -269,8 +280,14 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             if (new_dtype != self.dtype) {
                 return .{
                     .meta = &.{
-                        .op_tracker = OpTracker.init(.TypeOp, .Cast, .{self.toAny()}, {}),
-                        .op_group_tracker = self.meta.op_group_tracker.nextGroup(),
+                        .instr = .{
+                            .DataOp = .{
+                                .in = .{self.toAnyTensor()},
+                                .op = .cast,
+                                .args = .{ .cast = new_dtype },
+                            },
+                        },
+                        .grad_fn = autograd.noGrad,
                         .constant = self.meta.constant,
                         .label = self.meta.label,
                     },
@@ -286,20 +303,31 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         pub fn contiguous(comptime self: Self) Self {
             if (self.isContiguous()) return self;
             return .{
-                .meta = &Metadata{
+                .meta = &.{
+                    .instr = .{
+                        .DataOp = .{
+                            .in = .{self.toAnyTensor()},
+                            .op = .contiguous,
+                            .args = .{
+                                .contiguous = .{
+                                    .shape = self.shape,
+                                    .strides = &contiguous_strides,
+                                    .offset = 0,
+                                },
+                            },
+                        },
+                    },
                     .constant = false,
                     .label = self.meta.label,
-                    .op_group_tracker = self.meta.op_group_tracker.nextGroup(),
-                    .op_tracker = OpTracker.init(.TypeOp, .Contiguous, .{self.toAny()}, {}),
                 },
             };
         }
 
-        const PadMode = union(ops.TypeOp.Args.Pad.Mode) {
-            Constant: dtypes.ZigType(dtype),
-            Reflect: void,
-            Replicate: void,
-            Circular: void,
+        const PadMode = union(ops.DataOp.Args.Pad.Mode) {
+            constant: dtypes.ZigType(dtype),
+            reflect: void,
+            replicate: void,
+            circular: void,
         };
         pub fn Pad(padding: anytype) type {
             const padded_dims = padding.len;
@@ -314,14 +342,22 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         pub fn pad(comptime self: Self, comptime padding: anytype, comptime mode: PadMode) Pad(padding) {
             return .{
                 .meta = &.{
-                    .op_tracker = OpTracker.init(.TypeOp, .Pad, .{self.toAny()}, .{
-                        .padding = &padding,
-                        .mode = switch (mode) {
-                            .Constant => |constant| .{ .Constant = .{ .value = std.fmt.comptimePrint("{}", .{constant}) } },
-                            else => mode,
+                    .instr = .{
+                        .DataOp = .{
+                            .in = .{self.toAnyTensor()},
+                            .op = .pad,
+                            .args = .{
+                                .pad = .{
+                                    .padding = &padding,
+                                    .mode = switch (mode) {
+                                        .constant => |constant| .{ .constant = std.fmt.comptimePrint("{}", .{constant}) },
+                                        else => mode,
+                                    },
+                                },
+                            },
                         },
-                    }),
-                    .op_group_tracker = self.meta.op_group_tracker.nextGroup(),
+                    },
+                    .grad_fn = autograd.noGrad,
                     .constant = false,
                     .label = self.meta.label,
                 },
@@ -335,20 +371,38 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// Changes the shape and stride of the tensor to change how the underlying memory is accessed.
         /// Powerful enough to be used to implement any reshaping or windowing operation on a
         /// There are guardrails to prevent out of bounds access into underlying memory!
-        pub fn view(comptime self: Self, comptime new_shape: anytype, comptime new_strides: [new_shape.len]u64, comptime new_offset: u64) View(new_shape) {
+        pub fn view(
+            comptime self: Self,
+            comptime new_shape: anytype,
+            comptime new_strides: [new_shape.len]u64,
+            comptime new_offset: u64,
+        ) View(new_shape) {
             // It is possible to directly view the first tensor that is not the result of a view op
             // View ops only rely on the new shape and new strides, broadcasting rules no longer apply
             // This greatly simplifies the graph as view ops are essentially compressed
-            var first_not_view_tensor = self.toAny();
-            while (std.meta.activeTag(first_not_view_tensor.meta.op_tracker) == .TypeOp and first_not_view_tensor.meta.op_tracker.TypeOp.op == .View) {
-                first_not_view_tensor = first_not_view_tensor.meta.op_tracker.TypeOp.in[0];
-            }
-            var out = View(new_shape){
+            const first_not_view_tensor = blk: {
+                var t = self.toAnyTensor();
+                while (std.meta.activeTag(t.meta.instr) == .DataOp and t.meta.instr.DataOp.op == .view) {
+                    t = t.meta.instr.DataOp.in[0];
+                }
+                break :blk t;
+            };
+            const out = View(new_shape){
                 .meta = &.{
-                    .op_tracker = OpTracker.init(.TypeOp, .View, .{first_not_view_tensor}, {}),
-                    .op_group_tracker = self.meta.op_group_tracker.nextGroup(),
+                    .instr = .{
+                        .DataOp = .{
+                            .in = .{first_not_view_tensor},
+                            .op = .view,
+                            .args = .{ .view = .{
+                                .shape = &new_shape,
+                                .strides = &new_strides,
+                                .offset = new_offset,
+                            } },
+                        },
+                    },
                     .constant = self.meta.constant,
                     .label = self.meta.label,
+                    .grad_fn = autograd.noGrad,
                 },
                 .strides = &new_strides,
                 .offset = new_offset,
@@ -382,10 +436,19 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         pub fn unaryFn(self: Self, comptime op: ops.UnaryOp) Self {
             return .{
                 .meta = &.{
-                    .op_tracker = OpTracker.init(.UnaryOp, op, .{self.toAny()}, {}),
-                    .op_group_tracker = self.meta.op_group_tracker.nextGroup(),
+                    .instr = .{
+                        .UnaryOp = .{
+                            .in = .{self.toAnyTensor()},
+                            .op = op,
+                        },
+                    },
                     .constant = self.meta.constant,
                     .label = self.meta.label,
+                    .grad_fn = struct {
+                        pub fn gradFnImpl(grad_out: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
+                            return autograd.unaryGrad(op, self, grad_out, param_grads);
+                        }
+                    }.gradFnImpl,
                 },
                 .strides = self.strides,
                 .offset = self.offset,
@@ -395,7 +458,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         pub fn BinaryFnResultType(comptime other: anytype, comptime op: ops.BinaryOp) type {
             const Other = TensorTypeOf(other);
             const new_dtype: dtypes.DType = switch (op) {
-                .Eq, .Lt => .bool,
+                .eq, .lt => .bool,
                 else => dtypes.resultDType(Self.dtype, Other.dtype),
             };
             return TensorType(new_dtype, utils.broadcastShape(shape, Other.shape));
@@ -404,16 +467,24 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// a and b must have the same "dtype class" meaning both must be float, bool, or int
         /// though different sizes are allowed.
         pub fn binaryFn(self: Self, other: anytype, comptime op: ops.BinaryOp) BinaryFnResultType(other, op) {
-            const tb = meta.joinGroup(other, self);
-            const bc_shape = utils.broadcastShape(shape[0..ndims].*, tb.shape[0..tb.ndims].*);
-
-            const ta_bc = self.expand(bc_shape);
-            const tb_bc = tb.expand(bc_shape);
+            const Other = TensorTypeOf(other);
+            const bc_shape = utils.broadcastShape(shape, Other.shape);
+            const a = self.expand(bc_shape);
+            const b = F.expand(other, bc_shape);
             return .{
                 .meta = &.{
-                    .op_tracker = OpTracker.init(.BinaryOp, op, .{ ta_bc.toAny(), tb_bc.toAny() }, {}),
-                    .op_group_tracker = self.meta.op_group_tracker.nextGroup(),
-                    .constant = self.meta.constant and tb.meta.constant,
+                    .instr = .{
+                        .BinaryOp = .{
+                            .in = .{ a.toAnyTensor(), b.toAnyTensor() },
+                            .op = op,
+                        },
+                    },
+                    .grad_fn = struct {
+                        pub fn gradFnImpl(grad_out: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
+                            return autograd.binaryGrad(op, a, b, grad_out, param_grads);
+                        }
+                    }.gradFnImpl,
+                    .constant = a.meta.constant and b.meta.constant,
                     .label = null,
                 },
             };
@@ -461,19 +532,19 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             comptime reduce_dims: anytype,
         ) ReduceFnResultType(reduce_dims) {
             // Use u16 here because []const u8 shows up as a string
-            const reduce_dims_array: []const u16 = switch (@typeInfo(@TypeOf(reduce_dims))) {
-                .ComptimeInt, .Int => &[1]u16{signedToUnsignedDim(reduce_dims)},
-                .Null, .Void => @as([ndims]u16, std.simd.iota(u16, ndims))[0..],
+            const reduce_dims_array: []const u8 = switch (@typeInfo(@TypeOf(reduce_dims))) {
+                .ComptimeInt, .Int => &[1]u8{signedToUnsignedDim(reduce_dims)},
+                .Void => @as([ndims]u8, std.simd.iota(u8, ndims))[0..],
                 else => &reduce_dims,
             };
-            const reduce_dim_mask: [ndims]bool = switch (@typeInfo(@TypeOf(reduce_dims))) {
+            const reduce_dims_mask: [ndims]bool = switch (@typeInfo(@TypeOf(reduce_dims))) {
                 .ComptimeInt, .Int => blk: {
                     var tmp_mask: [ndims]bool = [_]bool{false} ** ndims;
                     const dim = reduce_dims;
                     tmp_mask[signedToUnsignedDim(dim)] = true;
                     break :blk tmp_mask;
                 },
-                .Null, .Void => [_]bool{true} ** ndims,
+                .Void => [_]bool{true} ** ndims,
                 else => blk: {
                     var tmp_mask: [ndims]bool = [_]bool{false} ** ndims;
                     for (reduce_dims) |dim| {
@@ -482,13 +553,21 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     break :blk tmp_mask;
                 },
             };
-
             return .{
                 .meta = &.{
-                    .op_tracker = OpTracker.init(.ReduceOp, op, .{self.toAny()}, .{ .dims = reduce_dims_array, .mask = &reduce_dim_mask }),
-                    .op_group_tracker = self.meta.op_group_tracker.nextGroup(),
+                    .instr = .{
+                        .ReduceOp = .{
+                            .in = .{self.toAnyTensor()},
+                            .op = op,
+                            .args = .{
+                                .dims = reduce_dims_array,
+                                .mask = &reduce_dims_mask,
+                            },
+                        },
+                    },
                     .constant = false,
                     .label = self.meta.label,
+                    .grad_fn = autograd.noGrad,
                 },
             };
         }
@@ -504,19 +583,27 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// Conditional elementwise operator
         /// out[i] = if (mask[i]) true_value[i] else false_value[i]
         /// Supports broadcasting between all 3 tensors, but true value and false value are broadcasted together first and must also have the same dtype
-        pub fn where(mask: dtypes.BoolTensor(Self), true_value: anytype, false_value: anytype) Where(true_value, false_value) {
+        pub fn where(mask: dtypes.BoolTensor(Self), true_value: anytype, false_value: anytype) where(true_value, false_value) {
             const Out = Where(true_value, false_value);
             const mask_expand = mask.expand(Out.shape);
-            const true_expand = asTensor(true_value).foldConstIntoGroupOf(mask).expand(Out.shape);
-            const false_expand = asTensor(false_value).foldConstIntoGroupOf(mask).expand(Out.shape);
+            const true_expand = asTensor(true_value).expand(Out.shape);
+            const false_expand = asTensor(false_value).expand(Out.shape);
             return .{
                 .meta = &.{
-                    .op_tracker = OpTracker.init(.TernaryOp, .Where, .{ mask_expand.toAny(), true_expand.asAny(), false_expand.asAny() }, {}),
-                    .op_group_tracker = mask.meta.op_group_tracker.nextGroup(),
+                    .instr = .{
+                        .TernaryOp = .{
+                            .in = .{ mask_expand.toAnyTensor(), true_expand.toAnyTensor(), false_expand.toAnyTensor() },
+                            .op = .where,
+                        },
+                    },
                     .constant = false,
                     .label = null,
                 },
             };
+        }
+
+        pub fn backwards(self: Self) []const *const AnyTensor {
+            return autograd.backwards(self);
         }
     };
 }
@@ -558,37 +645,31 @@ test "cast" {
     try std.testing.expect(tensor5.dtype == .f32);
 }
 
-test "array type" {
+test "ArrayType" {
     const Tensor1 = TensorType(.i32, .{ 2, 3, 4 });
     try std.testing.expectEqual(Tensor1.ArrayType(), [2][3][4]i32);
 }
 
-test "bf16" {
-    const Tensor1 = comptime Tensor([2][3]dtypes.bf16);
-    try std.testing.expectEqual(Tensor1.dtype, .bf16);
-}
-
-test "padding" {
+test "pad" {
     // https://pytorch.org/docs/stable/generated/torch.nn.functional.pad.html
     const t4d = comptime Tensor([3][3][4][2]f32).empty();
     const p1d = comptime .{.{ 1, 1 }};
-    const out1 = comptime t4d.pad(p1d, .{ .Constant = 0 });
+    const out1 = comptime t4d.pad(p1d, .{ .constant = 0 });
     try std.testing.expectEqualDeep(@TypeOf(out1).shape, .{ 3, 3, 4, 4 });
 
     const p2d = comptime .{ .{ 1, 1 }, .{ 2, 2 } };
-    const out2 = comptime t4d.pad(p2d, .{ .Constant = 0 });
+    const out2 = comptime t4d.pad(p2d, .{ .constant = 0 });
     try std.testing.expectEqualDeep(@TypeOf(out2).shape, .{ 3, 3, 8, 4 });
 
     const p3d = comptime .{ .{ 0, 1 }, .{ 2, 1 }, .{ 3, 3 } };
-    const out3 = comptime t4d.pad(p3d, .{ .Constant = 0 });
+    const out3 = comptime t4d.pad(p3d, .{ .constant = 0 });
     try std.testing.expectEqualDeep(@TypeOf(out3).shape, .{ 3, 9, 7, 3 });
 }
 
-test "sameness and uniqueness of input" {
+test "input" {
     const tensor1 = comptime Tensor([2][1][4]i32).input("tensor1");
     const tensor1_1 = comptime Tensor([2][1][4]i32).input("tensor1");
     const tensor2 = comptime Tensor([2][1][4]i32).input("tensor2");
-
     try std.testing.expect(@intFromPtr(&tensor1) == @intFromPtr(&tensor1_1));
     try std.testing.expect(@intFromPtr(&tensor1) != @intFromPtr(&tensor2));
 }

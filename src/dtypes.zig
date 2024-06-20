@@ -4,7 +4,6 @@ const utils = @import("utils.zig");
 const AnyTensor = @import("anytensor.zig").AnyTensor;
 
 const typing = @import("tensor.zig");
-const isTensorType = tensor.isTensorType;
 const TensorType = tensor.TensorType;
 
 // For dtypes without a corresponding zig type, they are represented
@@ -18,6 +17,10 @@ pub const bf16 = packed struct {
     exponent: u8 = 0,
     mantissa: u7 = 0,
 };
+
+test bf16 {
+    try std.testing.expectEqual(tensor.Tensor([2][3]bf16).dtype, .bf16);
+}
 
 /// Nvidia Tensor Float
 pub const TF32 = packed struct {
@@ -160,16 +163,16 @@ pub fn resultDType(dtype1: DType, dtype2: DType) DType {
     @compileError("Cannot combine " ++ utils.rawTagName(dtype1) ++ " and " ++ utils.rawTagName(dtype2));
 }
 
+/// Utility function to enforce that T must be float-like
 pub fn FloatTensor(comptime T: type) type {
-    std.debug.assert(isTensorType(T));
     if (isFloat(T.dtype)) {
         return T;
     }
     return TensorType(default_float, T.shape);
 }
 
+/// Utility function to enforce that T must be bool-like
 pub fn BoolTensor(comptime T: type) type {
-    std.debug.assert(tensor.isTensorType(T));
     const Tensor = tensor.TensorType(.bool, T.shape);
     if (!isBool(T.dtype)) {
         @compileError("Must be bool datatype");
@@ -177,8 +180,8 @@ pub fn BoolTensor(comptime T: type) type {
     return Tensor;
 }
 
+/// Utility function to enforce that T must be int-like
 pub fn IntTensor(comptime T: type) type {
-    std.debug.assert(tensor.isTensorType(T));
     if (!isInt(T.dtype)) {
         @compileError("Must cast to int datatype first");
     }

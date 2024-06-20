@@ -1,5 +1,4 @@
 const std = @import("std");
-const comptimePrint = std.fmt.comptimePrint;
 const ops = @import("ops.zig");
 const dtypes = @import("dtypes.zig");
 const AnyTensor = @import("anytensor.zig").AnyTensor;
@@ -11,24 +10,11 @@ pub fn arrayPermute(comptime T: type, comptime len: u8, array: [len]u64, comptim
         if (p < len and !used[p]) {
             used[p] = true;
         } else {
-            const msg = comptimePrint("Invalid permutation {any}", .{perm});
-            if (@inComptime()) {
-                @compileError(msg);
-            } else {
-                @panic(msg);
-            }
+            @compileError(std.fmt.comptimePrint("Invalid permutation {any}", .{perm}));
         }
     }
     for (used) |u| {
-        if (!u) {
-            std.log.err("Invalid permutation {any}", .{perm});
-            const msg = "An error occurred in tensor validation";
-            if (@inComptime()) {
-                @compileError(msg);
-            } else {
-                @panic(msg);
-            }
-        }
+        if (!u) @compileError("Not all dims in permutation were used");
     }
     var new_array: [len]T = undefined;
     for (0..len) |dim| {
@@ -116,12 +102,18 @@ pub fn broadcastShape(shape1: anytype, shape2: anytype) [@max(shape1.len, shape2
         const dim1 = if (i >= shape1.len) 1 else shape1[shape1.len - i - 1];
         const dim2 = if (i >= shape2.len) 1 else shape2[shape2.len - i - 1]; // orelse dim1;
         if (dim1 != 1 and dim2 != 1 and dim1 != dim2) {
-            @compileError(comptimePrint(
-                \\Shapes are not comaptible for broadcasting
-                \\Shape 1: {any}
-                \\Shape 2: {any}
+            @compileError(std.fmt.comptimePrint(
+                \\
+                \\Shapes are not compatible for broadcasting
+                \\Shape 1: {[shape1]any}
+                \\Shape 2: {[shape2]any}
+                \\
+                \\Reason: lhs dim {[i]d} and rhs dim{[i]d} must be equal, or one of them must be 1
+                \\
+                \\Dim 1: {[dim1]d}
+                \\Dim 2: {[dim2]d}
             ,
-                .{ shape1, shape2 },
+                .{ .shape1 = shape1, .shape2 = shape2, .dim1 = dim1, .dim2 = dim2, .i = i },
             ));
         }
         bc_shape[bc_ndims - i - 1] = if (dim1 == dim2 or dim2 == 1) dim1 else dim2;
@@ -129,7 +121,7 @@ pub fn broadcastShape(shape1: anytype, shape2: anytype) [@max(shape1.len, shape2
     return bc_shape;
 }
 
-pub fn numEntries(comptime ndims: u8, shape: [ndims]u64) u128 {
+pub fn numElements(shape: []const u64) u128 {
     var prod: u128 = 1;
     for (shape) |s| {
         prod *= s;
@@ -144,7 +136,7 @@ pub fn extractDType(comptime Type: type) dtypes.DType {
         .Struct => |info| if (info.backing_integer) |_| return @field(dtypes.DType, rawTypeName(Type)),
         else => {},
     }
-    @compileError("ArrayType input for Tensor must be a array type (e.g. [M][N][P]DType), received " ++ std.fmt.comptimePrint("{any}", .{Type}));
+    @compileError("ArrayType input for Tensor must be a array type (e.g. [M][N][P]DType), received " ++ std.fmt.std.fmt.comptimePrint("{any}", .{Type}));
 }
 
 pub fn extractNdims(comptime ArrayType: type) u8 {
@@ -154,7 +146,7 @@ pub fn extractNdims(comptime ArrayType: type) u8 {
         .Struct => |info| if (info.backing_integer) |_| return 0,
         else => {},
     }
-    @compileError("ArrayType input for Tensor must be a array type (e.g. [M][N][P]DType), received " ++ std.fmt.comptimePrint("{any}", .{ArrayType}));
+    @compileError("ArrayType input for Tensor must be a array type (e.g. [M][N][P]DType), received " ++ std.fmt.std.fmt.comptimePrint("{any}", .{ArrayType}));
 }
 
 pub fn extractShape(comptime ArrayType: type) [extractNdims(ArrayType)]u64 {
@@ -164,7 +156,7 @@ pub fn extractShape(comptime ArrayType: type) [extractNdims(ArrayType)]u64 {
         .Struct => |info| if (info.backing_integer) |_| return .{},
         else => {},
     }
-    @compileError("ArrayType input for Tensor must be a array type (e.g. [M][N][P]DType), received " ++ std.fmt.comptimePrint("{any}", .{ArrayType}));
+    @compileError("ArrayType input for Tensor must be a array type (e.g. [M][N][P]DType), received " ++ std.fmt.std.fmt.comptimePrint("{any}", .{ArrayType}));
 }
 
 pub fn rawTypeName(comptime T: type) []const u8 {
@@ -187,10 +179,10 @@ pub fn rawTagName(tagged: anytype) []const u8 {
     return name;
 }
 
-pub fn signedToUnsignedDim(ndims: u8, dim: i16) u8 {
+pub fn signedToUnsignedDimNdims(ndims: u8, dim: i16) u8 {
     const value = if (dim < 0) ndims + dim else dim;
     if (value < 0 or value > ndims) {
-        @compileError(std.fmt.comptimePrint(
+        @compileError(std.fmt.std.fmt.comptimePrint(
             "Dimension index {d} is out of bounds {d}",
             .{ value, ndims },
         ));
@@ -261,3 +253,141 @@ pub fn simplifiedView(input: anytype) struct {
 //     try std.testing.expectEqual(s2.shape[0..s2.ndims].*, .{ 4, 2 });
 //     try std.testing.expectEqual(s2.strides[0..s2.ndims].*, .{ 0, 1 });
 // }
+
+pub fn paramsOf(comptime entrypoint: anytype) []const *const AnyTensor {
+    const params, const len = comptime blk: {
+        var list = ComptimeLinkedList(*const AnyTensor){};
+        var curr = tensor.asTensor(entrypoint).toAnyTensor();
+        var stack = (ComptimeLinkedList(*const AnyTensor){}).appendLeft(curr);
+        while (stack.popLeft()) |tup| {
+            @setEvalBranchQuota(500 * stack.len + 1000);
+            curr, stack = tup;
+            switch (tensor.asTensor(curr).meta.instr) {
+                .InitOp => |instr| switch (instr.op) {
+                    .param => {
+                        list = list.appendLeft(curr);
+                    },
+                    else => {},
+                },
+                inline else => |instr| for (instr.in) |in| {
+                    stack = stack.appendLeft(in);
+                },
+            }
+        }
+        var params: [list.len]*const AnyTensor = .{undefined} ** list.len;
+        var i: usize = 0;
+        while (list.popLeft()) |tup| {
+            curr, list = tup;
+            params[i] = curr;
+            i += 1;
+            if (list.len == 0) {
+                break;
+            }
+        }
+        const SortContext = struct {
+            values: []*const AnyTensor,
+            pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
+                return ctx.values[a].meta.label.?.len < ctx.values[b].meta.label.?.len or blk: {
+                    if (ctx.values[a].meta.label.?.len > ctx.values[b].meta.label.?.len) {
+                        break :blk false;
+                    }
+                    for (ctx.values[a].meta.label.?, ctx.values[b].meta.label.?) |char_a, char_b| {
+                        if (char_a == char_b) {
+                            continue;
+                        } else {
+                            break :blk char_a < char_b;
+                        }
+                    }
+                    break :blk false;
+                };
+            }
+
+            pub fn swap(ctx: @This(), a: usize, b: usize) void {
+                return std.mem.swap(*const AnyTensor, &ctx.values[a], &ctx.values[b]);
+            }
+        };
+        std.mem.sortUnstableContext(0, params.len, SortContext{ .values = &params });
+
+        var active: ?*const AnyTensor = null;
+        var deduped_params: [params.len]*const AnyTensor = undefined;
+        i = 0;
+        for (params) |param| {
+            if (active) |act| {
+                if (!std.mem.eql(u8, act.meta.label.?, param.meta.label.?)) {
+                    active = param;
+                    deduped_params[i] = param;
+                    i += 1;
+                } else {
+                    continue;
+                }
+            } else {
+                active = param;
+                deduped_params[i] = param;
+                i += 1;
+            }
+        }
+        break :blk .{ deduped_params, i };
+    };
+
+    return params[0..len];
+}
+
+pub fn ComptimeLinkedList(comptime T: type) type {
+    return struct {
+        const Self = @This();
+        const Node = struct {
+            data: T,
+            next: ?*const Node,
+        };
+
+        head: Node = .{
+            .data = undefined,
+            .next = null,
+        },
+        len: usize = 0,
+
+        pub fn init(data: T) Self {
+            return (Self{}).appendLeft(data);
+        }
+
+        pub fn appendLeft(self: Self, data: T) Self {
+            return .{
+                .head = .{
+                    .data = data,
+                    .next = &self.head,
+                },
+                .len = self.len + 1,
+            };
+        }
+
+        pub fn popLeft(self: Self) ?std.meta.Tuple(&.{ T, Self }) {
+            if (self.head.next) |next| {
+                return .{
+                    self.head.data,
+                    .{
+                        .head = next.*,
+                        .len = self.len - 1,
+                    },
+                };
+            } else {
+                return null;
+            }
+        }
+
+        pub fn format(
+            self: Self,
+            comptime _: []const u8,
+            _: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            if (self.head) |head| {
+                var node: ?*const Node = &head;
+                while (node) |curr| {
+                    try std.fmt.format(writer, "{x}->", .{@intFromPtr(curr)});
+                    node = curr.next;
+                }
+                try std.fmt.format(writer, "null", .{});
+            }
+        }
+    };
+}
