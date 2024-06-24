@@ -12,5 +12,5 @@ pub const Metadata = struct {
     grad_fn: *const anyopaque = autograd.noGrad,
     constant: bool,
     label: ?[]const u8,
-    requires_grad: bool,
+    requires_grad: bool = false,
 };

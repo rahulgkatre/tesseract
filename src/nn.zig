@@ -38,14 +38,19 @@ pub const LazyModule = struct {
     }
 };
 
-pub const ReLU = struct {
-    const Self = @This();
-    pub usingnamespace Module.IFace(Self, struct {
-        pub fn forward(_: Self, comptime x: anytype) TensorTypeOf(x) {
-            return asTensor(x).relu();
-        }
-    });
-};
+fn Function(comptime func: anytype) type {
+    return struct {
+        const Self = @This();
+        pub usingnamespace Module.IFace(Self, struct {
+            pub fn forward(_: Self, comptime x: anytype) @TypeOf(comptime func(x)) {
+                return func(x);
+            }
+        });
+    };
+}
+
+pub const ReLU = Function(F.relu);
+pub const Sigmoid = Function(F.sigmoid);
 
 pub fn LazyLinear(out: u64, dtype: dtypes.DType, comptime label: []const u8) type {
     return struct {

@@ -2,6 +2,7 @@ const nn = @import("nn.zig");
 const std = @import("std");
 const dtypes = @import("dtypes.zig");
 const tensor = @import("tensor.zig");
+const F = @import("functions.zig");
 
 // pub fn LayerNorm(comptime start_dim: u8) type {
 //     return struct {
@@ -28,18 +29,13 @@ pub fn MultiHeadAttention(dtype: dtypes.DType, d_model: comptime_int, num_heads:
         w_o: nn.Linear(d_model, d_model, dtype, "w_o"),
 
         pub fn scaledDotProductAttention(self: Self, q: anytype, k: anytype, v: anytype, mask: anytype) void {
-            const tq = tensor.asTensor(q);
-            const tk = tensor.asTensor(q);
-            const tv = tensor.asTensor(q);
-
-            const attn_scores = tq.matmul(tk.T()).div(@sqrt(dk));
+            const attn_scores = F.matmul(q, F.T(k)).div(@sqrt(@floatFromInt(dk)));
             if (mask != null) {
                 @compileError("Not implemented yet");
-                
             }
 
             const attn_probs = attn_scores.softmax(-1);
-            return attn_probs.matmul(tv);
+            return attn_probs.matmul(v);
         }
         
         pub usingnamespace nn.Module.IFace(Self, struct {

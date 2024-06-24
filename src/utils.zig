@@ -391,3 +391,11 @@ pub fn ComptimeLinkedList(comptime T: type) type {
         }
     };
 }
+
+pub fn gcd(a: u64, b: u64) u64 {
+    if (b == 0) {
+        return a;
+    } else {
+        return gcd(b, @mod(a, b));
+    }
+}
