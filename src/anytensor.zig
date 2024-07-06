@@ -38,6 +38,10 @@ pub const AnyTensor = extern struct {
         return @ptrCast(self);
     }
 
+    pub fn getLabel(self: *const AnyTensor) ?[]const u8 {
+        return self.meta.label;
+    }
+
     pub const Json = struct {
         ptr: usize,
         dtype: dtypes.DType,

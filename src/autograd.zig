@@ -13,47 +13,58 @@ const BoolTensor = dtypes.BoolTensor;
 const FloatTensor = dtypes.FloatTensor;
 const F = @import("functions.zig");
 
+pub fn noBackward(ctx: BackwardContext, _: anytype) BackwardContext {
+    return ctx;
+}
+
+pub const BackwardFn = *const fn (anytype, BackwardContext) BackwardContext;
+
+pub const BackwardContext = struct {
+    grads: []const *const AnyTensor,
+    label2idx: *const std.StaticStringMap(usize),
+
+    pub fn init(params: []const *const AnyTensor) BackwardContext {
+        var zero_grads: [params.len]*const AnyTensor = undefined;
+        var grad_labels_index: [params.len]std.meta.Tuple(&.{ []const u8, usize }) = undefined;
+        for (params, 0..) |p, i| {
+            const grad_label = "grad_" ++ p.getLabel().?;
+            zero_grads[i] = asTensor(0.0).setLabel(grad_label).toAnyTensor();
+            grad_labels_index[i] = .{ grad_label, i };
+        }
+
+        return .{
+            .grads = &zero_grads,
+            .label2idx = &std.StaticStringMap(usize).initComptime(grad_labels_index),
+        };
+    }
+
+    pub fn backwardStep(ctx: BackwardContext, x: anytype, grad: anytype) BackwardContext {
+        if (x.meta.constant) {
+            return ctx;
+        }
+        const gradFn: BackwardFn = @ptrCast(x.meta.backward_fn);
+        return @call(.auto, gradFn, .{ ctx, grad });
+    }
+
+    pub fn accumulateGrad(ctx: BackwardContext, incoming_grad: anytype, label: []const u8) BackwardContext {
+        var new_grads = ctx.grads[0..ctx.grads.len].*;
+        const idx: usize = ctx.label2idx.get("grad_" ++ label).?;
+        new_grads[idx] = F.add(ctx.grads[idx], incoming_grad).setLabel(ctx.grads[idx].getLabel().?).toAnyTensor();
+        return .{
+            .grads = &new_grads,
+            .label2idx = ctx.label2idx,
+        };
+    }
+};
+
 pub fn backwards(x: anytype) []const *const AnyTensor {
     const initial_grad = tensor.asTensor(1.0);
     const params = utils.paramsOf(x);
-
-    var zero_grads: [params.len]*const AnyTensor = undefined;
-    for (params, 0..) |p, i| {
-        zero_grads[i] = asTensor(0.0).setLabel("grad_" ++ p.meta.label.?).toAnyTensor();
-    }
-
-    return backpropStep(x, initial_grad, &zero_grads);
+    const ctx = BackwardContext.init(params);
+    return ctx.backwardStep(x, initial_grad).grads;
 }
 
-pub fn backpropStep(x: anytype, grad: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
-    const gradFn: *const fn (anytype, []const *const AnyTensor) []const *const AnyTensor = @ptrCast(x.meta.grad_fn);
-    return gradFn(grad, param_grads);
-}
-
-pub fn noGrad(_: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
-    return param_grads;
-}
-
-pub fn accumulateGrad(label: []const u8, grad: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
-    const param_i: usize = blk: {
-        for (param_grads, 0..) |p, i| {
-            if (p.meta.label) |param_label| {
-                if (std.mem.eql(u8, param_label, "grad_" ++ label)) {
-                    break :blk i;
-                }
-            } else {
-                @compileLog(p.meta);
-                unreachable;
-            }
-        }
-        unreachable;
-    };
-    var updated_params: [param_grads.len]*const AnyTensor = param_grads[0..param_grads.len].*;
-    updated_params[param_i] = F.add(param_grads[param_i].toTensor(), grad).setLabel(param_grads[param_i].meta.label.?).toAnyTensor();
-    return &updated_params;
-}
-
-pub fn unaryGrad(op: ops.UnaryOp, a: anytype, grad: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
+pub fn unaryBackward(ctx: BackwardContext, incoming_grad: anytype, op: ops.UnaryOp, a: anytype) BackwardContext {
     const grad_a = blk: {
         const local_grad = switch (op) {
             .exp2 => F.exp2(a).mul(F.LN_2),
@@ -63,23 +74,24 @@ pub fn unaryGrad(op: ops.UnaryOp, a: anytype, grad: anytype, param_grads: []cons
             .sqrt => F.div(0.5, F.sqrt(a)),
             .sin => F.add(a, F.div(asTensor(3.14159, 2))).sin(),
         };
-        break :blk local_grad.mul(grad).setLabel("grad" ++ (if (a.meta.label) |label| ("_" ++ label) else ""));
+        break :blk local_grad.mul(incoming_grad).setLabel("grad" ++ (if (a.meta.label) |label| ("_" ++ label) else ""));
     };
-
-    return backpropStep(a, grad_a, param_grads);
+    return ctx.backwardStep(a, grad_a);
 }
 
-pub fn binaryGrad(op: ops.BinaryOp, a: anytype, b: anytype, grad: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
+pub fn binaryBackward(ctx: BackwardContext, incoming_grad: anytype, op: ops.BinaryOp, a: anytype, b: anytype) BackwardContext {
     const grad_a, const grad_b = switch (op) {
-        .add => .{ grad, grad },
+        .add => .{ incoming_grad, incoming_grad },
         .mul => .{
-            F.mul(b, grad).setLabel("grad" ++ (if (a.meta.label) |label| ("_" ++ label) else "")),
-            F.mul(a, grad).setLabel("grad" ++ (if (b.meta.label) |label| ("_" ++ label) else "")),
+            F.mul(b, incoming_grad).setLabel("grad" ++ (if (a.meta.label) |label| ("_" ++ label) else "")),
+            F.mul(a, incoming_grad).setLabel("grad" ++ (if (b.meta.label) |label| ("_" ++ label) else "")),
         },
         else => unreachable,
     };
 
-    return backpropStep(b, grad_b, backpropStep(a, grad_a, param_grads));
+    const ctx_a = ctx.backwardStep(a, grad_a);
+    const ctx_b = ctx_a.backwardStep(b, grad_b);
+    return ctx_b;
 }
 
 test "example" {
@@ -107,7 +119,7 @@ test "example" {
     try debug.dataflowViz(.{f.toAnyTensor()} ++ df, debug.debug_writer, arena1.allocator());
 }
 
-test binaryGrad {
+test binaryBackward {
     // const xt, const dx = comptime blk: {
     //     const a = tensor.Tensor(f32).input("a");
     //     const v0 = tensor.Tensor(f32).input("v0");

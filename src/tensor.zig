@@ -138,6 +138,10 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return self.strides[signedToUnsignedDim(d)];
         }
 
+        pub fn getLabel(self: Self) ?[]const u8 {
+            return self.meta.label;
+        }
+
         pub fn setLabel(self: Self, label: ?[]const u8) Self {
             const new_meta = blk: {
                 var metadata = self.meta.*;
@@ -148,17 +152,14 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         }
 
         pub fn requiresGrad(self: Self, label: ?[]const u8) Self {
-            const new_meta = blk: {
-                var metadata = self.meta.*;
-                metadata.label = label;
-                metadata.requires_grad = true;
-                metadata.grad_fn = struct {
-                    pub fn gradFnImpl(grad: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
-                        return autograd.accumulateGrad(label, grad, param_grads);
-                    }
-                }.gradFnImpl;
-                break :blk metadata;
-            };
+            var new_meta = self.meta.*;
+            new_meta.label = label;
+            new_meta.requires_grad = true;
+            new_meta.backward_fn = struct {
+                pub fn gradFnImpl(ctx: autograd.BackwardContext, grad: anytype) autograd.BackwardContext {
+                    return ctx.accumulateGrad(grad, label);
+                }
+            }.gradFnImpl;
             return .{ .meta = &new_meta };
         }
 
@@ -180,7 +181,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     .instr = instr,
                     .constant = false,
                     .label = null,
-                    .grad_fn = autograd.noGrad,
+                    .backward_fn = autograd.noBackward,
                 },
             };
         }
@@ -200,7 +201,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     .instr = instr,
                     .constant = true,
                     .label = null,
-                    .grad_fn = autograd.noGrad,
+                    .backward_fn = autograd.noBackward,
                 },
             }).setLabel("const_" ++ instr.InitOp.args.full[0..@min(instr.InitOp.args.full.len, 6)]);
         }
@@ -218,7 +219,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                             .args = .{ .input = {} },
                         },
                     },
-                    .grad_fn = autograd.noGrad,
+                    .backward_fn = autograd.noBackward,
                     .constant = false,
                     .label = label,
                 },
@@ -241,9 +242,9 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     .constant = false,
                     .label = label,
                     .requires_grad = true,
-                    .grad_fn = struct {
-                        pub fn gradFnImpl(grad: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
-                            return autograd.accumulateGrad(label, grad, param_grads);
+                    .backward_fn = struct {
+                        pub fn gradFnImpl(ctx: autograd.BackwardContext, grad: anytype) autograd.BackwardContext {
+                            return ctx.accumulateGrad(grad, label);
                         }
                     }.gradFnImpl,
                 },
@@ -253,7 +254,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// Fill a tensor with random generated numbers
         /// By default, random tensors will be constant folded in codegen
         /// unless they are marked as requires_grad
-        /// Do not use this for random initialization of param_grads!
+        /// Do not use this for random initialization of ctx!
         /// Note that some device backends do not support this
         pub fn random(label: []const u8) Self {
             std.debug.assert(dtypes.isFloat(dtype));
@@ -287,7 +288,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                                 .args = .{ .cast = new_dtype },
                             },
                         },
-                        .grad_fn = autograd.noGrad,
+                        .backward_fn = autograd.noBackward,
                         .constant = self.meta.constant,
                         .label = self.meta.label,
                     },
@@ -357,7 +358,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                             },
                         },
                     },
-                    .grad_fn = autograd.noGrad,
+                    .backward_fn = autograd.noBackward,
                     .constant = false,
                     .label = self.meta.label,
                 },
@@ -402,7 +403,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     },
                     .constant = self.meta.constant,
                     .label = self.meta.label,
-                    .grad_fn = autograd.noGrad,
+                    .backward_fn = autograd.noBackward,
                 },
                 .strides = &new_strides,
                 .offset = new_offset,
@@ -444,9 +445,9 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     },
                     .constant = self.meta.constant,
                     .label = self.meta.label,
-                    .grad_fn = struct {
-                        pub fn gradFnImpl(grad_out: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
-                            return autograd.unaryGrad(op, self, grad_out, param_grads);
+                    .backward_fn = struct {
+                        pub fn gradFnImpl(ctx: autograd.BackwardContext, incoming_grad: anytype) autograd.BackwardContext {
+                            return autograd.unaryGrad(ctx, incoming_grad, op, self);
                         }
                     }.gradFnImpl,
                 },
@@ -479,9 +480,9 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                             .op = op,
                         },
                     },
-                    .grad_fn = struct {
-                        pub fn gradFnImpl(grad_out: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
-                            return autograd.binaryGrad(op, a, b, grad_out, param_grads);
+                    .backward_fn = struct {
+                        pub fn gradFnImpl(ctx: autograd.BackwardContext, incoming_grad: anytype) autograd.BackwardContext {
+                            return autograd.binaryGrad(ctx, incoming_grad, op, a, b);
                         }
                     }.gradFnImpl,
                     .constant = a.meta.constant and b.meta.constant,
@@ -567,7 +568,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     },
                     .constant = false,
                     .label = self.meta.label,
-                    .grad_fn = autograd.noGrad,
+                    .backward_fn = autograd.noBackward,
                 },
             };
         }
