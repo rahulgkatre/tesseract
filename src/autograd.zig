@@ -42,7 +42,7 @@ pub const BackwardContext = struct {
         if (x.meta.constant) {
             return ctx;
         }
-        const gradFn: BackwardFn = @ptrCast(x.meta.backward_fn);
+        const gradFn: BackwardFn = @ptrCast(x.meta.reverse_ad_fn);
         return @call(.auto, gradFn, .{ ctx, grad });
     }
 
