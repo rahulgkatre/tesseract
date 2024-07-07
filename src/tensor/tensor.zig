@@ -1,69 +1,18 @@
 const std = @import("std");
 const AnyTensor = @import("anytensor.zig").AnyTensor;
-const utils = @import("utils.zig");
-const ops = @import("ops.zig");
-const dtypes = @import("dtypes.zig");
-const graph = @import("graph.zig");
-const autograd = @import("autograd.zig");
-const meta = @import("meta.zig");
 const F = @import("functions.zig");
+const meta = @import("meta.zig");
+const tensor_typing = @import("tensor_typing.zig");
 
-// =============================================================================
-// Type level utilities specifically for Tensor types
-// Equivalents for @as, @TypeOf, @Type
-// =============================================================================
+const utils = @import("../utils.zig");
+const ops = @import("../ops.zig");
+const dtypes = @import("../dtypes.zig");
+const graph = @import("../graph.zig");
+const autograd = @import("../autograd.zig");
 
-/// Like @TypeOf but any must either be a scalar (to construct a scalar Tensor)
-/// or a tensor (to reconstruct the Tensor from its dtype shape and ndims)
-pub fn TensorTypeOf(any: anytype) type {
-    var Type = @TypeOf(any);
-    switch (@typeInfo(Type)) {
-        .Pointer => |info| Type = info.child,
-        else => {},
-    }
-    switch (@typeInfo(Type)) {
-        .Struct => {},
-        .Int,
-        .Float,
-        .Bool,
-        .ComptimeInt,
-        .ComptimeFloat,
-        => return Tensor(Type),
-        else => @compileError(std.fmt.comptimePrint("Cannot convert {any} to a tensor type", .{Type})),
-    }
-    return TensorType(any.dtype, any.shape[0..any.ndims]);
+test Tensor {
+    _ = @import("tensor_testing.zig");
 }
-
-/// Like @as but for casting to matching Tensor type
-/// Used for wrapping immediate values in single size tensors with the same dtype as the current tensor
-/// Will cause a compile error if any is not a Tensor or a scalar number.
-pub fn asTensor(comptime any: anytype) TensorTypeOf(any) {
-    return switch (@typeInfo(@TypeOf(any))) {
-        .Pointer => |info| (if (info.child == AnyTensor) @as(*const AnyTensor, any).toTensor() else any).*,
-        .Struct => if (@TypeOf(any) == AnyTensor) @as(AnyTensor, any).toTensor().* else any,
-        .Int, .Float, .Bool, .ComptimeInt, .ComptimeFloat => TensorTypeOf(any).full(any),
-        else => unreachable,
-    };
-}
-
-/// Like @Type but for constructing a Tensor type from its "type info"
-/// Given dtype and shape, recreate the array type and return the corresponing Tensor type
-pub fn TensorType(dtype: dtypes.DType, shape: anytype) type {
-    var ArrayType = dtypes.ZigType(dtype);
-    for (0..shape.len) |dim| {
-        ArrayType = [shape[shape.len - dim - 1]]ArrayType;
-    }
-    return Tensor(ArrayType);
-}
-
-pub fn TensorTuple(comptime tensors: anytype) type {
-    var types: [tensors.len]type = undefined;
-    for (tensors, 0..) |in, i| {
-        types[i] = TensorTypeOf(in);
-    }
-    return std.meta.Tuple(&types);
-}
-
 pub fn Tensor(comptime TensorArrayType: type) type {
     return extern struct {
         const Self = @This();
@@ -94,6 +43,36 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                 Child = [shape[ndims - dim - 1]]Child;
             }
             return Child;
+        }
+
+        pub fn DimsEnumType(maybe_dim_names: ?[]const ?[]const u8) type {
+            var dim_enum_fields: [ndims]std.builtin.Type.EnumField = undefined;
+            var enum_idx: usize = 0;
+            if (maybe_dim_names) |dim_names| {
+                for (dim_names, 0..) |maybe_name, dim_idx| {
+                    if (maybe_name) |name| {
+                        dim_enum_fields[enum_idx] = std.builtin.Type.EnumField{ .name = name[0.. :0], .value = dim_idx };
+                        enum_idx += 1;
+                    }
+                }
+                return @Type(std.builtin.Type{ .Enum = .{ .fields = dim_enum_fields[0..enum_idx], .is_exhaustive = false, .tag_type = u8, .decls = &.{} } });
+            } else {
+                return void;
+            }
+        }
+
+        pub fn setDimNames(self: Self, comptime dim_names: std.meta.Tuple(&[_]type{?[]const u8} ** ndims)) Self {
+            var new_meta = self.meta.*;
+            new_meta.dim_names = &dim_names;
+            return .{
+                .meta = &new_meta,
+                .strides = self.strides,
+                .offset = self.offset,
+            };
+        }
+
+        pub fn namedDim(comptime self: Self, dim: DimsEnumType(self.meta.dim_names)) u64 {
+            return @intFromEnum(dim);
         }
 
         /// Determine if the stride pattern of the tensor defines a fully contiguous section of memory at runtime
@@ -280,7 +259,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         //
 
         ///Cast an array of a datatype to another datatype
-        pub fn cast(comptime self: Self, comptime new_dtype: dtypes.DType) TensorType(new_dtype, shape) {
+        pub fn cast(comptime self: Self, comptime new_dtype: dtypes.DType) tensor_typing.TensorType(new_dtype, shape) {
             if (new_dtype != self.dtype) {
                 return .{
                     .meta = &.{
@@ -341,7 +320,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             for (0..padded_dims) |dim| {
                 new_shape[ndims - dim - 1] += padding_tuple[dim][0] + padding_tuple[dim][1];
             }
-            return TensorType(dtype, new_shape);
+            return tensor_typing.TensorType(dtype, new_shape);
         }
         pub fn pad(comptime self: Self, comptime padding: anytype, comptime mode: PadMode) Pad(padding) {
             return .{
@@ -369,7 +348,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         }
 
         pub fn View(comptime new_shape: anytype) type {
-            return TensorType(dtype, new_shape);
+            return tensor_typing.TensorType(dtype, new_shape);
         }
 
         /// Changes the shape and stride of the tensor to change how the underlying memory is accessed.
@@ -436,8 +415,15 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return out;
         }
 
+        pub fn UnaryOpResultType(comptime op: ops.UnaryOp) type {
+            return switch (op) {
+                .exp2, .log2, .recip, .sin, .sqrt => tensor_typing.FloatTensor(Self),
+                .neg => Self,
+            };
+        }
+
         ///Apply an elementwise unary operation
-        pub fn unaryFn(self: Self, comptime op: ops.UnaryOp) Self {
+        pub fn applyUnaryOp(self: Self, comptime op: ops.UnaryOp) UnaryOpResultType(op) {
             return .{
                 .meta = &.{
                     .instr = .{
@@ -459,19 +445,19 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             };
         }
 
-        pub fn BinaryFnResultType(comptime other: anytype, comptime op: ops.BinaryOp) type {
-            const Other = TensorTypeOf(other);
+        pub fn BinaryOpResultType(comptime other: anytype, comptime op: ops.BinaryOp) type {
+            const Other = tensor_typing.TensorTypeOf(other);
             const new_dtype: dtypes.DType = switch (op) {
                 .eq, .lt => .bool,
                 else => dtypes.resultDType(Self.dtype, Other.dtype),
             };
-            return TensorType(new_dtype, utils.broadcastShape(shape, Other.shape));
+            return tensor_typing.TensorType(new_dtype, utils.broadcastShape(shape, Other.shape));
         }
         /// Apply an elementwise binary operation on two arrays, with broadcasting
         /// a and b must have the same "dtype class" meaning both must be float, bool, or int
         /// though different sizes are allowed.
-        pub fn binaryFn(self: Self, other: anytype, comptime op: ops.BinaryOp) BinaryFnResultType(other, op) {
-            const Other = TensorTypeOf(other);
+        pub fn applyBinaryOp(self: Self, other: anytype, comptime op: ops.BinaryOp) BinaryOpResultType(other, op) {
+            const Other = tensor_typing.TensorTypeOf(other);
             const bc_shape = utils.broadcastShape(shape, Other.shape);
             const a = self.expand(bc_shape);
             const b = F.expand(other, bc_shape);
@@ -494,7 +480,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             };
         }
 
-        pub fn ReduceFnResultType(comptime reduce_dims: anytype) type {
+        pub fn ReduceOpResultType(comptime reduce_dims: anytype) type {
             const reduced_shape: [ndims]u64 = switch (@typeInfo(@TypeOf(reduce_dims))) {
                 .ComptimeInt, .Int => blk: {
                     const dim = signedToUnsignedDim(reduce_dims);
@@ -526,15 +512,15 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     break :blk reduced_shape;
                 },
             };
-            return TensorType(dtype, reduced_shape);
+            return tensor_typing.TensorType(dtype, reduced_shape);
         }
         /// Perform a reduction across 1 or more (or all) dimensions of a
         /// Dimensions to reduce can be passed as a int for 1 dim, tuple for multiple dims, or null/void for all dims
-        pub fn reduceFn(
+        pub fn applyReduceOp(
             self: Self,
             comptime op: ops.ReduceOp,
             comptime reduce_dims: anytype,
-        ) ReduceFnResultType(reduce_dims) {
+        ) ReduceOpResultType(reduce_dims) {
             // Use u16 here because []const u8 shows up as a string
             const reduce_dims_array: []const u8 = switch (@typeInfo(@TypeOf(reduce_dims))) {
                 .ComptimeInt, .Int => &[1]u8{signedToUnsignedDim(reduce_dims)},
@@ -577,12 +563,12 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         }
 
         pub fn Where(comptime true_value: anytype, comptime false_value: anytype) type {
-            const True = TensorTypeOf(true_value);
-            const False = TensorTypeOf(false_value);
+            const True = tensor_typing.TensorTypeOf(true_value);
+            const False = tensor_typing.TensorTypeOf(false_value);
             std.debug.assert(True.dtype == False.dtype);
             const bc_value_shape = utils.broadcastShape(True.shape, False.shape);
             const bc_result_shape = utils.broadcastShape(shape, bc_value_shape);
-            return TensorType(True.dtype, bc_result_shape);
+            return tensor_typing.TensorType(True.dtype, bc_result_shape);
         }
         /// Conditional elementwise operator
         /// out[i] = if (mask[i]) true_value[i] else false_value[i]
@@ -590,8 +576,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         pub fn where(mask: dtypes.BoolTensor(Self), true_value: anytype, false_value: anytype) where(true_value, false_value) {
             const Out = Where(true_value, false_value);
             const mask_expand = mask.expand(Out.shape);
-            const true_expand = asTensor(true_value).expand(Out.shape);
-            const false_expand = asTensor(false_value).expand(Out.shape);
+            const true_expand = tensor_typing.asTensor(true_value).expand(Out.shape);
+            const false_expand = tensor_typing.asTensor(false_value).expand(Out.shape);
             return .{
                 .meta = &.{
                     .instr = .{
@@ -610,70 +596,4 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return autograd.backwards(self);
         }
     };
-}
-
-test "view" {
-    // Based on example from https://pytorch.org/docs/stable/generated/torch.as_strided.html
-    const tensor1 = comptime TensorType(.i32, .{ 3, 3 }).full(0);
-    const tensor2 = comptime tensor1.view(.{ 2, 2 }, .{ 1, 2 }, 0);
-
-    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 2 }, tensor2.shape[0..tensor2.ndims]);
-    try std.testing.expectEqual(false, tensor2.isContiguous());
-
-    const test_indices = [_][2]u64{ .{ 0, 0 }, .{ 0, 1 }, .{ 1, 0 }, .{ 1, 1 } };
-    const expected_flat_indices1 = &[_]u64{ 0, 2, 1, 3 };
-    for (expected_flat_indices1, test_indices) |expected_flat_i, test_i| {
-        try std.testing.expectEqual(expected_flat_i, utils.ravelMultiIndex(tensor2.ndims, tensor2.strides[0..tensor2.ndims].*, tensor2.offset, test_i));
-    }
-
-    const tensor3 = comptime tensor1.view(.{ 2, 2 }, .{ 1, 2 }, 1);
-    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 2 }, tensor2.shape[0..tensor2.ndims]);
-    try std.testing.expectEqual(false, tensor2.isContiguous());
-
-    const expected_flat_indices2 = &[_]u64{ 1, 3, 2, 4 };
-    for (expected_flat_indices2, test_indices) |expected_flat_i, test_i| {
-        try std.testing.expectEqual(expected_flat_i, utils.ravelMultiIndex(tensor3.ndims, tensor3.strides[0..tensor3.ndims].*, tensor3.offset, test_i));
-    }
-}
-
-test "cast" {
-    const tensor1 = comptime TensorType(.bool, .{3}).full(true);
-    try std.testing.expect(tensor1.dtype == .bool);
-    const tensor2 = comptime tensor1.cast(.i32);
-    try std.testing.expect(tensor2.dtype == .i32);
-    const tensor3 = comptime tensor2.cast(.i8);
-    try std.testing.expect(tensor3.dtype == .i8);
-    const tensor4 = comptime tensor3.cast(.f16);
-    try std.testing.expect(tensor4.dtype == .f16);
-    const tensor5 = comptime tensor4.cast(.f32);
-    try std.testing.expect(tensor5.dtype == .f32);
-}
-
-test "ArrayType" {
-    const Tensor1 = TensorType(.i32, .{ 2, 3, 4 });
-    try std.testing.expectEqual(Tensor1.ArrayType(), [2][3][4]i32);
-}
-
-test "pad" {
-    // https://pytorch.org/docs/stable/generated/torch.nn.functional.pad.html
-    const t4d = comptime Tensor([3][3][4][2]f32).empty();
-    const p1d = comptime .{.{ 1, 1 }};
-    const out1 = comptime t4d.pad(p1d, .{ .constant = 0 });
-    try std.testing.expectEqualDeep(@TypeOf(out1).shape, .{ 3, 3, 4, 4 });
-
-    const p2d = comptime .{ .{ 1, 1 }, .{ 2, 2 } };
-    const out2 = comptime t4d.pad(p2d, .{ .constant = 0 });
-    try std.testing.expectEqualDeep(@TypeOf(out2).shape, .{ 3, 3, 8, 4 });
-
-    const p3d = comptime .{ .{ 0, 1 }, .{ 2, 1 }, .{ 3, 3 } };
-    const out3 = comptime t4d.pad(p3d, .{ .constant = 0 });
-    try std.testing.expectEqualDeep(@TypeOf(out3).shape, .{ 3, 9, 7, 3 });
-}
-
-test "input" {
-    const tensor1 = comptime Tensor([2][1][4]i32).input("tensor1");
-    const tensor1_1 = comptime Tensor([2][1][4]i32).input("tensor1");
-    const tensor2 = comptime Tensor([2][1][4]i32).input("tensor2");
-    try std.testing.expect(@intFromPtr(&tensor1) == @intFromPtr(&tensor1_1));
-    try std.testing.expect(@intFromPtr(&tensor1) != @intFromPtr(&tensor2));
 }

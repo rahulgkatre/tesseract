@@ -2,9 +2,9 @@ const std = @import("std");
 const comptimePrint = std.fmt.comptimePrint;
 const ops = @import("ops.zig");
 const dtypes = @import("dtypes.zig");
-const meta = @import("meta.zig");
-const AnyTensor = @import("anytensor.zig").AnyTensor;
 const utils = @import("utils.zig");
+
+const AnyTensor = @import("tensor/anytensor.zig").AnyTensor;
 
 pub const debug_writer = std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write){ .context = std.io.getStdOut() };
 

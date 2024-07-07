@@ -1,17 +1,19 @@
 const std = @import("std");
-const tensor = @import("tensor.zig");
+const tensor = @import("tensor/tensor.zig");
+const F = @import("tensor/functions.zig");
+const AnyTensor = @import("tensor/anytensor.zig").AnyTensor;
+
 const dtypes = @import("dtypes.zig");
 const ops = @import("ops.zig");
-const AnyTensor = @import("anytensor.zig").AnyTensor;
 const utils = @import("utils.zig");
 
-const asTensor = tensor.asTensor;
-const TensorTypeOf = tensor.TensorTypeOf;
-const TensorTuple = tensor.TensorTuple;
-const IntTensor = dtypes.IntTensor;
-const BoolTensor = dtypes.BoolTensor;
-const FloatTensor = dtypes.FloatTensor;
-const F = @import("functions.zig");
+const tensor_typing = @import("tensor/tensor_typing.zig");
+const asTensor = tensor_typing.asTensor;
+const TensorTypeOf = tensor_typing.TensorTypeOf;
+const TensorTuple = tensor_typing.TensorTuple;
+const IntTensor = tensor_typing.IntTensor;
+const BoolTensor = tensor_typing.BoolTensor;
+const FloatTensor = tensor_typing.FloatTensor;
 
 pub fn noBackward(ctx: BackwardContext, _: anytype) BackwardContext {
     return ctx;
@@ -58,7 +60,7 @@ pub const BackwardContext = struct {
 };
 
 pub fn backwards(x: anytype) []const *const AnyTensor {
-    const initial_grad = tensor.asTensor(1.0);
+    const initial_grad = tensor_typing.asTensor(1.0);
     const params = utils.paramsOf(x);
     const ctx = BackwardContext.init(params);
     return ctx.backwardStep(x, initial_grad).grads;

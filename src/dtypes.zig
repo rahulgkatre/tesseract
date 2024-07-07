@@ -1,10 +1,6 @@
 const std = @import("std");
-const tensor = @import("tensor.zig");
 const utils = @import("utils.zig");
-const AnyTensor = @import("anytensor.zig").AnyTensor;
-
-const typing = @import("tensor.zig");
-const TensorType = tensor.TensorType;
+const tensor = @import("tensor/tensor.zig");
 
 // For dtypes without a corresponding zig type, they are represented
 // as packed structs
@@ -161,29 +157,4 @@ pub fn resultDType(dtype1: DType, dtype2: DType) DType {
     }
 
     @compileError("Cannot combine " ++ utils.rawTagName(dtype1) ++ " and " ++ utils.rawTagName(dtype2));
-}
-
-/// Utility function to enforce that T must be float-like
-pub fn FloatTensor(comptime T: type) type {
-    if (isFloat(T.dtype)) {
-        return T;
-    }
-    return TensorType(default_float, T.shape);
-}
-
-/// Utility function to enforce that T must be bool-like
-pub fn BoolTensor(comptime T: type) type {
-    const Tensor = tensor.TensorType(.bool, T.shape);
-    if (!isBool(T.dtype)) {
-        @compileError("Must be bool datatype");
-    }
-    return Tensor;
-}
-
-/// Utility function to enforce that T must be int-like
-pub fn IntTensor(comptime T: type) type {
-    if (!isInt(T.dtype)) {
-        @compileError("Must cast to int datatype first");
-    }
-    return tensor.TensorType(default_int, T.shape);
 }
