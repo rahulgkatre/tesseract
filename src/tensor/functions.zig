@@ -1,18 +1,16 @@
 const std = @import("std");
 const Tensor = @import("tensor.zig").Tensor;
 
-const utils = @import("utils.zig");
-const dtypes = @import("dtypes.zig");
-const meta = @import("meta.zig");
-const IntTensor = dtypes.IntTensor;
-const BoolTensor = dtypes.BoolTensor;
-const FloatTensor = dtypes.FloatTensor;
+const ops = @import("../ops.zig");
+const utils = @import("../utils.zig");
+const dtypes = @import("../dtypes.zig");
 
 const tensor = @import("tensor.zig");
-const TensorType = tensor.TensorType;
-const TensorTypeOf = tensor.TensorTypeOf;
-const asTensor = tensor.asTensor;
-const isTensor = tensor.isTensorType;
+
+const tensor_typing = @import("tensor_typing.zig");
+const TensorType = tensor_typing.TensorType;
+const TensorTypeOf = tensor_typing.TensorTypeOf;
+const asTensor = tensor_typing.asTensor;
 
 pub const INV_LN_2 = asTensor(1.4426950408888495760773985077695);
 pub const LN_2 = INV_LN_2.recip();
@@ -48,26 +46,36 @@ pub fn fullLike(comptime input: anytype, value: dtypes.ZigType(input.dtype)) Ten
 // Unary functions
 // =============================================================================
 
-pub fn exp2(input: anytype) FloatTensor(TensorTypeOf(input)) {
-    return asTensor(input).unaryFn(.exp2);
-}
-pub fn log2(input: anytype) FloatTensor(TensorTypeOf(input)) {
-    return asTensor(input).unaryFn(.log2);
-}
-pub fn neg(input: anytype) TensorTypeOf(input) {
-    return asTensor(input).unaryFn(.neg);
-}
-pub fn recip(input: anytype) FloatTensor(TensorTypeOf(input)) {
-    return asTensor(input).unaryFn(.recip);
-}
-pub fn sin(input: anytype) FloatTensor(TensorTypeOf(input)) {
-    return asTensor(input).unaryFn(.sin);
-}
-pub fn sqrt(input: anytype) FloatTensor(TensorTypeOf(input)) {
-    return asTensor(input).unaryFn(.sqrt);
+fn UnaryFnType(comptime op: ops.UnaryOp) type {
+    return @TypeOf(struct {
+        pub fn func(input: anytype) TensorTypeOf(input).UnaryOpResultType(op) {
+            return asTensor(input).applyUnaryOp(op);
+        }
+    }.func);
 }
 
-test "unary" {
+fn unaryFn(comptime op: ops.UnaryOp) UnaryFnType(op) {
+    return struct {
+        pub fn func(input: anytype) TensorTypeOf(input).UnaryOpResultType(op) {
+            return asTensor(input).applyUnaryOp(op);
+        }
+    }.func;
+}
+
+pub const exp2 = unaryFn(.exp2);
+pub const log2 = unaryFn(.log2);
+pub const neg = unaryFn(.neg);
+pub const recip = unaryFn(.recip);
+pub const sin = unaryFn(.sin);
+pub const sqrt = unaryFn(.sqrt);
+
+test unaryFn {
+    _ = exp2;
+    _ = log2;
+    _ = neg;
+    _ = recip;
+    _ = sin;
+    _ = sqrt;
     const tensor1 = comptime Tensor([2][3][4]i32).full(3);
     const tensor2 = comptime tensor1.neg();
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor2.shape[0..tensor2.ndims]);
@@ -79,29 +87,38 @@ test "unary" {
 // Binary functions
 // =============================================================================
 
-pub fn add(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .add) {
-    return asTensor(input).binaryFn(other, .add);
-}
-pub fn mul(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .mul) {
-    return asTensor(input).binaryFn(other, .mul);
-}
-pub fn maximum(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .max) {
-    return asTensor(input).binaryFn(other, .max);
-}
-pub fn mod(input: anytype, other: anytype) IntTensor(TensorTypeOf(input)).BinaryFnResultType(other, .mod) {
-    return asTensor(input).binaryFn(other, .mod);
-}
-pub fn lessThan(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .lt) {
-    return asTensor(input).binaryFn(other, .lt);
-}
-pub fn eq(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .eq) {
-    return asTensor(input).binaryFn(other, .eq);
-}
-pub fn xor(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .xor) {
-    return asTensor(input).binaryFn(other, .xor);
+fn BinaryFnType(comptime op: ops.BinaryOp) type {
+    return @TypeOf(struct {
+        pub fn func(input: anytype, other: anytype) TensorTypeOf(input).BinaryOpResultType(other, op) {
+            return asTensor(input).applyBinaryOp(other, op);
+        }
+    }.func);
 }
 
-test "binary" {
+fn binaryFn(comptime op: ops.BinaryOp) BinaryFnType(op) {
+    return struct {
+        pub fn func(input: anytype, other: anytype) TensorTypeOf(input).BinaryOpResultType(other, op) {
+            return asTensor(input).applyBinaryOp(other, op);
+        }
+    }.func;
+}
+
+pub const add = binaryFn(.add);
+pub const mul = binaryFn(.mul);
+pub const maximum = binaryFn(.max);
+pub const mod = binaryFn(.mod);
+pub const lessThan = binaryFn(.lt);
+pub const equals = binaryFn(.eq);
+pub const xor = binaryFn(.xor);
+
+test binaryFn {
+    _ = add;
+    _ = mul;
+    _ = maximum;
+    _ = mod;
+    _ = lessThan;
+    _ = equals;
+    _ = xor;
     const tensor1 = comptime Tensor([2][1][4]i32).full(2);
     const tensor2 = comptime Tensor([3][1]i32).full(3);
     const tensor3 = comptime tensor1.add(tensor2);
@@ -115,29 +132,43 @@ test "binary" {
 // Reduce functions
 // =============================================================================
 
-pub fn sum(input: anytype, comptime dims: anytype) TensorTypeOf(input).ReduceFnResultType(dims) {
-    return asTensor(input).reduceFn(.add, dims);
-}
-pub fn max(input: anytype, comptime dims: anytype) TensorTypeOf(input).ReduceFnResultType(dims) {
-    return asTensor(input).reduceFn(.max, dims);
+fn ReduceFnType(comptime op: ops.ReduceOp) type {
+    return @TypeOf(struct {
+        pub fn func(input: anytype, comptime dims: anytype) TensorTypeOf(input).ReduceOpResultType(dims) {
+            return asTensor(input).applyReduceOp(op, dims);
+        }
+    }.func);
 }
 
-test "reduce" {
+fn reduceFn(comptime op: ops.ReduceOp) ReduceFnType(op) {
+    return struct {
+        pub fn func(input: anytype, comptime dims: anytype) TensorTypeOf(input).ReduceOpResultType(dims) {
+            return asTensor(input).applyReduceOp(op, dims);
+        }
+    }.func;
+}
+
+pub const sum = reduceFn(.add);
+pub const prod = reduceFn(.mul);
+pub const max = reduceFn(.max);
+
+test reduceFn {
+    _ = sum;
+    _ = prod;
+    _ = max;
     const tensor1 = comptime Tensor([2][3][4]i32).full(5);
+
     const tensor2 = comptime tensor1.sum(1);
     try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 1, 4 }, tensor2.shape[0..tensor1.ndims]);
     try std.testing.expect(tensor2.meta.instr.ReduceOp.op == .add);
     try std.testing.expectEqual(tensor2.meta.instr.ReduceOp.in[0].toTensor().*, tensor1);
     try std.testing.expectEqual(tensor2.meta.instr.ReduceOp.args.mask[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
-}
 
-test "multiple dim reduce" {
-    const tensor1 = comptime Tensor([2][3][4]i32).full(5);
-    const tensor2 = comptime tensor1.sum(.{ 0, 1 });
-    try std.testing.expectEqualSlices(u64, &[_]u64{ 1, 1, 4 }, tensor2.shape[0..tensor2.ndims]);
-    try std.testing.expect(tensor2.meta.instr.ReduceOp.op == .add);
-    try std.testing.expectEqual(tensor2.meta.instr.ReduceOp.in[0].toTensor().*, tensor1);
-    try std.testing.expectEqualDeep(tensor2.meta.instr.ReduceOp.args.mask[0..tensor2.ndims], &[_]bool{ true, true, false });
+    const tensor3 = comptime tensor1.sum(.{ 0, 1 });
+    try std.testing.expectEqualSlices(u64, &[_]u64{ 1, 1, 4 }, tensor3.shape[0..tensor3.ndims]);
+    try std.testing.expect(tensor3.meta.instr.ReduceOp.op == .add);
+    try std.testing.expectEqual(tensor3.meta.instr.ReduceOp.in[0].toTensor().*, tensor1);
+    try std.testing.expectEqualDeep(tensor3.meta.instr.ReduceOp.args.mask[0..tensor3.ndims], &[_]bool{ true, true, false });
 }
 
 // =============================================================================
@@ -345,21 +376,21 @@ pub fn unsqueeze(comptime input: anytype, comptime dim: i16) Unsqueeze(input, di
 // =============================================================================
 // Compound functions
 // =============================================================================
-pub fn div(input: anytype, other: anytype) FloatTensor(TensorTypeOf(input).BinaryFnResultType(other, .mul)) {
+pub fn div(input: anytype, other: anytype) tensor.FloatTensor(TensorTypeOf(input).BinaryFnResultType(other, .mul)) {
     return asTensor(input).mul(asTensor(other).recip());
 }
 pub fn sub(input: anytype, other: anytype) TensorTypeOf(input).BinaryFnResultType(other, .add) {
     return asTensor(input).add(asTensor(other).neg());
 }
-pub fn exp(input: anytype) FloatTensor(TensorTypeOf(input)) {
+pub fn exp(input: anytype) tensor.FloatTensor(TensorTypeOf(input)) {
     const x = asTensor(input);
     return x.mul(INV_LN_2).exp2();
 }
-pub fn log(input: anytype) FloatTensor(TensorTypeOf(input)) {
+pub fn log(input: anytype) tensor.FloatTensor(TensorTypeOf(input)) {
     const x = asTensor(input);
     return x.log2().mul(LN_2);
 }
-pub fn sigmoid(input: anytype) FloatTensor(TensorTypeOf(input)) {
+pub fn sigmoid(input: anytype) tensor.FloatTensor(TensorTypeOf(input)) {
     const x = asTensor(input);
     const x_pos = x.neg().exp().add(1.0).recip();
     const x_neg = x.exp().div(x.exp().add(1.0));
@@ -375,16 +406,16 @@ pub fn relu(input: anytype) TensorTypeOf(input) {
         unreachable;
     }
 }
-pub fn softmax(input: anytype, comptime dim: i16) FloatTensor(TensorTypeOf(input)) {
+pub fn softmax(input: anytype, comptime dim: i16) tensor.FloatTensor(TensorTypeOf(input)) {
     const x = asTensor(input);
     const minus_max_exp = x.sub(x.max({})).exp();
     const sumexp = minus_max_exp.sum(dim);
     return minus_max_exp.div(sumexp);
 }
-pub fn mean(input: anytype, comptime dims: anytype) FloatTensor(TensorTypeOf(input).ReduceFnResultType(dims)) {
+pub fn mean(input: anytype, comptime dims: anytype) tensor.FloatTensor(TensorTypeOf(input).ReduceFnResultType(dims)) {
     return input.div(input.sum(dims));
 }
-pub fn variance(input: anytype, comptime dims: anytype) FloatTensor(TensorTypeOf(input).ReduceFnResultType(dims)) {
+pub fn variance(input: anytype, comptime dims: anytype) tensor.FloatTensor(TensorTypeOf(input).ReduceFnResultType(dims)) {
     const x = asTensor(input);
     const mu = x.mean(dims);
     const N: f64 = @floatFromInt(@divExact(x.num_elements, mu.num_elements));

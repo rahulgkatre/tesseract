@@ -1,8 +1,9 @@
 const std = @import("std");
 const ops = @import("ops.zig");
 const dtypes = @import("dtypes.zig");
-const AnyTensor = @import("anytensor.zig").AnyTensor;
-const tensor = @import("tensor.zig");
+const AnyTensor = @import("tensor/anytensor.zig").AnyTensor;
+const tensor = @import("tensor/tensor.zig");
+const tensor_typing = @import("tensor/tensor_typing.zig");
 
 pub const ComputeNode = struct {
     // ComputeNode will wrap around AnyTensor, and there will be a hash map for *const AnyTensor -> ComputeNode
@@ -54,7 +55,7 @@ pub const Graph = struct {
     }
 
     pub fn trace(graph: *Graph, comptime out: anytype, printBytecode: bool) !void {
-        const out_any = comptime tensor.asTensor(out).toAnyTensor();
+        const out_any = comptime tensor_typing.asTensor(out).toAnyTensor();
         switch (comptime out_any.meta.instr) {
             inline else => |instr| inline for (instr.in) |in| {
                 const in_tensor = comptime @as(*const AnyTensor, in);
@@ -68,7 +69,7 @@ pub const Graph = struct {
             if (printBytecode) {
                 std.debug.print("{s: <32}  {:<24}@{x}  {any}\n", .{
                     out_any.meta.label orelse "",
-                    tensor.TensorTypeOf(out_any).ArrayType(),
+                    tensor_typing.TensorTypeOf(out_any).ArrayType(),
                     @intFromPtr(out_any),
                     out_any.meta.instr,
                 });

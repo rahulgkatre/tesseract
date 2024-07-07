@@ -1,15 +1,13 @@
 const std = @import("std");
-const tensor = @import("tensor.zig");
-const AnyTensor = @import("anytensor.zig").AnyTensor;
+const AnyTensor = @import("tensor/anytensor.zig").AnyTensor;
 const dtypes = @import("dtypes.zig");
-const meta = @import("meta.zig");
 
-const F = @import("functions.zig");
+const F = @import("tensor/functions.zig");
+const tensor = @import("tensor/tensor.zig");
+const tensor_typing = @import("tensor/tensor_typing.zig");
 
-const typing = @import("tensor.zig");
-const asTensor = tensor.asTensor;
-const isTensorType = tensor.isTensorType;
-const TensorTypeOf = tensor.TensorTypeOf;
+const asTensor = tensor_typing.asTensor;
+const TensorTypeOf = tensor_typing.TensorTypeOf;
 
 pub const Module = struct {
     fn is(comptime T: type) bool {

@@ -1,12 +1,12 @@
-const dtypes = @import("dtypes.zig");
+const std = @import("std");
+const dtypes = @import("../dtypes.zig");
+const utils = @import("../utils.zig");
+const graph = @import("../graph.zig");
+
 const meta = @import("meta.zig");
 const tensor = @import("tensor.zig");
-const utils = @import("utils.zig");
-const std = @import("std");
-
-const typing = @import("tensor.zig");
-const TensorTypeOf = tensor.TensorTypeOf;
-const graph = @import("graph.zig");
+const tensor_typing = @import("tensor_typing.zig");
+const TensorTypeOf = tensor_typing.TensorTypeOf;
 
 // AnyTensor and tensor need to have the exact same runtime layout for @ptrCast tricks to work
 comptime {
