@@ -96,6 +96,36 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return Child;
         }
 
+        pub fn DimsEnumType(self: Self) type {
+            var dim_enum_fields: [ndims]std.builtin.Type.EnumField = undefined;
+            var enum_idx: usize = 0;
+            if (self.meta.dim_names) |dim_names| {
+                for (dim_names, 0..) |maybe_name, dim_idx| {
+                    if (maybe_name) |name| {
+                        dim_enum_fields[enum_idx] = std.builtin.Type.EnumField{ .name = name[0.. :0], .value = dim_idx };
+                        enum_idx += 1;
+                    }
+                }
+                return @Type(std.builtin.Type{ .Enum = .{ .fields = dim_enum_fields[0..enum_idx], .is_exhaustive = false, .tag_type = u8, .decls = &.{} } });
+            } else {
+                return void;
+            }
+        }
+
+        pub fn setDimNames(self: Self, comptime dim_names: [ndims]?[]const u8) Self {
+            var new_meta = self.meta.*;
+            new_meta.dim_names = &dim_names;
+            return .{
+                .meta = &new_meta,
+                .strides = self.strides,
+                .offset = self.offset,
+            };
+        }
+
+        pub fn namedDimSize(comptime self: Self, dim: self.DimsEnumType()) u64 {
+            return self.shape[@intFromEnum(dim)];
+        }
+
         /// Determine if the stride pattern of the tensor defines a fully contiguous section of memory at runtime
         pub fn isContiguous(self: Self) bool {
             // Strides need to be decreasing unless its a broadcasted stride (0)
@@ -672,4 +702,9 @@ test "input" {
     const tensor2 = comptime Tensor([2][1][4]i32).input("tensor2");
     try std.testing.expect(@intFromPtr(&tensor1) == @intFromPtr(&tensor1_1));
     try std.testing.expect(@intFromPtr(&tensor1) != @intFromPtr(&tensor2));
+}
+
+test "named dims" {
+    const x = comptime Tensor([64][28][28]f32).empty().setDimNames(.{ "batch", "height", "width" });
+    @compileLog(comptime x.namedDimSize(.batch));
 }
