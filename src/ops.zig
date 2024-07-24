@@ -2,6 +2,7 @@ const AnyTensor = @import("anytensor.zig").AnyTensor;
 const std = @import("std");
 const utils = @import("utils.zig");
 const dtypes = @import("dtypes.zig");
+const symbolic = @import("symbolic.zig");
 
 // Arithmetic operations for unary functions, binary functions,
 // and reducing a dimension of a tensor to a single value by applying some binary function
@@ -109,8 +110,8 @@ pub const DataOp = enum {
     };
     pub const Args = union(DataOp) {
         pub const View = struct {
-            shape: []const u64,
-            strides: []const u64,
+            shape: []const symbolic.RuntimeExpr,
+            strides: []const symbolic.RuntimeExpr,
             offset: u64,
         };
         pub const Pad = struct {

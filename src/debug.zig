@@ -154,7 +154,7 @@ pub fn dataflowViz(entrypoints: anytype, writer: anytype, allocator: std.mem.All
                     .shape = out.shape[0..out.ndims],
                     .strides = out.strides[0..out.ndims],
                     .offset = out.offset,
-                    .fc = out.meta.constant,
+                    .fc = out.meta.is_constant,
                     .label = out.meta.label orelse "null",
                 });
             },

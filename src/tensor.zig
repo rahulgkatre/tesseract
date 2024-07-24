@@ -7,6 +7,7 @@ const graph = @import("graph.zig");
 const autograd = @import("autograd.zig");
 const meta = @import("meta.zig");
 const F = @import("functions.zig");
+const symbolic = @import("symbolic.zig");
 
 // =============================================================================
 // Type level utilities specifically for Tensor types
@@ -51,7 +52,10 @@ pub fn asTensor(comptime any: anytype) TensorTypeOf(any) {
 pub fn TensorType(dtype: dtypes.DType, shape: anytype) type {
     var ArrayType = dtypes.ZigType(dtype);
     for (0..shape.len) |dim| {
-        ArrayType = [shape[shape.len - dim - 1]]ArrayType;
+        ArrayType = switch (shape[shape.len - dim - 1]) {
+            .Const => |c| [c.value]ArrayType,
+            else => [*]ArrayType,
+        };
     }
     return Tensor(ArrayType);
 }
@@ -73,15 +77,30 @@ pub fn Tensor(comptime TensorArrayType: type) type {
 
         pub const dtype: dtypes.DType = utils.extractDType(TensorArrayType);
         pub const ndims: u8 = utils.extractNdims(TensorArrayType);
-        pub const shape: [ndims]u64 = utils.extractShape(TensorArrayType);
-        pub const contiguous_strides: [ndims]u64 = utils.contiguousStrides(&shape);
+        pub const shape: [ndims]symbolic.Expr = utils.extractShape(TensorArrayType);
+        pub const contiguous_strides: [ndims]symbolic.Expr = utils.contiguousStrides(&shape);
         pub const num_elements = utils.numElements(&shape);
+
+        const runtime_shape = blk: {
+            var runtime: [ndims]symbolic.RuntimeExpr = undefined;
+            for (&runtime, shape) |*rt, ct| {
+                rt.* = symbolic.RuntimeExpr.from(ct);
+            }
+            break :blk runtime;
+        };
+        const runtime_strides = blk: {
+            var runtime: [ndims]symbolic.RuntimeExpr = undefined;
+            for (&runtime, contiguous_strides) |*rt, ct| {
+                rt.* = symbolic.RuntimeExpr.from(ct);
+            }
+            break :blk runtime;
+        };
 
         meta: *const meta.Metadata,
         dtype: dtypes.DType = dtype,
         ndims: u8 = ndims,
-        shape: *const [ndims]u64 = &shape,
-        strides: *const [ndims]u64 = &contiguous_strides,
+        shape: *const [ndims]symbolic.RuntimeExpr = &runtime_shape,
+        strides: *const [ndims]symbolic.RuntimeExpr = &runtime_strides,
         offset: u64 = 0,
 
         pub fn toAnyTensor(comptime self: *const Self) *const AnyTensor {
@@ -178,7 +197,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return .{
                 .meta = &.{
                     .instr = instr,
-                    .constant = false,
+                    .is_constant = false,
                     .label = null,
                     .grad_fn = autograd.noGrad,
                 },
@@ -198,7 +217,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return (Self{
                 .meta = &.{
                     .instr = instr,
-                    .constant = true,
+                    .is_constant = true,
                     .label = null,
                     .grad_fn = autograd.noGrad,
                 },
@@ -219,8 +238,9 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                         },
                     },
                     .grad_fn = autograd.noGrad,
-                    .constant = false,
+                    .is_constant = false,
                     .label = label,
+                    .is_dynamic = symbolic.isSymbolic(&runtime_shape),
                 },
             };
         }
@@ -238,7 +258,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                             .args = .{ .param = {} },
                         },
                     },
-                    .constant = false,
+                    .is_constant = false,
+                    .is_dynamic = symbolic.isSymbolic(&runtime_shape),
                     .label = label,
                     .requires_grad = true,
                     .grad_fn = struct {
@@ -265,8 +286,9 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                             .args = .{ .random = {} },
                         },
                     },
-                    .constant = false,
+                    .is_constant = false,
                     .label = label,
+                    .is_dynamic = symbolic.isSymbolic(&runtime_shape),
                 },
             };
         }
@@ -288,8 +310,9 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                             },
                         },
                         .grad_fn = autograd.noGrad,
-                        .constant = self.meta.constant,
+                        .is_constant = self.meta.is_constant,
                         .label = self.meta.label,
+                        .is_dynamic = self.meta.is_dynamic,
                     },
                     .strides = self.strides,
                     .offset = self.offset,
@@ -311,13 +334,14 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                             .args = .{
                                 .contiguous = .{
                                     .shape = self.shape,
-                                    .strides = &contiguous_strides,
+                                    .strides = &runtime_strides,
                                     .offset = 0,
                                 },
                             },
                         },
                     },
-                    .constant = false,
+                    .is_constant = false,
+                    .is_dynamic = self.meta.is_dynamic,
                     .label = self.meta.label,
                 },
             };
@@ -358,7 +382,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                         },
                     },
                     .grad_fn = autograd.noGrad,
-                    .constant = false,
+                    .is_constant = false,
+                    .is_dynamic = self.meta.is_dynamic,
                     .label = self.meta.label,
                 },
             };
@@ -374,7 +399,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         pub fn view(
             comptime self: Self,
             comptime new_shape: anytype,
-            comptime new_strides: [new_shape.len]u64,
+            comptime new_strides: [new_shape.len]symbolic.Expr,
             comptime new_offset: u64,
         ) View(new_shape) {
             // It is possible to directly view the first tensor that is not the result of a view op
@@ -400,7 +425,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                             } },
                         },
                     },
-                    .constant = self.meta.constant,
+                    .is_constant = self.meta.is_constant,
+                    .is_dynamic = false,
                     .label = self.meta.label,
                     .grad_fn = autograd.noGrad,
                 },
@@ -442,7 +468,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                             .op = op,
                         },
                     },
-                    .constant = self.meta.constant,
+                    .is_constant = self.meta.is_constant,
                     .label = self.meta.label,
                     .grad_fn = struct {
                         pub fn gradFnImpl(grad_out: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
@@ -484,7 +510,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                             return autograd.binaryGrad(op, a, b, grad_out, param_grads);
                         }
                     }.gradFnImpl,
-                    .constant = a.meta.constant and b.meta.constant,
+                    .is_constant = a.meta.is_constant and b.meta.is_constant,
                     .label = null,
                 },
             };
@@ -565,7 +591,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                             },
                         },
                     },
-                    .constant = false,
+                    .is_constant = false,
                     .label = self.meta.label,
                     .grad_fn = autograd.noGrad,
                 },
@@ -596,7 +622,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                             .op = .where,
                         },
                     },
-                    .constant = false,
+                    .is_constant = false,
                     .label = null,
                 },
             };
@@ -654,15 +680,15 @@ test "pad" {
     // https://pytorch.org/docs/stable/generated/torch.nn.functional.pad.html
     const t4d = comptime Tensor([3][3][4][2]f32).empty();
     const p1d = comptime .{.{ 1, 1 }};
-    const out1 = comptime t4d.pad(p1d, .{ .constant = 0 });
+    const out1 = comptime t4d.pad(p1d, .{ .is_constant = 0 });
     try std.testing.expectEqualDeep(@TypeOf(out1).shape, .{ 3, 3, 4, 4 });
 
     const p2d = comptime .{ .{ 1, 1 }, .{ 2, 2 } };
-    const out2 = comptime t4d.pad(p2d, .{ .constant = 0 });
+    const out2 = comptime t4d.pad(p2d, .{ .is_constant = 0 });
     try std.testing.expectEqualDeep(@TypeOf(out2).shape, .{ 3, 3, 8, 4 });
 
     const p3d = comptime .{ .{ 0, 1 }, .{ 2, 1 }, .{ 3, 3 } };
-    const out3 = comptime t4d.pad(p3d, .{ .constant = 0 });
+    const out3 = comptime t4d.pad(p3d, .{ .is_constant = 0 });
     try std.testing.expectEqualDeep(@TypeOf(out3).shape, .{ 3, 9, 7, 3 });
 }
 

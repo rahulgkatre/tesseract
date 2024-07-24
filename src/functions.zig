@@ -1,6 +1,6 @@
 const std = @import("std");
 const Tensor = @import("tensor.zig").Tensor;
-
+const symbolic = @import("symbolic.zig");
 const utils = @import("utils.zig");
 const dtypes = @import("dtypes.zig");
 const meta = @import("meta.zig");
@@ -183,13 +183,13 @@ pub fn Flatten(input: anytype, comptime dims: DimRange) type {
     if (from == to) {
         return A;
     }
-    var new_shape: [A.ndims - (to - from)]u64 = undefined;
-    new_shape[from] = 1;
+    var new_shape: [A.ndims - (to - from)]symbolic.Expr = undefined;
+    new_shape[from] = symbolic.Const.of(1);
     for (0..A.ndims) |d| {
         if (d < from or d > to) {
             new_shape[d] = A.shape[d];
         } else {
-            new_shape[from] *= A.shape[d];
+            new_shape[from] = symbolic.Op.mul(new_shape[from], A.shape[d]);
         }
     }
     return Reshape(input, new_shape);
@@ -241,13 +241,18 @@ test permute {
 pub fn Reshape(comptime input: anytype, comptime new_shape: anytype) type {
     const OldType = TensorTypeOf(input);
     const NewType = TensorType(OldType.dtype, new_shape);
-    std.debug.assert(OldType.num_elements == NewType.num_elements);
     return NewType;
 }
 /// Change the shape of the  This changes the type too.
 pub fn reshape(comptime input: anytype, comptime new_shape: anytype) Reshape(input, new_shape) {
     const a = asTensor(input);
-    return a.contiguous().view(new_shape, Reshape(a, new_shape).contiguous_strides, a.offset);
+    var out = a.contiguous().view(new_shape, Reshape(a, new_shape).contiguous_strides, a.offset);
+    out.meta.constraints = &(out.meta.constraints[0..out.meta.constraints.len].* ++ .{symbolic.Constraint{
+        .guard = .equals,
+        .lhs = @TypeOf(a).num_elements,
+        .rhs = @TypeOf(out).num_elements,
+    }});
+    return out;
 }
 test reshape {
     const tensor1 = comptime Tensor([2][3][4]i32).full(0);

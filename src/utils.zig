@@ -3,6 +3,7 @@ const ops = @import("ops.zig");
 const dtypes = @import("dtypes.zig");
 const AnyTensor = @import("anytensor.zig").AnyTensor;
 const tensor = @import("tensor.zig");
+const symbolic = @import("symbolic.zig");
 
 pub fn arrayPermute(comptime T: type, comptime len: u8, array: [len]u64, comptime perm: [len]u8) [len]T {
     var used: [len]bool = [_]bool{false} ** len;
@@ -54,14 +55,18 @@ pub fn ravelMultiIndex(comptime ndims: u8, strides: [ndims]u64, offset: u64, mul
     return flat_idx;
 }
 
-pub fn isContiguous(strides: []const u64) bool {
+pub fn isContiguous(strides: []const symbolic.RuntimeExpr) bool {
+    if (symbolic.isSymbolic(strides)) {
+        return false;
+    }
+
     var prev: u64 = std.math.maxInt(u64);
     for (strides) |stride| {
-        if (stride > 0) {
-            if (stride > prev) {
+        if (stride.Const.value > 0) {
+            if (stride.Const.value > prev) {
                 return false;
             }
-            prev = stride;
+            prev = @intCast(stride);
         }
     }
     return true;
@@ -70,23 +75,23 @@ pub fn isContiguous(strides: []const u64) bool {
 // Infer the contiguous stride pattern from the shape
 // This is the default stride pattern unless a stride is manually provided
 // using asStrided
-pub fn contiguousStrides(comptime shape: []const u64) [shape.len]u64 {
+pub fn contiguousStrides(comptime shape: []const symbolic.Expr) [shape.len]symbolic.Expr {
     const ndims = shape.len;
     if (ndims == 0) {
         return .{};
     }
 
-    var offset: u64 = 1;
-    var strides: [ndims]u64 = undefined;
+    var offset: symbolic.Expr = symbolic.Const.of(1);
+    var strides: [ndims]symbolic.Expr = undefined;
     for (0..ndims - 1) |d| {
-        const stride = shape[ndims - d - 1] * offset;
+        const stride = symbolic.Op.mul(shape[ndims - d - 1], offset);
         strides[ndims - d - 2] = stride;
         offset = stride;
     }
-    strides[ndims - 1] = 1;
+    strides[ndims - 1] = symbolic.Const.of(1);
     for (0..ndims) |d| {
-        if (shape[d] == 0 or shape[d] == 1) {
-            strides[d] = 0;
+        if (std.meta.activeTag(shape[d]) == .Const and (shape[d].Const.value == 0 or shape[d].Const.value == 1)) {
+            strides[d] = symbolic.Const.of(0);
         }
     }
     return strides;
@@ -121,10 +126,10 @@ pub fn broadcastShape(shape1: anytype, shape2: anytype) [@max(shape1.len, shape2
     return bc_shape;
 }
 
-pub fn numElements(shape: []const u64) u128 {
-    var prod: u128 = 1;
+pub fn numElements(shape: []const symbolic.Expr) symbolic.Expr {
+    var prod = symbolic.Const.of(1);
     for (shape) |s| {
-        prod *= s;
+        prod = symbolic.Op.mul(prod, s);
     }
     return prod;
 }
@@ -142,16 +147,18 @@ pub fn extractDType(comptime Type: type) dtypes.DType {
 pub fn extractNdims(comptime ArrayType: type) u8 {
     switch (@typeInfo(ArrayType)) {
         .Array => |info| return 1 + extractNdims(info.child),
+        .Pointer => |info| return 1 + extractNdims(info.child),
         .Int, .Float, .Bool, .ComptimeInt, .ComptimeFloat => return 0,
         .Struct => |info| if (info.backing_integer) |_| return 0,
         else => {},
     }
-    @compileError("ArrayType input for Tensor must be a array type (e.g. [M][N][P]DType), received " ++ std.fmt.std.fmt.comptimePrint("{any}", .{ArrayType}));
+    @compileError("ArrayType input for Tensor must be a array type (e.g. [M][N][P]DType), received " ++ std.fmt.comptimePrint("{any}", .{ArrayType}));
 }
 
-pub fn extractShape(comptime ArrayType: type) [extractNdims(ArrayType)]u64 {
+pub fn extractShape(comptime ArrayType: type) [extractNdims(ArrayType)]symbolic.Expr {
     switch (@typeInfo(ArrayType)) {
-        .Array => |info| return .{info.len} ++ extractShape(info.child),
+        .Array => |info| return .{symbolic.Const.of(info.len)} ++ extractShape(info.child),
+        .Pointer => |info| return .{symbolic.Var.of(.hello)} ++ extractShape(info.child),
         .Int, .Float, .Bool, .ComptimeInt, .ComptimeFloat => return .{},
         .Struct => |info| if (info.backing_integer) |_| return .{},
         else => {},

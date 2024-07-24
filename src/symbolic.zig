@@ -1,10 +1,13 @@
 const std = @import("std");
 const utils = @import("utils.zig");
 
-const Const = struct {
+pub const Const = struct {
     value: i64,
+    min: i64,
+    max: i64,
+
     pub fn of(value: i64) Expr {
-        return .{ .Const = .{ .value = value } };
+        return .{ .Const = .{ .value = value, .min = value, .max = value } };
     }
 
     pub fn add(const1: Const, const2: Const) Expr {
@@ -13,7 +16,7 @@ const Const = struct {
     pub fn mul(const1: Const, const2: Const) Expr {
         return of(const1.value * const2.value);
     }
-    pub fn divExact(const1: Const, const2: Const) Expr {
+    pub fn div(const1: Const, const2: Const) Expr {
         std.debug.assert(@mod(const1.value, const2.value) == 0);
         return of(@divExact(const1.value, const2.value));
     }
@@ -23,33 +26,96 @@ const Const = struct {
 };
 
 const Op = enum {
-    divExact,
+    div,
     mod,
     add,
     mul,
+};
+const Expr = struct {
+    op: Op,
+    input: *const SymInt,
+    other: *const SymInt,
+    min: i64,
+    max: i64,
 
-    pub fn expr(op: Op, arg1: Expr, arg2: Expr) Expr {
-        return .{ .Expr = .{ .op = op, .arg1 = arg1, .arg2 = arg2 } };
+    pub fn of(op: Op, input: *const SymInt, other: *const SymInt, min: i64, max: i64) SymInt {
+        return .{
+            .Expr = .{
+                .op = op,
+                .input = input,
+                .other = other,
+                .min = min,
+                .max = max,
+            },
+        };
     }
 
-    pub fn mul(arg1: Expr, arg2: Expr) Expr {
-        return expr(.mul, arg1, arg2);
-    }
-
-    pub fn add(arg1: Expr, arg2: Expr) Expr {
-        return expr(.add, arg1, arg2);
-    }
-
-    pub fn divExact(arg1: Expr, arg2: Expr) Expr {
-        return expr(.divExact, arg1, arg2);
-    }
-
-    pub fn mod(arg1: Expr, arg2: Expr) Expr {
-        return expr(.mod, arg1, arg2);
+    pub fn div(input: SymInt, other: SymInt) SymInt {
+        const in_expr = input.Expr;
+        switch (other) {
+            .Const => switch (in_expr.op) {
+                .mul => if (std.meta.activeTag(in_expr.other) == .Const and std.meta.activeTag(input.Const) == .Const) {},
+            },
+        }
     }
 };
 
-const Guard = union(enum) {
+pub const SymInt = union(enum) {
+    Var: Var,
+    Const: Const,
+    Expr: Expr,
+
+    pub fn wrap(x: anytype) SymInt {
+        var T: type = @TypeOf(x);
+        var data = x;
+        if (std.meta.activeTag(@typeInfo(T)) == .Pointer) {
+            T = @TypeOf(x.*);
+            data = x.*;
+        }
+        if (Var == T or Const == T or Expr == T) {
+            return @unionInit(SymInt, utils.rawTypeName(T), data);
+        }
+        if (@TypeOf(.name) == T) {
+            return Var.of(data);
+        }
+        return switch (@typeInfo(T)) {
+            .Int, .ComptimeInt => Const.of(data),
+            else => unreachable,
+        };
+    }
+
+    pub fn constantFold(x: SymInt) SymInt {
+        return switch (x) {
+            inline else => |s| if (s.min == s.max) Const.of(s.min) else x,
+        };
+    }
+
+    pub fn add(input: anytype, other: anytype) SymInt {
+        return switch (wrap(input)) {
+            inline else => |sym_input| sym_input.add(wrap(b)),
+        };
+    }
+
+    pub fn mul(input: anytype, other: anytype) SymInt {
+        return switch (wrap(input)) {
+            inline else => |sym_input| @TypeOf(sym_input).mul(wrap(input), wrap(other)),
+        };
+    }
+
+    pub fn div(input: anytype, other: anytype) SymInt {
+        return switch (wrap(input)) {
+            inline else => |sym_input| @TypeOf(sym_input).mul(wrap(input), wrap(other)),
+        };
+    }
+
+    pub fn mod(input: anytype, other: anytype) SymInt {
+        return switch (wrap(input)) {
+            inline else => |sym_input| @TypeOf(sym_input).mul(wrap(input), wrap(other)),
+        };
+    }
+};
+
+pub const Guard = union(enum) {
     lessThan,
     greaterThan,
     equals,
@@ -57,187 +123,46 @@ const Guard = union(enum) {
     leq,
 };
 
-const Var = struct {
-    name: @TypeOf(.variable),
-    scalar: Expr = Const.of(1),
-    divisor: Expr = Const.of(1),
-    addend: Expr = Const.of(0),
-
-    min: u64 = 0,
-    max: ?u64 = null,
-
-    pub fn of(name: @TypeOf(.variable)) Expr {
-        return .{ .Var = .{ .name = name } };
-    }
-
-    pub fn zeroAddend(self: Var) Expr {
-        var copy = self;
-        copy.addend = Const.of(0);
-        return Expr{ .Var = copy };
-    }
-
-    pub fn setAddend(self: Var, addend: Expr) Expr {
-        var copy = self;
-        copy.addend = addend;
-        return Expr{ .Var = copy };
-    }
-
-    pub fn addVar(var1: Var, var2: Var) Expr {
-        return Op.expr(
-            .add,
-            Op.add(var1.zeroAddend(), var2.zeroAddend()),
-            Op.add(var1.addend, var2.addend).eval(),
-        );
-    }
-
-    pub fn mulVar(var1: Var, var2: Var) Expr {
-        return Op.expr(
-            .add,
-            Op.expr(
-                .add,
-                Op.mul(var1.zeroAddend(), var2.zeroAddend()),
-                Op.mul(var1.zeroAddend(), var2.addend).eval(),
-            ),
-            Op.expr(
-                .add,
-                Op.mul(var2.zeroAddend(), var1.addend).eval(),
-                Op.mul(var1.addend, var2.addend).eval(),
-            ),
-        );
-    }
-
-    pub fn addConst(var1: Var, const2: Const) Expr {
-        return (Expr{
-            .Var = .{
-                .name = var1.name,
-                .addend = Op.add(var1.addend, Const.of(const2.value)).eval(),
-                .divisor = var1.divisor,
-                .scalar = var1.scalar,
-            },
-        }).eval();
-    }
-
-    pub fn mulConst(var1: Var, const2: Const) Expr {
-        return (Expr{
-            .Var = .{
-                .name = var1.name,
-                .addend = Op.mul(var1.addend, Const.of(const2.value)).eval(),
-                .divisor = var1.divisor,
-                .scalar = Op.mul(var1.scalar, Const.of(const2.value)).eval(),
-            },
-        }).eval();
-    }
-
-    pub fn divConst(var1: Var, const2: Const) Expr {
-        return (Expr{
-            .Var = .{
-                .name = var1.name,
-                .addend = Op.divExact(var1.addend, Const.of(const2.value)).eval(),
-                .divisor = Op.mul(var1.divisor, Const.of(const2.value)).eval(),
-                .scalar = var1.scalar,
-            },
-        }).eval();
-    }
-
-    pub fn addExpr(var1: Var, expr2: Expr) Expr {
-        return Op.add(var1.zeroAddend(), Op.add(var1.addend, expr2).eval());
-    }
-
-    pub fn mulExpr(var1: Var, expr2: Expr) Expr {
-        return Op.add(Op.mul(var1.zeroAddend(), Expr), Op.mul(var1.addend, expr2).eval());
-    }
-};
-
-const Expr = union(enum) {
-    Var: Var,
-    Const: Const,
-    Expr: struct { op: Op, arg1: Expr, arg2: Expr },
-
-    pub fn flip(expr: Expr) Expr {
-        return switch (expr) {
-            .Expr => |ex| .{ .Expr = .{ .op = ex.op, .arg1 = ex.arg2, .arg2 = ex.arg1 } },
-            else => expr,
-        };
-    }
-
-    pub fn eval(expr: Expr) Expr {
-        return switch (expr) {
-            .Expr => |ex| switch (ex.arg1.eval()) {
-                .Var => |var1| switch (ex.arg2.eval()) {
-                    .Var => |var2| switch (ex.op) {
-                        .add => var1.addVar(var2),
-                        .mul => var1.mulVar(var2),
-                        else => Op.expr(ex.op, ex.arg1.eval(), ex.arg2.eval()),
-                    },
-                    .Const => |const2| switch (ex.op) {
-                        .add => var1.addConst(const2),
-                        .mul => var1.mulConst(const2),
-                        .divExact => var1.divConst(const2),
-                        .mod => var1.setMinMax(var1.min, if (var1.max) |old_max| @min(old_max, const2.value) else const2.value),
-                    },
-                    .Expr => |expr2| switch (ex.op) {
-                        .add => var1.addExpr(expr2),
-                        .mul => var1.mulExpr(expr2),
-                        else => Op.expr(ex.op, ex.arg1.eval(), ex.arg2.eval()),
-                    },
-                },
-                .Const => |const1| switch (ex.arg2.eval()) {
-                    .Const => |const2| switch (ex.op) {
-                        .add => const1.add(const2),
-                        .mul => const1.mul(const2),
-                        .divExact => const1.divExact(const2),
-                        .mod => const1.mod(const2),
-                    },
-                    else => expr.flip().eval(),
-                },
-                else => Op.expr(ex.op, ex.arg1.eval(), ex.arg2.eval()),
-            },
-            .Var => |v| blk: {
-                var new = expr;
-                if (v.max != null and v.min == v.max.?) {
-                    if (v.max.? <= 0) {
-                        @compileError("Var values cannot be 0 or negative");
-                    }
-                    new = Const.of(v.min);
-                } else {
-                    switch (v.scalar) {
-                        .Const => |const1| switch (v.divisor) {
-                            .Const => |const2| {
-                                const gcd = utils.gcd(@intCast(@abs(const1.value)), @intCast(@abs(const2.value)));
-                                new.Var.scalar = Const.of(@divExact(const1.value, gcd));
-                                new.Var.divisor = Const.of(gcd);
-                            },
-                            else => {},
-                        },
-                        .Var => |var1| switch (v.divisor) {
-                            .Const => |const2| {
-                                new.Var.scalar = var1.divConst(const2);
-                            },
-                            else => {},
-                        },
-                        else => {},
-                    }
-                }
-                break :blk new;
-            },
-            .Const => expr,
-        };
-    }
-};
-
-test Expr {
-    comptime var expr = Op.add(Const.of(-1), Var.of(.x)).eval();
-    try std.testing.expect(expr.Var.addend.Const.value == -1);
-    expr = Op.mul(Const.of(2), expr).eval();
-    try std.testing.expect(expr.Var.scalar.Const.value == 2);
-    try std.testing.expect(expr.Var.addend.Const.value == -2);
-    expr = Op.divExact(Const.of(2), expr).eval();
-    try std.testing.expect(expr.Var.scalar.Const.value == 1);
-    try std.testing.expect(expr.Var.addend.Const.value == -1);
-}
-
-const Constraint = struct {
-    lhs: Var,
+pub const Constraint = struct {
+    target: *const Var,
     guard: Guard,
-    rhs: Expr,
+    rhs: *const Expr,
+};
+
+pub const Var = struct {
+    name: []const u8,
+    min: i64 = 0,
+    max: i64 = std.math.maxInt(i64),
+
+    pub fn of(name: @TypeOf(.variable)) SymInt {
+        return .{ .Var = .{ .name = std.fmt.comptimePrint("{any}", .{name})[1..] } };
+    }
+
+    pub fn add(input: SymInt, other: SymInt) SymInt {
+        const in_min, const in_max = switch (input) {
+            inline else => |sym_in| .{ sym_in.min, sym_in.max },
+        };
+        const other_min, const other_max = switch (other) {
+            inline else => |sym_other| .{ sym_other.min, sym_other.max },
+        };
+        return Expr.of(.add, &input, &other, in_min + other_min, @min(in_max + other_max, std.math.maxInt(i64))).constantFold();
+    }
+
+    pub fn mul(input: SymInt, other: SymInt) SymInt {
+        const in_var = input.Var;
+        return switch (other) {
+            .Const => |sym_other| Expr.of(
+                .add,
+                &input,
+                &other,
+                in_var.max * sym_other.min,
+                @min(in_var.max * sym_other.max, std.math.maxInt(i64)),
+            ).constantFold(),
+            else => unreachable,
+        };
+    }
+
+    pub fn div(input: SymInt, other: SymInt) SymInt {}
+
+    pub fn mod(input: SymInt, other: SymInt) SymInt {}
 };

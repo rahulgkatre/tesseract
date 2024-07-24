@@ -25,14 +25,21 @@ pub const DataNode = struct {
     tensor: *const AnyTensor,
 };
 
+const Node = union(enum) {
+    Data: DataNode,
+    Compute: ComputeNode,
+};
+
 pub const Graph = struct {
     arena: *std.heap.ArenaAllocator,
-    compute_nodes: std.AutoArrayHashMap(*const AnyTensor, ComputeNode),
-    data_nodes: std.AutoArrayHashMap(*const AnyTensor, DataNode),
+    nodes: std.MultiArrayList(Node),
+    compute_nodes: std.AutoArrayHashMap(*const AnyTensor, *const ComputeNode),
+    data_nodes: std.AutoArrayHashMap(*const AnyTensor, *const DataNode),
 
     pub fn init(arena: *std.heap.ArenaAllocator) !*Graph {
         var graph = try arena.allocator().create(Graph);
         graph.arena = arena;
+        graph.nodes = std.MultiArrayList(Node);
         graph.compute_nodes = std.AutoArrayHashMap(*const AnyTensor, ComputeNode).init(arena.allocator());
         graph.data_nodes = std.AutoArrayHashMap(*const AnyTensor, DataNode).init(arena.allocator());
         return graph;
@@ -44,13 +51,17 @@ pub const Graph = struct {
 
     pub fn compute(graph: *Graph, t: *const AnyTensor) !void {
         try graph.data(t);
-        try graph.compute_nodes.put(t, .{
+        const compute_node: ComputeNode = .{
             .output_node = graph.data_nodes.getPtr(t).?,
-        });
+        };
+        try graph.nodes.append(graph.arena, .{ .Compute = compute_node });
+        try graph.compute_nodes.put(t, &graph.nodes.get(graph.nodes.len).Compute);
     }
 
     pub fn data(graph: *Graph, t: *const AnyTensor) !void {
-        try graph.data_nodes.put(t, .{ .tensor = t });
+        const data_node: DataNode = .{ .tensor = t };
+        try graph.nodes.append(graph.arena, .{ .Data = data_node });
+        try graph.data_nodes.put(t, &graph.nodes.get(graph.nodes.len).Data);
     }
 
     pub fn trace(graph: *Graph, comptime out: anytype, printBytecode: bool) !void {
