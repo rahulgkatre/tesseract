@@ -69,7 +69,7 @@ pub const Graph = struct {
             if (printBytecode) {
                 std.debug.print("{s: <32}  {:<24}@{x}  {any}\n", .{
                     out_any.meta.label orelse "",
-                    tensor_typing.TensorTypeOf(out_any).ArrayType(),
+                    tensor_typing.AsTensorType(out_any).ArrayType(),
                     @intFromPtr(out_any),
                     out_any.meta.instr,
                 });

@@ -3,10 +3,10 @@ const dtypes = @import("../dtypes.zig");
 const utils = @import("../utils.zig");
 const graph = @import("../graph.zig");
 
-const meta = @import("meta.zig");
+const shared = @import("shared.zig");
 const tensor = @import("tensor.zig");
 const tensor_typing = @import("tensor_typing.zig");
-const TensorTypeOf = tensor_typing.TensorTypeOf;
+const TensorTypeOf = tensor_typing.AsTensorType;
 
 // AnyTensor and tensor need to have the exact same runtime layout for @ptrCast tricks to work
 comptime {
@@ -26,17 +26,12 @@ comptime {
 /// By making AnyTensor and generic tensor extern structs, they are guaranteed to have
 /// the same layout.
 pub const AnyTensor = extern struct {
-    meta: *const meta.Metadata,
+    meta: *const shared.Metadata,
     dtype: dtypes.DType,
     ndims: u8,
     shape: [*]const u64,
     strides: [*]const u64,
     offset: u64,
-
-    /// Performs type narrowing to get back the shape-typed Tensor
-    pub fn toTensor(comptime self: *const AnyTensor) *const TensorTypeOf(self) {
-        return @ptrCast(self);
-    }
 
     pub const Json = struct {
         ptr: usize,

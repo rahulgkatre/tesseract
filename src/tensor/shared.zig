@@ -1,4 +1,5 @@
 const ops = @import("../ops.zig");
+const dtypes = @import("../dtypes.zig");
 const utils = @import("../utils.zig");
 const autograd = @import("../autograd.zig");
 
@@ -11,3 +12,12 @@ pub const Metadata = struct {
     requires_grad: bool = false,
     dim_names: ?[]const ?[]const u8 = null,
 };
+
+pub fn PadMode(comptime dtype: dtypes.DType) type {
+    return union(ops.DataOp.Args.Pad.Mode) {
+        constant: dtypes.ZigType(dtype),
+        reflect: void,
+        replicate: void,
+        circular: void,
+    };
+}

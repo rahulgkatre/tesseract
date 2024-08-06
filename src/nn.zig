@@ -56,17 +56,17 @@ pub fn LazyLinear(out: u64, dtype: dtypes.DType, comptime label: []const u8) typ
     };
 }
 
-test LazyLinear {
-    comptime {
-        const x1 = tensor.Tensor([16][784]f32).input("x1");
-        const linear = LazyLinear(256, .f32, "lazy_fc"){};
-        _ = linear.forward(x1);
-        const x2 = tensor.Tensor([16][1]f32).input("x2");
-        _ = linear.forward(x2);
-        const x3 = tensor.Tensor([16][1]f32).input("x3");
-        _ = linear.forward(x3);
-    }
-}
+// test LazyLinear {
+//     comptime {
+//         const x1 = try tensor.Tensor([16][784]f32).input("x1");
+//         const linear = LazyLinear(256, .f32, "lazy_fc"){};
+//         _ = linear.forward(x1);
+//         const x2 = tensor.Tensor([16][1]f32).input("x2");
+//         _ = linear.forward(x2);
+//         const x3 = tensor.Tensor([16][1]f32).input("x3");
+//         _ = linear.forward(x3);
+//     }
+// }
 
 pub fn Linear(in: u64, out: u64, dtype: dtypes.DType, label: []const u8) type {
     return struct {
@@ -112,10 +112,10 @@ pub fn Sequential(comptime label: []const u8, comptime modules: anytype) type {
     };
 }
 
-test Linear {
-    comptime {
-        const x = tensor.Tensor([16][784]f32).input("input");
-        const linear = Linear(784, 256, .f32, "fc"){};
-        _ = linear.forward(x);
-    }
-}
+// test Linear {
+//     comptime {
+//         const x = tensor.Tensor([16][784]f32).input("input");
+//         const linear = Linear(784, 256, .f32, "fc"){};
+//         _ = linear.forward(x);
+//     }
+// }

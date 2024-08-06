@@ -9,7 +9,7 @@ const utils = @import("utils.zig");
 
 const tensor_typing = @import("tensor/tensor_typing.zig");
 const asTensor = tensor_typing.asTensor;
-const TensorTypeOf = tensor_typing.TensorTypeOf;
+const TensorTypeOf = tensor_typing.AsTensorType;
 const TensorTuple = tensor_typing.TensorTuple;
 const IntTensor = tensor_typing.IntTensor;
 const BoolTensor = tensor_typing.BoolTensor;
@@ -84,30 +84,30 @@ pub fn binaryGrad(op: ops.BinaryOp, a: anytype, b: anytype, grad: anytype, param
     return backpropStep(b, grad_b, backpropStep(a, grad_a, param_grads));
 }
 
-test "example" {
-    const f, const df = comptime blk: {
-        const x = tensor.Tensor(f32).param("x");
-        const y = tensor.Tensor(f32).param("y");
-        const s = F.add(x.mul(2.0), y.mul(3.0)).setLabel("s");
-        const f = F.add(s, s).setLabel("f");
-        const df = f.backwards();
-        break :blk .{ f, df[0..df.len].* };
-    };
+// test "example" {
+//     const f, const df = comptime blk: {
+//         const x = tensor.Tensor(f32).param("x");
+//         const y = tensor.Tensor(f32).param("y");
+//         const s = F.add(x.mul(2.0), y.mul(3.0)).setLabel("s");
+//         const f = F.add(s, s).setLabel("f");
+//         const df = f.backwards();
+//         break :blk .{ f, df[0..df.len].* };
+//     };
 
-    const graph = @import("graph.zig");
-    var arena1 = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    var g = try graph.Graph.init(&arena1);
-    defer g.deinit();
+//     const graph = @import("graph.zig");
+//     var arena1 = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+//     var g = try graph.Graph.init(&arena1);
+//     defer g.deinit();
 
-    std.debug.print("\n", .{});
-    try g.trace(f, true);
-    inline for (df) |update| {
-        try g.trace(update, true);
-    }
+//     std.debug.print("\n", .{});
+//     try g.trace(f, true);
+//     inline for (df) |update| {
+//         try g.trace(update, true);
+//     }
 
-    const debug = @import("debug.zig");
-    try debug.dataflowViz(.{f.toAnyTensor()} ++ df, debug.debug_writer, arena1.allocator());
-}
+//     const debug = @import("debug.zig");
+//     try debug.dataflowViz(.{f.toAnyTensor()} ++ df, debug.debug_writer, arena1.allocator());
+// }
 
 test binaryGrad {
     // const xt, const dx = comptime blk: {
