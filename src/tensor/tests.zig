@@ -3,7 +3,7 @@ const utils = @import("../utils.zig");
 const tensor = @import("tensor.zig");
 
 const Tensor = tensor.Tensor;
-const TensorType = @import("tensor_typing.zig").TensorType;
+const TensorType = @import("types.zig").TensorType;
 
 test "view" {
     // Based on example from https://pytorch.org/docs/stable/generated/torch.as_strided.html

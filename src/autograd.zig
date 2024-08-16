@@ -7,13 +7,13 @@ const dtypes = @import("dtypes.zig");
 const ops = @import("ops.zig");
 const utils = @import("utils.zig");
 
-const tensor_typing = @import("tensor/tensor_typing.zig");
-const asTensor = tensor_typing.asTensor;
-const TensorTypeOf = tensor_typing.TensorTypeOf;
-const TensorTuple = tensor_typing.TensorTuple;
-const IntTensor = tensor_typing.IntTensor;
-const BoolTensor = tensor_typing.BoolTensor;
-const FloatTensor = tensor_typing.FloatTensor;
+const types = @import("tensor/types.zig");
+const asTensor = types.asTensor;
+const TensorTypeOf = types.TensorTypeOf;
+const TensorTuple = types.TensorTuple;
+const IntTensor = types.IntTensor;
+const BoolTensor = types.BoolTensor;
+const FloatTensor = types.FloatTensor;
 
 pub const Autograd = struct {
     grad_fn: *const anyopaque,
@@ -21,7 +21,7 @@ pub const Autograd = struct {
 };
 
 pub fn backwards(x: anytype) []const *const AnyTensor {
-    const initial_grad = tensor_typing.asTensor(1.0);
+    const initial_grad = types.asTensor(1.0);
     const params = utils.paramsOf(x);
 
     var zero_grads: [params.len]*const AnyTensor = undefined;

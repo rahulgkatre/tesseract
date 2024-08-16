@@ -6,6 +6,45 @@ const ops = @import("../ops.zig");
 const utils = @import("../utils.zig");
 const dtypes = @import("../dtypes.zig");
 
+pub const Layout = struct {
+    dtype: dtypes.DType,
+    ndims: u8,
+    shape: []const u64,
+    strides: []const u64,
+    offset: u64,
+};
+
+pub const Labels = struct {
+    name: ?[]const u8,
+    dim_names: ?[]const ?[]const u8,
+};
+
+pub fn DimsEnumType(comptime maybe_dim_names: ?[]const ?[]const u8) type {
+    if (maybe_dim_names) |dim_names| {
+        var dim_enum_fields: [dim_names.len]std.builtin.Type.EnumField = undefined;
+        var enum_idx: usize = 0;
+
+        for (dim_names, 0..) |maybe_name, dim_idx| {
+            if (maybe_name) |name| {
+                dim_enum_fields[enum_idx] = std.builtin.Type.EnumField{ .name = name[0.. :0], .value = dim_idx };
+                enum_idx += 1;
+            }
+        }
+        return @Type(std.builtin.Type{ .Enum = .{ .fields = dim_enum_fields[0..enum_idx], .is_exhaustive = false, .tag_type = u8, .decls = &.{} } });
+    } else {
+        return void;
+    }
+}
+
+pub const Json = struct {
+    ptr: usize,
+    dtype: dtypes.DType,
+    ndims: u8,
+    shape: []const u64,
+    strides: []const u64,
+    offset: u64,
+};
+
 // =============================================================================
 // Type level utilities specifically for Tensor types
 // Equivalents for @as, @TypeOf, @Type

@@ -2,7 +2,7 @@ const std = @import("std");
 const ops = @import("ops.zig");
 const dtypes = @import("dtypes.zig");
 const AnyTensor = @import("tensor/tensor.zig").AnyTensor;
-const tensor_typing = @import("tensor/tensor_typing.zig");
+const types = @import("tensor/types.zig");
 pub fn arrayPermute(comptime T: type, comptime len: u8, array: [len]u64, comptime perm: [len]u8) [len]T {
     var used: [len]bool = [_]bool{false} ** len;
     for (perm) |p| {
@@ -196,7 +196,7 @@ pub fn simplifiedView(input: anytype) struct {
     offset: u64,
 } {
     // TODO: Simplify contiguous or broadcasted sub intervals of the view
-    const t = tensor_typing.asTensor(input);
+    const t = types.asTensor(input);
     if (t._ndims == 0) {
         return .{
             .ndims = 0,
@@ -256,12 +256,12 @@ pub fn simplifiedView(input: anytype) struct {
 pub fn paramsOf(comptime entrypoint: anytype) []const *const AnyTensor {
     const params, const len = comptime blk: {
         var list = ComptimeLinkedList(*const AnyTensor){};
-        var curr = tensor_typing.asTensor(entrypoint).toAnyTensor();
+        var curr = types.asTensor(entrypoint).toAnyTensor();
         var stack = (ComptimeLinkedList(*const AnyTensor){}).appendLeft(curr);
         while (stack.popLeft()) |tup| {
             @setEvalBranchQuota(500 * stack.len + 1000);
             curr, stack = tup;
-            switch (tensor_typing.asTensor(curr).instr.*) {
+            switch (types.asTensor(curr).instr.*) {
                 .InitOp => |instr| switch (instr.op) {
                     .param => {
                         list = list.appendLeft(curr);

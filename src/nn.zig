@@ -4,10 +4,10 @@ const dtypes = @import("dtypes.zig");
 
 const F = @import("tensor/functions.zig");
 const tensor = @import("tensor/tensor.zig");
-const tensor_typing = @import("tensor/tensor_typing.zig");
+const types = @import("tensor/types.zig");
 
-const asTensor = tensor_typing.asTensor;
-const TensorTypeOf = tensor_typing.TensorTypeOf;
+const asTensor = types.asTensor;
+const TensorTypeOf = types.TensorTypeOf;
 
 pub const Module = struct {
     fn is(comptime T: type) bool {

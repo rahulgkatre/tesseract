@@ -1,6 +1,6 @@
 const std = @import("std");
 const F = @import("functions.zig");
-const tensor_typing = @import("tensor_typing.zig");
+const types = @import("types.zig");
 
 const utils = @import("../utils.zig");
 const ops = @import("../ops.zig");
@@ -8,48 +8,11 @@ const dtypes = @import("../dtypes.zig");
 const graph = @import("../graph.zig");
 const autograd = @import("../autograd.zig");
 
-test Tensor {
-    _ = @import("tensor_testing.zig");
+const tests = @import("tests.zig");
+
+test tests {
+    _ = tests;
 }
-
-pub const Layout = struct {
-    dtype: dtypes.DType,
-    ndims: u8,
-    shape: []const u64,
-    strides: []const u64,
-    offset: u64,
-};
-
-pub const Labels = struct {
-    name: ?[]const u8,
-    dim_names: ?[]const ?[]const u8,
-};
-
-pub fn DimsEnumType(comptime maybe_dim_names: ?[]const ?[]const u8) type {
-    if (maybe_dim_names) |dim_names| {
-        var dim_enum_fields: [dim_names.len]std.builtin.Type.EnumField = undefined;
-        var enum_idx: usize = 0;
-
-        for (dim_names, 0..) |maybe_name, dim_idx| {
-            if (maybe_name) |name| {
-                dim_enum_fields[enum_idx] = std.builtin.Type.EnumField{ .name = name[0.. :0], .value = dim_idx };
-                enum_idx += 1;
-            }
-        }
-        return @Type(std.builtin.Type{ .Enum = .{ .fields = dim_enum_fields[0..enum_idx], .is_exhaustive = false, .tag_type = u8, .decls = &.{} } });
-    } else {
-        return void;
-    }
-}
-
-pub const Json = struct {
-    ptr: usize,
-    dtype: dtypes.DType,
-    ndims: u8,
-    shape: []const u64,
-    strides: []const u64,
-    offset: u64,
-};
 
 pub const AnyTensor = Tensor(anyopaque);
 
@@ -74,14 +37,14 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         pub const num_elements = if (isAnyTensor) 0 else utils.numElements(&_shape);
 
         instr: *const ops.Instruction,
-        layout: *const Layout = &.{
+        layout: *const types.Layout = &.{
             .dtype = _dtype,
             .ndims = _ndims,
             .shape = &_shape,
             .strides = &contiguous_strides,
             .offset = 0,
         },
-        labels: *const Labels = &.{
+        labels: *const types.Labels = &.{
             .name = null,
             .dim_names = null,
         },
@@ -114,11 +77,11 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return @ptrCast(self);
         }
 
-        pub inline fn toTensor(comptime self: *const AnyTensor) *const tensor_typing.TensorTypeOf(self) {
+        pub inline fn toTensor(comptime self: *const AnyTensor) *const types.TensorTypeOf(self) {
             return @ptrCast(self);
         }
 
-        pub fn toJson(self: *const Self) Json {
+        pub fn toJson(self: *const Self) types.Json {
             return .{
                 .ptr = @intFromPtr(self),
                 .dtype = self.dtype(),
@@ -150,7 +113,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             };
         }
 
-        pub fn namedDim(comptime self: Self, dim: DimsEnumType(self.labels.dim_names)) u64 {
+        pub fn namedDim(comptime self: Self, dim: types.DimsEnumType(self.labels.dim_names)) u64 {
             return @intFromEnum(dim);
         }
 
@@ -310,7 +273,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         //
 
         ///Cast an array of a datatype to another datatype
-        pub fn cast(comptime self: Self, comptime new_dtype: dtypes.DType) tensor_typing.TensorType(new_dtype, _shape) {
+        pub fn cast(comptime self: Self, comptime new_dtype: dtypes.DType) types.TensorType(new_dtype, _shape) {
             if (new_dtype == _dtype) return self;
             return .{
                 .instr = &.{
@@ -361,7 +324,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             circular: void,
         } else void;
 
-        pub fn pad(comptime self: ShapedTensor, comptime padding: anytype, comptime mode: PadMode) tensor_typing.Pad(ShapedTensor, padding) {
+        pub fn pad(comptime self: ShapedTensor, comptime padding: anytype, comptime mode: PadMode) types.Pad(ShapedTensor, padding) {
             return .{
                 .instr = &.{
                     .DataOp = .{
@@ -391,7 +354,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             comptime new_shape: anytype,
             comptime new_strides: [new_shape.len]u64,
             comptime new_offset: u64,
-        ) tensor_typing.View(ShapedTensor, new_shape) {
+        ) types.View(ShapedTensor, new_shape) {
             // It is possible to directly view the first tensor that is not the result of a view op
             // View ops only rely on the new shape and new strides, broadcasting rules no longer apply
             // This greatly simplifies the graph as view ops are essentially compressed
@@ -403,7 +366,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                 break :blk t;
             };
 
-            const out = tensor_typing.View(ShapedTensor, new_shape){
+            const out = types.View(ShapedTensor, new_shape){
                 .instr = &.{
                     .DataOp = .{
                         .in = .{first_not_view_tensor},
@@ -456,7 +419,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         }
 
         ///Apply an elementwise unary operation
-        pub fn applyUnaryOp(self: ShapedTensor, comptime op: ops.UnaryOp) tensor_typing.UnaryOpResult(Self, op) {
+        pub fn applyUnaryOp(self: ShapedTensor, comptime op: ops.UnaryOp) types.UnaryOpResult(Self, op) {
             const grad_fn = struct {
                 pub fn gradFnImpl(grad_out: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
                     return autograd.unaryGrad(op, self, grad_out, param_grads);
@@ -480,8 +443,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// Apply an elementwise binary operation on two arrays, with broadcasting
         /// a and b must have the same "dtype class" meaning both must be float, bool, or int
         /// though different sizes are allowed.
-        pub fn applyBinaryOp(self: ShapedTensor, other: anytype, comptime op: ops.BinaryOp) tensor_typing.BinaryOpResult(Self, tensor_typing.TensorTypeOf(other), op) {
-            const Other = tensor_typing.TensorTypeOf(other);
+        pub fn applyBinaryOp(self: ShapedTensor, other: anytype, comptime op: ops.BinaryOp) types.BinaryOpResult(Self, types.TensorTypeOf(other), op) {
+            const Other = types.TensorTypeOf(other);
             const bc_shape = utils.broadcastShape(_shape, Other._shape);
             const a = self.expand(bc_shape);
             const b = F.expand(other, bc_shape);
@@ -510,7 +473,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             self: ShapedTensor,
             comptime op: ops.ReduceOp,
             comptime reduce_dims: anytype,
-        ) tensor_typing.ReduceOpResult(Self, reduce_dims) {
+        ) types.ReduceOpResult(Self, reduce_dims) {
             // Use u16 here because []const u8 shows up as a string
             const reduce_dims_array: []const u8 = switch (@typeInfo(@TypeOf(reduce_dims))) {
                 .ComptimeInt, .Int => &[1]u8{signedToUnsignedDim(reduce_dims)},
