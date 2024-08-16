@@ -25,6 +25,23 @@ pub const Labels = struct {
     dim_names: ?[]const ?[]const u8,
 };
 
+pub fn DimsEnumType(comptime maybe_dim_names: ?[]const ?[]const u8) type {
+    if (maybe_dim_names) |dim_names| {
+        var dim_enum_fields: [dim_names.len]std.builtin.Type.EnumField = undefined;
+        var enum_idx: usize = 0;
+
+        for (dim_names, 0..) |maybe_name, dim_idx| {
+            if (maybe_name) |name| {
+                dim_enum_fields[enum_idx] = std.builtin.Type.EnumField{ .name = name[0.. :0], .value = dim_idx };
+                enum_idx += 1;
+            }
+        }
+        return @Type(std.builtin.Type{ .Enum = .{ .fields = dim_enum_fields[0..enum_idx], .is_exhaustive = false, .tag_type = u8, .decls = &.{} } });
+    } else {
+        return void;
+    }
+}
+
 pub const Json = struct {
     ptr: usize,
     dtype: dtypes.DType,
@@ -37,9 +54,16 @@ pub const Json = struct {
 pub const AnyTensor = Tensor(anyopaque);
 
 pub fn Tensor(comptime TensorArrayType: type) type {
-    const isAnyTensor = TensorArrayType == anyopaque;
+    // Need to be extern to have a well defined layout for pointer casting between AnyTensor and ShapedTensor
     return extern struct {
+        const isAnyTensor = TensorArrayType == anyopaque;
+        // Self is used for all functions that involve reading fields or calculating some value.
+        // It is fine for AnyTensor to be able to do these things too.
         const Self = @This();
+        // To enforce a shaped tensor type for some functions, @This() is AnyTensor
+        // then ShapedTensor is void, and AnyTensor won't have access to functions where
+        // Self must not be AnyTensor.
+        const ShapedTensor = if (isAnyTensor) void else Self;
 
         // All the functions for operations that do not modify metadata directly
         pub usingnamespace F;
@@ -86,7 +110,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return self.layout.offset;
         }
 
-        pub inline fn toAnyTensor(comptime self: *const Self) *const AnyTensor {
+        pub inline fn toAnyTensor(self: *const ShapedTensor) *const AnyTensor {
             return @ptrCast(self);
         }
 
@@ -106,6 +130,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         }
 
         pub fn ArrayType() type {
+            if (isAnyTensor) unreachable;
             var Child = dtypes.ZigType(_dtype);
             for (0.._ndims) |dim| {
                 Child = [_shape[_ndims - dim - 1]]Child;
@@ -113,23 +138,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return Child;
         }
 
-        pub fn DimsEnumType(maybe_dim_names: ?[]const ?[]const u8) type {
-            var dim_enum_fields: [_ndims]std.builtin.Type.EnumField = undefined;
-            var enum_idx: usize = 0;
-            if (maybe_dim_names) |dim_names| {
-                for (dim_names, 0..) |maybe_name, dim_idx| {
-                    if (maybe_name) |name| {
-                        dim_enum_fields[enum_idx] = std.builtin.Type.EnumField{ .name = name[0.. :0], .value = dim_idx };
-                        enum_idx += 1;
-                    }
-                }
-                return @Type(std.builtin.Type{ .Enum = .{ .fields = dim_enum_fields[0..enum_idx], .is_exhaustive = false, .tag_type = u8, .decls = &.{} } });
-            } else {
-                return void;
-            }
-        }
-
-        pub fn setDimNames(self: Self, comptime dim_names: std.meta.Tuple(&[_]type{?[]const u8} ** _ndims)) Self {
+        pub fn setDimNames(self: ShapedTensor, comptime dim_names: std.meta.Tuple(&[_]type{?[]const u8} ** _ndims)) Self {
             return .{
                 .instr = self.instr,
                 .labels = &.{
@@ -178,8 +187,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         }
 
         /// Supports negative indexing sugar (e.g. -1 = ndims - 1)
-        pub fn dimSize(_: Self, d: i16) u64 {
-            return _shape[signedToUnsignedDim(d)];
+        pub fn dimSize(self: Self, d: i16) u64 {
+            return self.layout.shape[signedToUnsignedDim(d)];
         }
 
         /// Supports negative indexing sugar (e.g. -1 = ndims - 1)
@@ -213,6 +222,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
 
             return (Self{
                 .instr = self.instr,
+                .layout = self.layout,
                 .autograd = &new_autograd,
             }).setName(name);
         }
@@ -223,7 +233,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
 
         /// Create an empty tensor (i.e. allocate).
         /// Do not make any assumptions about data in the empty
-        pub fn empty() Self {
+        pub fn empty() ShapedTensor {
             return .{
                 .instr = &.{
                     .InitOp = .{
@@ -237,7 +247,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// Fill a tensor with a value
         /// By default, full tensors will be constant folded in codegen
         /// unless they are marked as requires_grad
-        pub fn full(comptime value: dtypes.ZigType(_dtype)) Self {
+        pub fn full(comptime value: dtypes.ZigType(_dtype)) ShapedTensor {
             const str = std.fmt.comptimePrint("{}", .{value});
             return (Self{
                 .instr = &.{
@@ -253,8 +263,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// codegen will make this an argument of the function
         /// A label can be given to make two tensors of the same shape/dtype
         /// correspond to different arrays at runtime (e.g. for two input images )
-        pub fn input(comptime name: []const u8) Self {
-            return (Self{
+        pub fn input(comptime name: []const u8) ShapedTensor {
+            return (ShapedTensor{
                 .instr = &.{
                     .InitOp = .{
                         .op = .input,
@@ -268,8 +278,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// codegen will make this an argument of the function,
         /// gradients can be accumulated for it,
         /// and optimizers can detect it,
-        pub fn param(name: []const u8) Self {
-            return (Self{
+        pub fn param(name: []const u8) ShapedTensor {
+            return (ShapedTensor{
                 .instr = &.{
                     .InitOp = .{
                         .op = .param,
@@ -283,9 +293,9 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// By default, random tensors will be constant folded in codegen
         /// unless they are marked as requires_grad
         /// Do not use this for random initialization of param_grads!
-        pub fn random(name: []const u8) Self {
+        pub fn random(name: []const u8) ShapedTensor {
             std.debug.assert(dtypes.isFloat(_dtype));
-            return (Self{
+            return (ShapedTensor{
                 .instr = &.{
                     .InitOp = .{
                         .op = .random,
@@ -302,11 +312,6 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         ///Cast an array of a datatype to another datatype
         pub fn cast(comptime self: Self, comptime new_dtype: dtypes.DType) tensor_typing.TensorType(new_dtype, _shape) {
             if (new_dtype == _dtype) return self;
-            const new_layout = blk: {
-                var new_layout = self.layout.*;
-                new_layout.dtype = new_dtype;
-                break :blk new_layout;
-            };
             return .{
                 .instr = &.{
                     .DataOp = .{
@@ -315,7 +320,11 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                         .args = .{ .cast = new_dtype },
                     },
                 },
-                .layout = &new_layout,
+                .layout = &blk: {
+                    var new_layout = self.layout.*;
+                    new_layout.dtype = new_dtype;
+                    break :blk new_layout;
+                },
                 .autograd = &.{
                     .grad_fn = autograd.noGrad,
                     .constant = self.autograd.constant,
@@ -325,7 +334,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         }
 
         /// Make an array contguous (a full new copy) if it is not already
-        pub fn contiguous(comptime self: Self) Self {
+        pub fn contiguous(self: ShapedTensor) ShapedTensor {
             if (self.isContiguous()) return self;
             return .{
                 .instr = &.{
@@ -334,7 +343,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                         .op = .contiguous,
                         .args = .{
                             .contiguous = .{
-                                .shape = self._shape,
+                                .shape = self.layout.shape,
                                 .strides = &contiguous_strides,
                                 .offset = 0,
                             },
@@ -345,23 +354,14 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             };
         }
 
-        const PadMode = union(ops.DataOp.Args.Pad.Mode) {
-            constant: dtypes.ZigType(_dtype),
+        const PadMode = if (!isAnyTensor) union(ops.DataOp.Args.Pad.Mode) {
+            constant: dtypes.ZigType(ShapedTensor._dtype),
             reflect: void,
             replicate: void,
             circular: void,
-        };
-        pub fn Pad(padding: anytype) type {
-            const padded_dims = padding.len;
-            const padding_tuple: [padded_dims][2]u64 = padding;
-            std.debug.assert(padded_dims <= _ndims);
-            var new_shape: [_ndims]usize = _shape;
-            for (0..padded_dims) |dim| {
-                new_shape[_ndims - dim - 1] += padding_tuple[dim][0] + padding_tuple[dim][1];
-            }
-            return tensor_typing.TensorType(_dtype, new_shape);
-        }
-        pub fn pad(comptime self: Self, comptime padding: anytype, comptime mode: PadMode) Pad(padding) {
+        } else void;
+
+        pub fn pad(comptime self: ShapedTensor, comptime padding: anytype, comptime mode: PadMode) tensor_typing.Pad(ShapedTensor, padding) {
             return .{
                 .instr = &.{
                     .DataOp = .{
@@ -383,19 +383,15 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             };
         }
 
-        pub fn View(comptime new_shape: anytype) type {
-            return tensor_typing.TensorType(_dtype, new_shape);
-        }
-
         /// Changes the shape and stride of the tensor to change how the underlying memory is accessed.
         /// Powerful enough to be used to implement any reshaping or windowing operation on a
         /// There are guardrails to prevent out of bounds access into underlying memory!
         pub fn view(
-            comptime self: Self,
+            comptime self: ShapedTensor,
             comptime new_shape: anytype,
             comptime new_strides: [new_shape.len]u64,
             comptime new_offset: u64,
-        ) View(new_shape) {
+        ) tensor_typing.View(ShapedTensor, new_shape) {
             // It is possible to directly view the first tensor that is not the result of a view op
             // View ops only rely on the new shape and new strides, broadcasting rules no longer apply
             // This greatly simplifies the graph as view ops are essentially compressed
@@ -407,7 +403,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                 break :blk t;
             };
 
-            const out = View(new_shape){
+            const out = tensor_typing.View(ShapedTensor, new_shape){
                 .instr = &.{
                     .DataOp = .{
                         .in = .{first_not_view_tensor},
@@ -459,15 +455,8 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             return out;
         }
 
-        pub fn UnaryOpResultType(comptime op: ops.UnaryOp) type {
-            return switch (op) {
-                .exp2, .log2, .recip, .sin, .sqrt => tensor_typing.FloatTensor(Self),
-                .neg => Self,
-            };
-        }
-
         ///Apply an elementwise unary operation
-        pub fn applyUnaryOp(self: Self, comptime op: ops.UnaryOp) UnaryOpResultType(op) {
+        pub fn applyUnaryOp(self: ShapedTensor, comptime op: ops.UnaryOp) tensor_typing.UnaryOpResult(Self, op) {
             const grad_fn = struct {
                 pub fn gradFnImpl(grad_out: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
                     return autograd.unaryGrad(op, self, grad_out, param_grads);
@@ -488,18 +477,10 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             };
         }
 
-        pub fn BinaryOpResultType(comptime other: anytype, comptime op: ops.BinaryOp) type {
-            const Other = tensor_typing.TensorTypeOf(other);
-            const new_dtype: dtypes.DType = switch (op) {
-                .eq, .lt => .bool,
-                else => dtypes.resultDType(Self._dtype, Other._dtype),
-            };
-            return tensor_typing.TensorType(new_dtype, utils.broadcastShape(_shape, Other._shape));
-        }
         /// Apply an elementwise binary operation on two arrays, with broadcasting
         /// a and b must have the same "dtype class" meaning both must be float, bool, or int
         /// though different sizes are allowed.
-        pub fn applyBinaryOp(self: Self, other: anytype, comptime op: ops.BinaryOp) BinaryOpResultType(other, op) {
+        pub fn applyBinaryOp(self: ShapedTensor, other: anytype, comptime op: ops.BinaryOp) tensor_typing.BinaryOpResult(Self, tensor_typing.TensorTypeOf(other), op) {
             const Other = tensor_typing.TensorTypeOf(other);
             const bc_shape = utils.broadcastShape(_shape, Other._shape);
             const a = self.expand(bc_shape);
@@ -523,47 +504,13 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             };
         }
 
-        pub fn ReduceOpResultType(comptime reduce_dims: anytype) type {
-            const reduced_shape: [_ndims]u64 = switch (@typeInfo(@TypeOf(reduce_dims))) {
-                .ComptimeInt, .Int => blk: {
-                    const dim = signedToUnsignedDim(reduce_dims);
-                    if (dim < 0 or dim >= _ndims) {
-                        @compileError("Dimension index for single dimension reduce is out of bounds");
-                    }
-                    var reduced_shape: [_ndims]u64 = _shape;
-                    reduced_shape[dim] = 1;
-                    break :blk reduced_shape;
-                },
-                .Null, .Void => blk: {
-                    break :blk .{1} ** _ndims;
-                },
-                else => blk: {
-                    const dims = reduce_dims;
-                    if (dims.len > _ndims) {
-                        @compileError("Length of dimension index array for multi dimension reduce is out of bounds");
-                    }
-                    var reduce_dim_mask: [_ndims]bool = [_]bool{false} ** _ndims;
-                    var reduced_shape: [_ndims]u64 = _shape;
-                    for (0..dims.len) |d| {
-                        const norm = signedToUnsignedDim(d);
-                        if (reduce_dim_mask[norm]) {
-                            @compileError("Cannot reuse dimension index for multi dimensional reduce");
-                        }
-                        reduce_dim_mask[d] = true;
-                        reduced_shape[d] = 1;
-                    }
-                    break :blk reduced_shape;
-                },
-            };
-            return tensor_typing.TensorType(_dtype, reduced_shape);
-        }
         /// Perform a reduction across 1 or more (or all) dimensions of a
         /// Dimensions to reduce can be passed as a int for 1 dim, tuple for multiple dims, or null/void for all dims
         pub fn applyReduceOp(
-            self: Self,
+            self: ShapedTensor,
             comptime op: ops.ReduceOp,
             comptime reduce_dims: anytype,
-        ) ReduceOpResultType(reduce_dims) {
+        ) tensor_typing.ReduceOpResult(Self, reduce_dims) {
             // Use u16 here because []const u8 shows up as a string
             const reduce_dims_array: []const u8 = switch (@typeInfo(@TypeOf(reduce_dims))) {
                 .ComptimeInt, .Int => &[1]u8{signedToUnsignedDim(reduce_dims)},
@@ -602,36 +549,6 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     .grad_fn = autograd.noGrad,
                 },
                 .labels = self.labels,
-            };
-        }
-
-        pub fn Where(comptime true_value: anytype, comptime false_value: anytype) type {
-            const True = tensor_typing.TensorTypeOf(true_value);
-            const False = tensor_typing.TensorTypeOf(false_value);
-            std.debug.assert(True._dtype == False._dtype);
-            const bc_value_shape = utils.broadcastShape(True._shape, False._shape);
-            const bc_result_shape = utils.broadcastShape(_shape, bc_value_shape);
-            return tensor_typing.TensorType(True._dtype, bc_result_shape);
-        }
-        /// Conditional elementwise operator
-        /// out[i] = if (mask[i]) true_value[i] else false_value[i]
-        /// Supports broadcasting between all 3 tensors, but true value and false value are broadcasted together first and must also have the same dtype
-        pub fn where(mask: dtypes.BoolTensor(Self), true_value: anytype, false_value: anytype) where(true_value, false_value) {
-            const Out = Where(true_value, false_value);
-            const mask_expand = mask.expand(Out._shape);
-            const true_expand = tensor_typing.asTensor(true_value).expand(Out._shape);
-            const false_expand = tensor_typing.asTensor(false_value).expand(Out._shape);
-            return .{
-                .instr = .{
-                    .TernaryOp = .{
-                        .in = .{ mask_expand.toAnyTensor(), true_expand.toAnyTensor(), false_expand.toAnyTensor() },
-                        .op = .where,
-                    },
-                },
-                .autograd = &.{
-                    .grad_fn = autograd.noGrad,
-                    .constant = false,
-                },
             };
         }
 

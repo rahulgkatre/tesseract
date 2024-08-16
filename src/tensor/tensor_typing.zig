@@ -2,7 +2,8 @@ const std = @import("std");
 const tensor = @import("tensor.zig");
 const AnyTensor = @import("tensor.zig").AnyTensor;
 const Tensor = tensor.Tensor;
-
+const ops = @import("../ops.zig");
+const utils = @import("../utils.zig");
 const dtypes = @import("../dtypes.zig");
 
 // =============================================================================
@@ -61,26 +62,96 @@ pub fn TensorTuple(comptime tensors: anytype) type {
     return std.meta.Tuple(&types);
 }
 
-/// Utility function to enforce that T must be float-like
-pub fn FloatTensor(comptime T: type) type {
-    if (dtypes.isFloat(T._dtype)) {
-        return T;
+pub fn Pad(Self: type, padding: anytype) type {
+    if (Self == AnyTensor) unreachable;
+    const padded_dims = padding.len;
+    const padding_tuple: [padded_dims][2]u64 = padding;
+    std.debug.assert(padded_dims <= Self._ndims);
+    var new_shape: [Self._ndims]usize = Self._shape;
+    for (0..padded_dims) |dim| {
+        new_shape[Self._ndims - dim - 1] += padding_tuple[dim][0] + padding_tuple[dim][1];
     }
-    return TensorType(dtypes.default_float, T._shape);
+    return View(Self, new_shape);
+}
+
+pub fn View(Self: type, new_shape: anytype) type {
+    if (Self == AnyTensor) unreachable;
+    return TensorType(Self._dtype, new_shape);
+}
+
+pub fn UnaryOpResult(Self: type, op: ops.UnaryOp) type {
+    if (Self == AnyTensor) unreachable;
+    return switch (op) {
+        .exp2, .log2, .recip, .sin, .sqrt => FloatTensor(Self),
+        .neg => TensorType(Self._dtype, Self._shape),
+    };
+}
+
+pub fn BinaryOpResult(Self: type, Other: type, comptime op: ops.BinaryOp) type {
+    if (Self == AnyTensor) unreachable;
+    std.debug.assert(Other != AnyTensor);
+    const new_dtype: dtypes.DType = switch (op) {
+        .eq, .lt => .bool,
+        else => dtypes.resultDType(Self._dtype, Other._dtype),
+    };
+    return TensorType(new_dtype, utils.broadcastShape(Self._shape, Other._shape));
+}
+
+pub fn ReduceOpResult(Self: type, reduce_dims: anytype) type {
+    if (Self == AnyTensor) unreachable;
+    const reduced_shape: [Self._ndims]u64 = switch (@typeInfo(@TypeOf(reduce_dims))) {
+        .ComptimeInt, .Int => blk: {
+            const dim = Self.signedToUnsignedDim(reduce_dims);
+            if (dim < 0 or dim >= Self._ndims) {
+                @compileError("Dimension index for single dimension reduce is out of bounds");
+            }
+            var reduced_shape: [Self._ndims]u64 = Self._shape;
+            reduced_shape[dim] = 1;
+            break :blk reduced_shape;
+        },
+        .Null, .Void => blk: {
+            break :blk .{1} ** Self._ndims;
+        },
+        else => blk: {
+            const dims = reduce_dims;
+            if (dims.len > Self._ndims) {
+                @compileError("Length of dimension index array for multi dimension reduce is out of bounds");
+            }
+            var reduce_dim_mask: [Self._ndims]bool = [_]bool{false} ** Self._ndims;
+            var reduced_shape: [Self._ndims]u64 = Self._shape;
+            for (0..dims.len) |d| {
+                const norm = Self.signedToUnsignedDim(d);
+                if (reduce_dim_mask[norm]) {
+                    @compileError("Cannot reuse dimension index for multi dimensional reduce");
+                }
+                reduce_dim_mask[d] = true;
+                reduced_shape[d] = 1;
+            }
+            break :blk reduced_shape;
+        },
+    };
+    return TensorType(Self._dtype, reduced_shape);
+}
+
+/// Utility function to enforce that T must be float-like
+pub fn FloatTensor(comptime Self: type) type {
+    if (Self == AnyTensor) unreachable;
+    if (dtypes.isFloat(Self._dtype)) return Self;
+    return TensorType(dtypes.default_float, Self._shape);
 }
 
 /// Utility function to enforce that T must be bool-like
-pub fn BoolTensor(comptime T: type) type {
-    if (!dtypes.isBool(T.dtype)) {
-        @compileError("Must be bool datatype");
-    }
-    return TensorType(.bool, T.shape);
+pub fn BoolTensor(comptime Self: type) type {
+    if (Self == AnyTensor) unreachable;
+    if (!dtypes.isBool(Self._dtype)) @compileError("Must be bool datatype");
+
+    return TensorType(.bool, Self._shape);
 }
 
 /// Utility function to enforce that T must be int-like
-pub fn IntTensor(comptime T: type) type {
-    if (!dtypes.isInt(T.dtype)) {
-        @compileError("Must cast to int datatype first");
-    }
-    return TensorType(dtypes.default_int, T.shape);
+pub fn IntTensor(comptime Self: type) type {
+    if (Self == AnyTensor) unreachable;
+    if (!dtypes.isInt(Self._dtype)) @compileError("Must cast to int datatype first");
+
+    return TensorType(dtypes.default_int, Self._shape);
 }

@@ -48,7 +48,7 @@ pub fn fullLike(comptime input: anytype, value: dtypes.ZigType(input.dtype)) Ten
 
 fn UnaryFnType(comptime op: ops.UnaryOp) type {
     return @TypeOf(struct {
-        pub fn func(input: anytype) TensorTypeOf(input).UnaryOpResultType(op) {
+        pub fn func(input: anytype) tensor_typing.UnaryOpResult(TensorTypeOf(input), op) {
             return asTensor(input).applyUnaryOp(op);
         }
     }.func);
@@ -56,7 +56,7 @@ fn UnaryFnType(comptime op: ops.UnaryOp) type {
 
 fn unaryFn(comptime op: ops.UnaryOp) UnaryFnType(op) {
     return struct {
-        pub fn func(input: anytype) TensorTypeOf(input).UnaryOpResultType(op) {
+        pub fn func(input: anytype) tensor_typing.UnaryOpResult(TensorTypeOf(input), op) {
             return asTensor(input).applyUnaryOp(op);
         }
     }.func;
@@ -89,7 +89,7 @@ test unaryFn {
 
 fn BinaryFnType(comptime op: ops.BinaryOp) type {
     return @TypeOf(struct {
-        pub fn func(input: anytype, other: anytype) TensorTypeOf(input).BinaryOpResultType(other, op) {
+        pub fn func(input: anytype, other: anytype) tensor_typing.BinaryOpResult(TensorTypeOf(input), TensorTypeOf(other), op) {
             return asTensor(input).applyBinaryOp(other, op);
         }
     }.func);
@@ -97,7 +97,7 @@ fn BinaryFnType(comptime op: ops.BinaryOp) type {
 
 fn binaryFn(comptime op: ops.BinaryOp) BinaryFnType(op) {
     return struct {
-        pub fn func(input: anytype, other: anytype) TensorTypeOf(input).BinaryOpResultType(other, op) {
+        pub fn func(input: anytype, other: anytype) tensor_typing.BinaryOpResult(TensorTypeOf(input), TensorTypeOf(other), op) {
             return asTensor(input).applyBinaryOp(other, op);
         }
     }.func;
@@ -134,7 +134,7 @@ test binaryFn {
 
 fn ReduceFnType(comptime op: ops.ReduceOp) type {
     return @TypeOf(struct {
-        pub fn func(input: anytype, comptime dims: anytype) TensorTypeOf(input).ReduceOpResultType(dims) {
+        pub fn func(input: anytype, comptime dims: anytype) tensor_typing.ReduceOpResult(TensorTypeOf(input), dims) {
             return asTensor(input).applyReduceOp(op, dims);
         }
     }.func);
@@ -142,7 +142,7 @@ fn ReduceFnType(comptime op: ops.ReduceOp) type {
 
 fn reduceFn(comptime op: ops.ReduceOp) ReduceFnType(op) {
     return struct {
-        pub fn func(input: anytype, comptime dims: anytype) TensorTypeOf(input).ReduceOpResultType(dims) {
+        pub fn func(input: anytype, comptime dims: anytype) tensor_typing.ReduceOpResult(TensorTypeOf(input), dims) {
             return asTensor(input).applyReduceOp(op, dims);
         }
     }.func;
