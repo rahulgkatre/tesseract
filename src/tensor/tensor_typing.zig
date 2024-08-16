@@ -63,10 +63,10 @@ pub fn TensorTuple(comptime tensors: anytype) type {
 
 /// Utility function to enforce that T must be float-like
 pub fn FloatTensor(comptime T: type) type {
-    if (dtypes.isFloat(T.dtype)) {
+    if (dtypes.isFloat(T._dtype)) {
         return T;
     }
-    return TensorType(dtypes.default_float, T.shape);
+    return TensorType(dtypes.default_float, T._shape);
 }
 
 /// Utility function to enforce that T must be bool-like

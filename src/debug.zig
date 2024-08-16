@@ -21,8 +21,8 @@ pub fn dataflowViz(entrypoints: anytype, writer: anytype, allocator: std.mem.All
                 },
                 .out = @intFromPtr(out),
                 .in = @intFromPtr(in),
-                .dtype = utils.rawTagName(in.layout.dtype),
-                .shape = in.layout.shape,
+                .dtype = utils.rawTagName(in.dtype()),
+                .shape = in.shape(),
             });
         }
     };
@@ -57,7 +57,7 @@ pub fn dataflowViz(entrypoints: anytype, writer: anytype, allocator: std.mem.All
                         .type = utils.rawTypeName(@TypeOf(info.op)),
                         .op = utils.rawTagName(info.op),
                         .out = @intFromPtr(out),
-                        .data = utils.rawTagName(out.layout.dtype),
+                        .data = utils.rawTagName(out.dtype()),
                     }),
                     .view => writer.print(
                         \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\nshape {[shape]any}\nstrides {[strides]any}\noffset {[offset]d}"];
@@ -66,9 +66,9 @@ pub fn dataflowViz(entrypoints: anytype, writer: anytype, allocator: std.mem.All
                         .type = utils.rawTypeName(@TypeOf(info.op)),
                         .op = utils.rawTagName(info.op),
                         .out = @intFromPtr(out),
-                        .shape = out.layout.shape,
-                        .strides = out.layout.strides,
-                        .offset = out.layout.offset,
+                        .shape = out.shape(),
+                        .strides = out.strides(),
+                        .offset = out.offset(),
                     }),
                     else => writer.print(
                         \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\nshape: {[data]any}"];
@@ -77,7 +77,7 @@ pub fn dataflowViz(entrypoints: anytype, writer: anytype, allocator: std.mem.All
                         .type = utils.rawTypeName(@TypeOf(info.op)),
                         .op = utils.rawTagName(info.op),
                         .out = @intFromPtr(out),
-                        .data = out.layout.shape,
+                        .data = out.shape(),
                     }),
                 };
             },
@@ -150,10 +150,10 @@ pub fn dataflowViz(entrypoints: anytype, writer: anytype, allocator: std.mem.All
                 , .{
                     .op = utils.rawTagName(info.op),
                     .out = @intFromPtr(out),
-                    .dtype = utils.rawTagName(out.layout.dtype),
-                    .shape = out.layout.shape,
-                    .strides = out.layout.strides,
-                    .offset = out.layout.offset,
+                    .dtype = utils.rawTagName(out.dtype()),
+                    .shape = out.shape(),
+                    .strides = out.strides(),
+                    .offset = out.offset(),
                     .constant = out.autograd.constant,
                     .label = out.labels.name orelse "null",
                 });

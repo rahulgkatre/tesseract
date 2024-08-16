@@ -45,7 +45,7 @@ pub fn arrayDelete(comptime len: u8, array: [len]u64, index: usize) [len - 1]u64
     return new_array;
 }
 
-pub fn ravelMultiIndex(comptime ndims: u8, strides: [ndims]u64, offset: u64, multi_idx: [ndims]u64) usize {
+pub fn ravelMultiIndex(comptime ndims: u8, strides: *const [ndims]u64, offset: u64, multi_idx: [ndims]u64) usize {
     var flat_idx = offset;
     for (multi_idx, strides) |idx, stride| {
         flat_idx += idx * stride;
@@ -197,7 +197,7 @@ pub fn simplifiedView(input: anytype) struct {
 } {
     // TODO: Simplify contiguous or broadcasted sub intervals of the view
     const t = tensor_typing.asTensor(input);
-    if (t.ndims == 0) {
+    if (t._ndims == 0) {
         return .{
             .ndims = 0,
             .shape = &.{},
@@ -207,18 +207,18 @@ pub fn simplifiedView(input: anytype) struct {
     }
 
     var start_dim: u8 = 0;
-    var end_dim = t.ndims;
-    var simplified_shape = t.shape.*;
+    var end_dim = t._ndims;
+    var simplified_shape = t._shape.*;
     var simplified_strides = t.strides.*;
 
-    for (1..t.ndims) |dim| {
-        if (simplified_strides[t.ndims - dim - 1] == 0) {
-            simplified_shape[t.ndims - dim - 1] *= simplified_shape[t.ndims - dim];
-            simplified_strides[t.ndims - dim - 1] = 0;
+    for (1..t._ndims) |dim| {
+        if (simplified_strides[t._ndims - dim - 1] == 0) {
+            simplified_shape[t._ndims - dim - 1] *= simplified_shape[t._ndims - dim];
+            simplified_strides[t._ndims - dim - 1] = 0;
             start_dim += 1;
-        } else if (isContiguous(simplified_strides[t.ndims - dim - 1 ..])) {
-            simplified_shape[t.ndims - dim - 1] *= simplified_shape[t.ndims - dim];
-            simplified_strides[t.ndims - dim - 1] = 1;
+        } else if (isContiguous(simplified_strides[t._ndims - dim - 1 ..])) {
+            simplified_shape[t._ndims - dim - 1] *= simplified_shape[t._ndims - dim];
+            simplified_strides[t._ndims - dim - 1] = 1;
             end_dim -= 1;
         } else {
             break;

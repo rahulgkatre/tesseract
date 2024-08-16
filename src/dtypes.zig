@@ -15,7 +15,7 @@ pub const bf16 = packed struct {
 };
 
 test bf16 {
-    try std.testing.expectEqual(tensor.Tensor([2][3]bf16).dtype, .bf16);
+    try std.testing.expectEqual(tensor.Tensor([2][3]bf16)._dtype, .bf16);
 }
 
 /// Nvidia Tensor Float
@@ -26,6 +26,7 @@ pub const TF32 = packed struct {
 };
 
 pub const DType = enum(u8) {
+    anyopaque,
     comptime_int,
     comptime_float,
     bool,
@@ -52,7 +53,7 @@ pub const default_int: DType = .i32;
 
 pub fn isComptime(t: DType) bool {
     return switch (t) {
-        .bool, .comptime_float, .comptime_int => true,
+        .anyopaque, .bool, .comptime_float, .comptime_int => true,
         else => false,
     };
 }
@@ -90,7 +91,7 @@ pub fn isBool(t: DType) bool {
 
 pub fn bits(t: DType) u8 {
     return switch (t) {
-        .comptime_int, .comptime_float => 0,
+        .anyopaque, .comptime_int, .comptime_float => 0,
         .bool => 1,
         .u8, .i8 => 8,
         .u16, .i16, .f16 => 16,
@@ -105,6 +106,7 @@ pub fn bits(t: DType) u8 {
 /// This function provides a way to get that type
 pub fn ZigType(comptime dtype: DType) type {
     return switch (dtype) {
+        .anyopaque => anyopaque,
         .comptime_float => comptime_float,
         .comptime_int => comptime_int,
         .bool => bool,

@@ -177,7 +177,7 @@ test reduceFn {
 
 pub fn Expand(input: anytype, comptime new_shape: anytype) type {
     const A = TensorTypeOf(input);
-    return TensorType(A.dtype, utils.broadcastShape(A.shape, new_shape));
+    return TensorType(A._dtype, utils.broadcastShape(A._shape, new_shape));
 }
 /// Expand a tensor along 1 or more dimensions with size 1 and stride 0
 /// The new shape must broadcast with the old shape
@@ -199,7 +199,7 @@ pub fn expand(input: anytype, comptime new_shape: anytype) Expand(input, new_sha
     return a.view(
         new_shape,
         bc_strides,
-        a.layout.offset,
+        a.offset(),
     );
 }
 
@@ -214,48 +214,48 @@ pub fn Flatten(input: anytype, comptime dims: DimRange) type {
     if (from == to) {
         return A;
     }
-    var new_shape: [A.ndims - (to - from)]u64 = undefined;
+    var new_shape: [A._ndims - (to - from)]u64 = undefined;
     new_shape[from] = 1;
-    for (0..A.ndims) |d| {
+    for (0..A._ndims) |d| {
         if (d < from or d > to) {
-            new_shape[d] = A.shape[d];
+            new_shape[d] = A._shape[d];
         } else {
-            new_shape[from] *= A.shape[d];
+            new_shape[from] *= A._shape[d];
         }
     }
     return Reshape(input, new_shape);
 }
 /// Flatten a range of dims, collapsing them to 1 dimension
 pub fn flatten(input: anytype, comptime dims: DimRange) Flatten(input, dims) {
-    return asTensor(input).reshape(Flatten(input, dims).shape);
+    return asTensor(input).reshape(Flatten(input, dims)._shape);
 }
 
 // =============================================================================
 //
 // =============================================================================
 /// Get a mask of where padding values exist in the tensor
-pub fn paddingMask(input: anytype, comptime padding: anytype) TensorType(.bool, TensorTypeOf(input).shape) {
+pub fn paddingMask(input: anytype, comptime padding: anytype) TensorType(.bool, TensorTypeOf(input)._shape) {
     const a = asTensor(input);
-    const not_padding = TensorType(.bool, a.shape).full(true);
+    const not_padding = TensorType(.bool, a._shape).full(true);
     return not_padding.pad(padding, .{ .constant = .{ .value = false } });
 }
 
 // =============================================================================
 // Permute
 // =============================================================================
-pub fn Permute(comptime input: anytype, comptime perm: [TensorTypeOf(input).ndims]u8) type {
+pub fn Permute(comptime input: anytype, comptime perm: [TensorTypeOf(input)._ndims]u8) type {
     const A = TensorTypeOf(input);
-    return Reshape(input, utils.arrayPermute(u64, A.ndims, A.shape, perm));
+    return Reshape(input, utils.arrayPermute(u64, A._ndims, A._shape, perm));
 }
 /// Permute the dimensions of the  A valid permutation must contain
 /// values from 0 to ndims and each value must appear exactly once.
-pub fn permute(comptime input: anytype, comptime perm: [TensorTypeOf(input).ndims]u8) Permute(input, perm) {
+pub fn permute(comptime input: anytype, comptime perm: [TensorTypeOf(input)._ndims]u8) Permute(input, perm) {
     const A = TensorTypeOf(input);
     const a = asTensor(input);
     return a.view(
-        Permute(input, perm).shape,
-        utils.arrayPermute(u64, A.ndims, a.layout.strides[0..A.ndims].*, perm),
-        a.layout.offset,
+        Permute(input, perm)._shape,
+        utils.arrayPermute(u64, A._ndims, a.layout.strides[0..A._ndims].*, perm),
+        a.offset(),
     );
 }
 test permute {
@@ -271,14 +271,14 @@ test permute {
 
 pub fn Reshape(comptime input: anytype, comptime new_shape: anytype) type {
     const OldType = TensorTypeOf(input);
-    const NewType = TensorType(OldType.dtype, new_shape);
+    const NewType = TensorType(OldType._dtype, new_shape);
     std.debug.assert(OldType.num_elements == NewType.num_elements);
     return NewType;
 }
 /// Change the shape of the  This changes the type too.
 pub fn reshape(comptime input: anytype, comptime new_shape: anytype) Reshape(input, new_shape) {
     const a = asTensor(input);
-    return a.contiguous().view(new_shape, Reshape(a, new_shape).contiguous_strides, a.layout.offset);
+    return a.contiguous().view(new_shape, Reshape(a, new_shape).contiguous_strides, a.offset());
 }
 test reshape {
     const tensor1 = comptime Tensor([2][3][4]i32).full(0);
@@ -295,18 +295,18 @@ test reshape {
 // =============================================================================
 pub fn Squeeze(comptime input: anytype, comptime dim: i16) type {
     const A = TensorTypeOf(input);
-    if (A.shape[A.signedToUnsignedDim(dim)] != 1) {
+    if (A._shape[A.signedToUnsignedDim(dim)] != 1) {
         @compileError("Cannot squeeze as dimension size is not 1");
     }
-    return Reshape(input, utils.arrayDelete(A.ndims, A.shape, A.signedToUnsignedDim(dim)));
+    return Reshape(input, utils.arrayDelete(A._ndims, A._shape, A.signedToUnsignedDim(dim)));
 }
 /// Remove a dim of size 1 from the shape of the input
 pub fn squeeze(comptime input: anytype, comptime dim: i16) Squeeze(input, dim) {
     const A = TensorTypeOf(input);
     const a = asTensor(input);
     return a.view(
-        Squeeze(input, dim).shape,
-        utils.arrayDelete(A.ndims, a.layout.strides[0..A.ndims].*, A.signedToUnsignedDim(dim)),
+        Squeeze(input, dim)._shape,
+        utils.arrayDelete(A._ndims, a.layout.strides[0..A._ndims].*, A.signedToUnsignedDim(dim)),
         a.layout.offset,
     );
 }
@@ -316,11 +316,11 @@ pub fn squeeze(comptime input: anytype, comptime dim: i16) Squeeze(input, dim) {
 // =============================================================================
 pub fn Transpose(comptime input: anytype, comptime dim1: i16, comptime dim2: i16) type {
     const Type = TensorTypeOf(input);
-    const norm1 = utils.signedToUnsignedDimNdims(Type.ndims, dim1);
-    const norm2 = utils.signedToUnsignedDimNdims(Type.ndims, dim2);
-    var new_shape = Type.shape;
-    new_shape[norm1] = Type.shape[norm2];
-    new_shape[norm2] = Type.shape[norm1];
+    const norm1 = utils.signedToUnsignedDimNdims(Type._ndims, dim1);
+    const norm2 = utils.signedToUnsignedDimNdims(Type._ndims, dim2);
+    var new_shape = Type._shape;
+    new_shape[norm1] = Type._shape[norm2];
+    new_shape[norm2] = Type._shape[norm1];
     return Reshape(input, new_shape);
 }
 /// Transpose two dimensions of the  Similar to permute, but only for two dimensions.
@@ -334,9 +334,9 @@ pub fn transpose(comptime input: anytype, comptime dim1: i16, comptime dim2: i16
         new_strides[norm1] = a.layout.strides[norm2];
         new_strides[norm2] = a.layout.strides[norm1];
         return a.view(
-            Transpose(input, norm1, norm2).shape,
+            Transpose(input, norm1, norm2)._shape,
             new_strides,
-            a.layout.offset,
+            a.offset(),
         );
     } else {
         return a;
@@ -350,8 +350,8 @@ test transpose {
     const tensor1 = comptime Tensor([2][1][4]i32).full(1);
     const tensor2 = comptime tensor1.T();
     try std.testing.expectEqualDeep(tensor2, comptime tensor1.transpose(-2, -1));
-    try std.testing.expectEqualDeep(tensor1.layout.shape, comptime tensor2.T().layout.shape);
-    try std.testing.expectEqualDeep(tensor1.layout.strides, comptime tensor2.T().layout.strides);
+    try std.testing.expectEqualDeep(tensor1.layout.shape, (comptime tensor2.T()).layout.shape);
+    try std.testing.expectEqualDeep(tensor1.layout.strides, (comptime tensor2.T()).layout.strides);
 }
 
 // =============================================================================
@@ -359,16 +359,16 @@ test transpose {
 // =============================================================================
 pub fn Unsqueeze(comptime input: anytype, comptime dim: i16) type {
     const A = TensorTypeOf(input);
-    return Reshape(input, utils.arrayInsert(A.ndims, A.shape, A.signedToUnsignedDim(dim), 1));
+    return Reshape(input, utils.arrayInsert(A._ndims, A._shape, A.signedToUnsignedDim(dim), 1));
 }
 /// Insert a dim of size 1 into the shape of the tensor
 pub fn unsqueeze(comptime input: anytype, comptime dim: i16) Unsqueeze(input, dim) {
     const A = TensorTypeOf(input);
     const a = asTensor(input);
     return a.view(
-        Unsqueeze(input, dim).shape,
+        Unsqueeze(input, dim)._shape,
         utils.arrayInsert(a.layout.ndims, a.layout.strides[0..a.layout.ndims].*, A.signedToUnsignedDim(dim), 0),
-        a.layout.offset,
+        a.offset(),
     );
 }
 
@@ -429,10 +429,10 @@ pub fn MatMul(input: anytype, other: anytype) type {
     // Matrix multiplication invariant
     // (n x m1) matmul (m2 x p) -> (n x p) iff m1 = m2
     // otherwise matmul is invalid, compile error
-    const n = if (A.ndims == 1) 1 else A.shape[A.ndims - 2];
-    const m = A.shape[A.ndims - 1];
-    const b_m = if (B.ndims == 1) 1 else B.shape[B.ndims - 2];
-    const p = B.shape[B.ndims - 1];
+    const n = if (A._ndims == 1) 1 else A._shape[A._ndims - 2];
+    const m = A._shape[A._ndims - 1];
+    const b_m = if (B._ndims == 1) 1 else B._shape[B._ndims - 2];
+    const p = B._shape[B._ndims - 1];
 
     if (m != b_m) {
         @compileError(std.fmt.comptimePrint(
@@ -441,25 +441,29 @@ pub fn MatMul(input: anytype, other: anytype) type {
             \\Tensor A: {a}
             \\Tensor B: {a}
             \\A.shape[n-2] = {d}, A.shape[n-1] = {d}, B.shape[n-2] = {d}, B.shape[n-1] = {d}
-        , .{ A.shape, B.shape, n, m, b_m, p }));
+        , .{ A._shape, B._shape, n, m, b_m, p }));
     }
 
-    const mm_ndims = @max(A.ndims, B.ndims);
+    const mm_ndims = @max(A._ndims, B._ndims);
     var mm_shape: [mm_ndims]u64 = undefined;
     // Expanding check, look only at batch dimensions (everything before last 2 dimensions)
-    const mm_bc_shape: [mm_ndims - 2]u64 = utils.broadcastShape(A.shape[0 .. A.ndims - 2].*, B.shape[0 .. B.ndims - 2].*);
+    const mm_bc_shape: [mm_ndims - 2]u64 = utils.broadcastShape(A._shape[0 .. A._ndims - 2].*, B._shape[0 .. B._ndims - 2].*);
     @memcpy(mm_shape[0 .. mm_ndims - 2], &mm_bc_shape);
     mm_shape[mm_ndims - 2] = n;
     mm_shape[mm_ndims - 1] = p;
-    return TensorType(A.dtype, mm_shape);
+    return TensorType(A._dtype, mm_shape);
 }
 pub fn matmul(input: anytype, other: anytype) MatMul(input, other) {
     const a = asTensor(input);
     const b = asTensor(other);
-    return a.unsqueeze(a.layout.ndims - 1)
-        .mul(b.transpose(a.layout.ndims - 2, b.layout.ndims - 1).unsqueeze(b.layout.ndims - 2))
-        .sum(a.layout.ndims)
-        .squeeze(a.layout.ndims);
+
+    const a_ndims = a.layout.ndims;
+    const b_ndims = b.layout.ndims;
+
+    return a.unsqueeze(a_ndims - 1)
+        .mul(b.transpose(a_ndims - 2, b_ndims - 1).unsqueeze(b_ndims - 2))
+        .sum(a_ndims)
+        .squeeze(a_ndims);
 }
 
 pub fn linear(input: anytype, weight: anytype, bias: anytype) MatMul(input, weight) {
@@ -468,10 +472,10 @@ pub fn linear(input: anytype, weight: anytype, bias: anytype) MatMul(input, weig
 
 pub fn Window1d(input: anytype, window: u64) type {
     const I = TensorTypeOf(input);
-    return TensorType(I.dtype, I.shape[0 .. I.ndims - 1] ++ .{ I.shape[I.ndims - 1] - window + 1, window });
+    return TensorType(I._dtype, I._shape[0 .. I._ndims - 1] ++ .{ I._shape[I._ndims - 1] - window + 1, window });
 }
 pub fn window1d(input: anytype, window: u64) Window1d(input, window) {
     const Result = Window1d(input, window);
     const a = asTensor(input);
-    return a.view(Result.shape, a.strides.* ++ .{a.strides[a.ndims - 1]}, a.offset);
+    return a.view(Result._shape, a.strides.* ++ .{a.strides[a._ndims - 1]}, a.offset);
 }
