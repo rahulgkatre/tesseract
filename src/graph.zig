@@ -1,7 +1,7 @@
 const std = @import("std");
 const ops = @import("ops.zig");
 const dtypes = @import("dtypes.zig");
-const AnyTensor = @import("tensor/anytensor.zig").AnyTensor;
+const AnyTensor = @import("tensor/tensor.zig").AnyTensor;
 const tensor = @import("tensor/tensor.zig");
 const tensor_typing = @import("tensor/tensor_typing.zig");
 
@@ -56,7 +56,7 @@ pub const Graph = struct {
 
     pub fn trace(graph: *Graph, comptime out: anytype, printBytecode: bool) !void {
         const out_any = comptime tensor_typing.asTensor(out).toAnyTensor();
-        switch (comptime out_any.meta.instr) {
+        switch (comptime out_any.instr.*) {
             inline else => |instr| inline for (instr.in) |in| {
                 const in_tensor = comptime @as(*const AnyTensor, in);
                 if (!graph.compute_nodes.contains(in_tensor)) {
@@ -68,10 +68,10 @@ pub const Graph = struct {
             try graph.compute(out_any);
             if (printBytecode) {
                 std.debug.print("{s: <32}  {:<24}@{x}  {any}\n", .{
-                    out_any.meta.label orelse "",
+                    out_any.labels.name orelse "",
                     tensor_typing.TensorTypeOf(out_any).ArrayType(),
                     @intFromPtr(out_any),
-                    out_any.meta.instr,
+                    out_any.instr,
                 });
             }
         }

@@ -1,7 +1,7 @@
 const std = @import("std");
 const utils = @import("utils.zig");
 const dtypes = @import("dtypes.zig");
-const AnyTensor = @import("tensor/anytensor.zig").AnyTensor;
+const AnyTensor = @import("tensor/tensor.zig").AnyTensor;
 
 // Arithmetic operations for unary functions, binary functions,
 // and reducing a dimension of a tensor to a single value by applying some binary function

@@ -78,9 +78,9 @@ test unaryFn {
     _ = sqrt;
     const tensor1 = comptime Tensor([2][3][4]i32).full(3);
     const tensor2 = comptime tensor1.neg();
-    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor2.shape[0..tensor2.ndims]);
-    try std.testing.expect(tensor2.meta.instr.UnaryOp.op == .neg);
-    try std.testing.expectEqual(tensor2.meta.instr.UnaryOp.in[0].toTensor().*, tensor1);
+    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor2.layout.shape);
+    try std.testing.expect(tensor2.instr.UnaryOp.op == .neg);
+    try std.testing.expectEqual(tensor2.instr.UnaryOp.in[0].toTensor().*, tensor1);
 }
 
 // =============================================================================
@@ -122,10 +122,10 @@ test binaryFn {
     const tensor1 = comptime Tensor([2][1][4]i32).full(2);
     const tensor2 = comptime Tensor([3][1]i32).full(3);
     const tensor3 = comptime tensor1.add(tensor2);
-    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor3.shape[0..tensor3.ndims]);
-    try std.testing.expect(tensor3.meta.instr.BinaryOp.op == .add);
-    try std.testing.expectEqualDeep(tensor3.meta.instr.BinaryOp.in[0].meta.instr.DataOp.in[0].toTensor().*, tensor1);
-    try std.testing.expectEqualDeep(tensor3.meta.instr.BinaryOp.in[1].meta.instr.DataOp.in[0].toTensor().*, tensor2);
+    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 3, 4 }, tensor3.layout.shape);
+    try std.testing.expect(tensor3.instr.BinaryOp.op == .add);
+    try std.testing.expectEqualDeep(tensor3.instr.BinaryOp.in[0].instr.DataOp.in[0].toTensor().*, tensor1);
+    try std.testing.expectEqualDeep(tensor3.instr.BinaryOp.in[1].instr.DataOp.in[0].toTensor().*, tensor2);
 }
 
 // =============================================================================
@@ -159,16 +159,16 @@ test reduceFn {
     const tensor1 = comptime Tensor([2][3][4]i32).full(5);
 
     const tensor2 = comptime tensor1.sum(1);
-    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 1, 4 }, tensor2.shape[0..tensor1.ndims]);
-    try std.testing.expect(tensor2.meta.instr.ReduceOp.op == .add);
-    try std.testing.expectEqual(tensor2.meta.instr.ReduceOp.in[0].toTensor().*, tensor1);
-    try std.testing.expectEqual(tensor2.meta.instr.ReduceOp.args.mask[0..tensor2.ndims].*, ([_]bool{ false, true, false }));
+    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 1, 4 }, tensor2.layout.shape);
+    try std.testing.expect(tensor2.instr.ReduceOp.op == .add);
+    try std.testing.expectEqual(tensor2.instr.ReduceOp.in[0].toTensor().*, tensor1);
+    try std.testing.expectEqual(tensor2.instr.ReduceOp.args.mask, &[_]bool{ false, true, false });
 
     const tensor3 = comptime tensor1.sum(.{ 0, 1 });
-    try std.testing.expectEqualSlices(u64, &[_]u64{ 1, 1, 4 }, tensor3.shape[0..tensor3.ndims]);
-    try std.testing.expect(tensor3.meta.instr.ReduceOp.op == .add);
-    try std.testing.expectEqual(tensor3.meta.instr.ReduceOp.in[0].toTensor().*, tensor1);
-    try std.testing.expectEqualDeep(tensor3.meta.instr.ReduceOp.args.mask[0..tensor3.ndims], &[_]bool{ true, true, false });
+    try std.testing.expectEqualSlices(u64, &[_]u64{ 1, 1, 4 }, tensor3.layout.shape);
+    try std.testing.expect(tensor3.instr.ReduceOp.op == .add);
+    try std.testing.expectEqual(tensor3.instr.ReduceOp.in[0].toTensor().*, tensor1);
+    try std.testing.expectEqualDeep(tensor3.instr.ReduceOp.args.mask, &[_]bool{ true, true, false });
 }
 
 // =============================================================================
@@ -191,7 +191,7 @@ pub fn expand(input: anytype, comptime new_shape: anytype) Expand(input, new_sha
     const bc_strides: [new_shape.len]u64 = blk: {
         var bc_strides: [new_shape.len]u64 = undefined;
         for (0..new_shape.len) |i| {
-            bc_strides[new_shape.len - i - 1] = if (i >= a.ndims) 0 else a.strides[a.ndims - i - 1];
+            bc_strides[new_shape.len - i - 1] = if (i >= a.layout.ndims) 0 else a.layout.strides[a.layout.ndims - i - 1];
         }
         break :blk bc_strides;
     };
@@ -199,7 +199,7 @@ pub fn expand(input: anytype, comptime new_shape: anytype) Expand(input, new_sha
     return a.view(
         new_shape,
         bc_strides,
-        a.offset,
+        a.layout.offset,
     );
 }
 
@@ -254,15 +254,15 @@ pub fn permute(comptime input: anytype, comptime perm: [TensorTypeOf(input).ndim
     const a = asTensor(input);
     return a.view(
         Permute(input, perm).shape,
-        utils.arrayPermute(u64, A.ndims, a.strides[0..A.ndims].*, perm),
-        a.offset,
+        utils.arrayPermute(u64, A.ndims, a.layout.strides[0..A.ndims].*, perm),
+        a.layout.offset,
     );
 }
 test permute {
     const tensor1 = comptime Tensor([2][3][4]f32).full(0);
     const tensor2 = comptime tensor1.permute(.{ 0, 2, 1 });
-    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 4, 3 }, tensor2.shape[0..tensor2.ndims]);
-    try std.testing.expectEqualSlices(u64, &[_]u64{ 12, 1, 4 }, tensor2.strides[0..tensor2.ndims]);
+    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 4, 3 }, tensor2.layout.shape);
+    try std.testing.expectEqualSlices(u64, &[_]u64{ 12, 1, 4 }, tensor2.layout.strides);
 }
 
 // =============================================================================
@@ -278,16 +278,16 @@ pub fn Reshape(comptime input: anytype, comptime new_shape: anytype) type {
 /// Change the shape of the  This changes the type too.
 pub fn reshape(comptime input: anytype, comptime new_shape: anytype) Reshape(input, new_shape) {
     const a = asTensor(input);
-    return a.contiguous().view(new_shape, Reshape(a, new_shape).contiguous_strides, a.offset);
+    return a.contiguous().view(new_shape, Reshape(a, new_shape).contiguous_strides, a.layout.offset);
 }
 test reshape {
     const tensor1 = comptime Tensor([2][3][4]i32).full(0);
     const tensor2 = comptime tensor1.reshape(.{ 12, 2 });
     const tensor3 = comptime tensor2.reshape(.{24});
-    try std.testing.expectEqualSlices(u64, &[_]u64{ 12, 2 }, tensor2.shape[0..tensor2.ndims]);
-    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 1 }, tensor2.strides[0..tensor2.ndims]);
-    try std.testing.expectEqualSlices(u64, &[_]u64{24}, tensor3.shape[0..tensor3.ndims]);
-    try std.testing.expectEqualSlices(u64, &[_]u64{1}, tensor3.strides[0..tensor3.ndims]);
+    try std.testing.expectEqualSlices(u64, &[_]u64{ 12, 2 }, tensor2.layout.shape);
+    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 1 }, tensor2.layout.strides);
+    try std.testing.expectEqualSlices(u64, &[_]u64{24}, tensor3.layout.shape);
+    try std.testing.expectEqualSlices(u64, &[_]u64{1}, tensor3.layout.strides);
 }
 
 // =============================================================================
@@ -306,8 +306,8 @@ pub fn squeeze(comptime input: anytype, comptime dim: i16) Squeeze(input, dim) {
     const a = asTensor(input);
     return a.view(
         Squeeze(input, dim).shape,
-        utils.arrayDelete(A.ndims, a.strides[0..A.ndims].*, A.signedToUnsignedDim(dim)),
-        a.offset,
+        utils.arrayDelete(A.ndims, a.layout.strides[0..A.ndims].*, A.signedToUnsignedDim(dim)),
+        a.layout.offset,
     );
 }
 
@@ -330,13 +330,13 @@ pub fn transpose(comptime input: anytype, comptime dim1: i16, comptime dim2: i16
     const norm1 = A.signedToUnsignedDim(dim1);
     const norm2 = A.signedToUnsignedDim(dim2);
     if (norm1 != norm2) {
-        var new_strides = a.strides[0..a.ndims].*;
-        new_strides[norm1] = a.strides[norm2];
-        new_strides[norm2] = a.strides[norm1];
+        var new_strides = a.layout.strides[0..a.layout.ndims].*;
+        new_strides[norm1] = a.layout.strides[norm2];
+        new_strides[norm2] = a.layout.strides[norm1];
         return a.view(
             Transpose(input, norm1, norm2).shape,
             new_strides,
-            a.offset,
+            a.layout.offset,
         );
     } else {
         return a;
@@ -349,10 +349,9 @@ pub fn T(comptime input: anytype) Transpose(input, -2, -1) {
 test transpose {
     const tensor1 = comptime Tensor([2][1][4]i32).full(1);
     const tensor2 = comptime tensor1.T();
-    const ndims = tensor1.ndims;
     try std.testing.expectEqualDeep(tensor2, comptime tensor1.transpose(-2, -1));
-    try std.testing.expectEqualDeep(tensor1.shape[0..ndims], comptime tensor2.T().shape[0..ndims]);
-    try std.testing.expectEqualDeep(tensor1.strides[0..ndims], comptime tensor2.T().strides[0..ndims]);
+    try std.testing.expectEqualDeep(tensor1.layout.shape, comptime tensor2.T().layout.shape);
+    try std.testing.expectEqualDeep(tensor1.layout.strides, comptime tensor2.T().layout.strides);
 }
 
 // =============================================================================
@@ -368,8 +367,8 @@ pub fn unsqueeze(comptime input: anytype, comptime dim: i16) Unsqueeze(input, di
     const a = asTensor(input);
     return a.view(
         Unsqueeze(input, dim).shape,
-        utils.arrayInsert(a.ndims, a.strides[0..a.ndims].*, A.signedToUnsignedDim(dim), 0),
-        a.offset,
+        utils.arrayInsert(a.layout.ndims, a.layout.strides[0..a.layout.ndims].*, A.signedToUnsignedDim(dim), 0),
+        a.layout.offset,
     );
 }
 
@@ -457,10 +456,10 @@ pub fn MatMul(input: anytype, other: anytype) type {
 pub fn matmul(input: anytype, other: anytype) MatMul(input, other) {
     const a = asTensor(input);
     const b = asTensor(other);
-    return a.unsqueeze(a.ndims - 1)
-        .mul(b.transpose(a.ndims - 2, b.ndims - 1).unsqueeze(b.ndims - 2))
-        .sum(a.ndims)
-        .squeeze(a.ndims);
+    return a.unsqueeze(a.layout.ndims - 1)
+        .mul(b.transpose(a.layout.ndims - 2, b.layout.ndims - 1).unsqueeze(b.layout.ndims - 2))
+        .sum(a.layout.ndims)
+        .squeeze(a.layout.ndims);
 }
 
 pub fn linear(input: anytype, weight: anytype, bias: anytype) MatMul(input, weight) {

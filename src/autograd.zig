@@ -1,7 +1,7 @@
 const std = @import("std");
 const tensor = @import("tensor/tensor.zig");
 const F = @import("tensor/functions.zig");
-const AnyTensor = @import("tensor/anytensor.zig").AnyTensor;
+const AnyTensor = @import("tensor/tensor.zig").AnyTensor;
 
 const dtypes = @import("dtypes.zig");
 const ops = @import("ops.zig");
@@ -15,20 +15,25 @@ const IntTensor = tensor_typing.IntTensor;
 const BoolTensor = tensor_typing.BoolTensor;
 const FloatTensor = tensor_typing.FloatTensor;
 
+pub const Autograd = struct {
+    grad_fn: *const anyopaque,
+    constant: bool,
+};
+
 pub fn backwards(x: anytype) []const *const AnyTensor {
     const initial_grad = tensor_typing.asTensor(1.0);
     const params = utils.paramsOf(x);
 
     var zero_grads: [params.len]*const AnyTensor = undefined;
     for (params, 0..) |p, i| {
-        zero_grads[i] = asTensor(0.0).setLabel("grad_" ++ p.meta.label.?).toAnyTensor();
+        zero_grads[i] = asTensor(0.0).setName("grad_" ++ p.labels.name.?).toAnyTensor();
     }
 
     return backpropStep(x, initial_grad, &zero_grads);
 }
 
 pub fn backpropStep(x: anytype, grad: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
-    const gradFn: *const fn (anytype, []const *const AnyTensor) []const *const AnyTensor = @ptrCast(x.meta.grad_fn);
+    const gradFn: *const fn (anytype, []const *const AnyTensor) []const *const AnyTensor = @ptrCast(x.autograd.grad_fn);
     return gradFn(grad, param_grads);
 }
 
@@ -39,7 +44,7 @@ pub fn noGrad(_: anytype, param_grads: []const *const AnyTensor) []const *const 
 pub fn accumulateGrad(label: []const u8, grad: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
     const param_i: usize = blk: {
         for (param_grads, 0..) |p, i| {
-            if (p.meta.label) |param_label| {
+            if (p.labels.name) |param_label| {
                 if (std.mem.eql(u8, param_label, "grad_" ++ label)) {
                     break :blk i;
                 }
@@ -51,7 +56,7 @@ pub fn accumulateGrad(label: []const u8, grad: anytype, param_grads: []const *co
         unreachable;
     };
     var updated_params: [param_grads.len]*const AnyTensor = param_grads[0..param_grads.len].*;
-    updated_params[param_i] = F.add(param_grads[param_i].toTensor(), grad).setLabel(param_grads[param_i].meta.label.?).toAnyTensor();
+    updated_params[param_i] = F.add(param_grads[param_i].toTensor(), grad).setName(param_grads[param_i].labels.name.?).toAnyTensor();
     return &updated_params;
 }
 
@@ -65,7 +70,7 @@ pub fn unaryGrad(op: ops.UnaryOp, a: anytype, grad: anytype, param_grads: []cons
             .sqrt => F.div(0.5, F.sqrt(a)),
             .sin => F.add(a, F.div(asTensor(3.14159, 2))).sin(),
         };
-        break :blk local_grad.mul(grad).setLabel("grad" ++ (if (a.meta.label) |label| ("_" ++ label) else ""));
+        break :blk local_grad.mul(grad).setName("grad" ++ (if (a.labels.name) |label| ("_" ++ label) else ""));
     };
 
     return backpropStep(a, grad_a, param_grads);
@@ -75,8 +80,8 @@ pub fn binaryGrad(op: ops.BinaryOp, a: anytype, b: anytype, grad: anytype, param
     const grad_a, const grad_b = switch (op) {
         .add => .{ grad, grad },
         .mul => .{
-            F.mul(b, grad).setLabel("grad" ++ (if (a.meta.label) |label| ("_" ++ label) else "")),
-            F.mul(a, grad).setLabel("grad" ++ (if (b.meta.label) |label| ("_" ++ label) else "")),
+            F.mul(b, grad).setName("grad" ++ (if (a.labels.name) |label| ("_" ++ label) else "")),
+            F.mul(a, grad).setName("grad" ++ (if (b.labels.name) |label| ("_" ++ label) else "")),
         },
         else => unreachable,
     };
@@ -88,8 +93,8 @@ test "example" {
     const f, const df = comptime blk: {
         const x = tensor.Tensor(f32).param("x");
         const y = tensor.Tensor(f32).param("y");
-        const s = F.add(x.mul(2.0), y.mul(3.0)).setLabel("s");
-        const f = F.add(s, s).setLabel("f");
+        const s = F.add(x.mul(2.0), y.mul(3.0)).setName("s");
+        const f = F.add(s, s).setName("f");
         const df = f.backwards();
         break :blk .{ f, df[0..df.len].* };
     };

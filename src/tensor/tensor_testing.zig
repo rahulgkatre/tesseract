@@ -10,36 +10,36 @@ test "view" {
     const tensor1 = comptime TensorType(.i32, .{ 3, 3 }).full(0);
     const tensor2 = comptime tensor1.view(.{ 2, 2 }, .{ 1, 2 }, 0);
 
-    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 2 }, tensor2.shape[0..tensor2.ndims]);
+    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 2 }, tensor2.layout.shape);
     try std.testing.expectEqual(false, tensor2.isContiguous());
 
     const test_indices = [_][2]u64{ .{ 0, 0 }, .{ 0, 1 }, .{ 1, 0 }, .{ 1, 1 } };
     const expected_flat_indices1 = &[_]u64{ 0, 2, 1, 3 };
     for (expected_flat_indices1, test_indices) |expected_flat_i, test_i| {
-        try std.testing.expectEqual(expected_flat_i, utils.ravelMultiIndex(tensor2.ndims, tensor2.strides[0..tensor2.ndims].*, tensor2.offset, test_i));
+        try std.testing.expectEqual(expected_flat_i, utils.ravelMultiIndex(tensor2.layout.ndims, tensor2.layout.strides[0..tensor2.layout.ndims].*, tensor2.layout.offset, test_i));
     }
 
     const tensor3 = comptime tensor1.view(.{ 2, 2 }, .{ 1, 2 }, 1);
-    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 2 }, tensor2.shape[0..tensor2.ndims]);
+    try std.testing.expectEqualSlices(u64, &[_]u64{ 2, 2 }, tensor2.layout.shape);
     try std.testing.expectEqual(false, tensor2.isContiguous());
 
     const expected_flat_indices2 = &[_]u64{ 1, 3, 2, 4 };
     for (expected_flat_indices2, test_indices) |expected_flat_i, test_i| {
-        try std.testing.expectEqual(expected_flat_i, utils.ravelMultiIndex(tensor3.ndims, tensor3.strides[0..tensor3.ndims].*, tensor3.offset, test_i));
+        try std.testing.expectEqual(expected_flat_i, utils.ravelMultiIndex(tensor3.layout.ndims, tensor3.layout.strides[0..tensor3.layout.ndims].*, tensor3.layout.offset, test_i));
     }
 }
 
 test "cast" {
     const tensor1 = comptime TensorType(.bool, .{3}).full(true);
-    try std.testing.expect(tensor1.dtype == .bool);
+    try std.testing.expect(tensor1.layout.dtype == .bool);
     const tensor2 = comptime tensor1.cast(.i32);
-    try std.testing.expect(tensor2.dtype == .i32);
+    try std.testing.expect(tensor2.layout.dtype == .i32);
     const tensor3 = comptime tensor2.cast(.i8);
-    try std.testing.expect(tensor3.dtype == .i8);
+    try std.testing.expect(tensor3.layout.dtype == .i8);
     const tensor4 = comptime tensor3.cast(.f16);
-    try std.testing.expect(tensor4.dtype == .f16);
+    try std.testing.expect(tensor4.layout.dtype == .f16);
     const tensor5 = comptime tensor4.cast(.f32);
-    try std.testing.expect(tensor5.dtype == .f32);
+    try std.testing.expect(tensor5.layout.dtype == .f32);
 }
 
 test "ArrayType" {

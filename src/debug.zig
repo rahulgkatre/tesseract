@@ -4,7 +4,7 @@ const ops = @import("ops.zig");
 const dtypes = @import("dtypes.zig");
 const utils = @import("utils.zig");
 
-const AnyTensor = @import("tensor/anytensor.zig").AnyTensor;
+const AnyTensor = @import("tensor/tensor.zig").AnyTensor;
 
 pub const debug_writer = std.io.Writer(std.fs.File, std.fs.File.WriteError, std.fs.File.write){ .context = std.io.getStdOut() };
 
@@ -16,13 +16,13 @@ pub fn dataflowViz(entrypoints: anytype, writer: anytype, allocator: std.mem.All
                 \\    T_{[in]x}->{[op]s}_{[out]x}[label="{[dtype]s}{[shape]any}"];
                 \\
             , .{
-                .op = switch (out.meta.instr) {
+                .op = switch (out.instr.*) {
                     inline else => |info| utils.rawTagName(info.op),
                 },
                 .out = @intFromPtr(out),
                 .in = @intFromPtr(in),
-                .dtype = utils.rawTagName(in.dtype),
-                .shape = in.shape[0..in.ndims],
+                .dtype = utils.rawTagName(in.layout.dtype),
+                .shape = in.layout.shape,
             });
         }
     };
@@ -47,7 +47,7 @@ pub fn dataflowViz(entrypoints: anytype, writer: anytype, allocator: std.mem.All
         }
         try written.putNoClobber(out, {});
 
-        switch (out.meta.instr) {
+        switch (out.instr.*) {
             .DataOp => |info| {
                 try switch (info.op) {
                     .cast => writer.print(
@@ -57,7 +57,7 @@ pub fn dataflowViz(entrypoints: anytype, writer: anytype, allocator: std.mem.All
                         .type = utils.rawTypeName(@TypeOf(info.op)),
                         .op = utils.rawTagName(info.op),
                         .out = @intFromPtr(out),
-                        .data = utils.rawTagName(out.dtype),
+                        .data = utils.rawTagName(out.layout.dtype),
                     }),
                     .view => writer.print(
                         \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\nshape {[shape]any}\nstrides {[strides]any}\noffset {[offset]d}"];
@@ -66,9 +66,9 @@ pub fn dataflowViz(entrypoints: anytype, writer: anytype, allocator: std.mem.All
                         .type = utils.rawTypeName(@TypeOf(info.op)),
                         .op = utils.rawTagName(info.op),
                         .out = @intFromPtr(out),
-                        .shape = out.shape[0..out.ndims],
-                        .strides = out.strides[0..out.ndims],
-                        .offset = out.offset,
+                        .shape = out.layout.shape,
+                        .strides = out.layout.strides,
+                        .offset = out.layout.offset,
                     }),
                     else => writer.print(
                         \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\nshape: {[data]any}"];
@@ -77,7 +77,7 @@ pub fn dataflowViz(entrypoints: anytype, writer: anytype, allocator: std.mem.All
                         .type = utils.rawTypeName(@TypeOf(info.op)),
                         .op = utils.rawTagName(info.op),
                         .out = @intFromPtr(out),
-                        .data = out.shape[0..out.ndims],
+                        .data = out.layout.shape,
                     }),
                 };
             },
@@ -98,7 +98,7 @@ pub fn dataflowViz(entrypoints: anytype, writer: anytype, allocator: std.mem.All
                     .type = utils.rawTypeName(@TypeOf(info.op)),
                     .op = utils.rawTagName(info.op),
                     .out = @intFromPtr(out),
-                    .label = out.meta.label orelse "null",
+                    .label = out.labels.name orelse "null",
                 }),
                 .range => writer.print(
                     \\    {[op]s}_{[out]x}[label="{[type]s}.{[op]s}\nstart: {[start]s}, stop: {[stop]s}"];
@@ -130,7 +130,7 @@ pub fn dataflowViz(entrypoints: anytype, writer: anytype, allocator: std.mem.All
             }),
         }
 
-        switch (out.meta.instr) {
+        switch (out.instr.*) {
             .InitOp => {},
             inline else => |info| {
                 for (info.in) |in| {
@@ -141,26 +141,26 @@ pub fn dataflowViz(entrypoints: anytype, writer: anytype, allocator: std.mem.All
 
         try writer.print("\n", .{});
 
-        switch (out.meta.instr) {
+        switch (out.instr.*) {
             inline else => |info| {
                 try writer.print(
-                    \\    T_{[out]x}[label="dtype: {[dtype]s}\nshape: {[shape]any}\nstrides: {[strides]any}\noffset: {[offset]d}\nconstant: {[fc]}\nlabel: {[label]s}"shape=box];
+                    \\    T_{[out]x}[label="dtype: {[dtype]s}\nshape: {[shape]any}\nstrides: {[strides]any}\noffset: {[offset]d}\nconstant: {[constant]}\nlabel: {[label]s}"shape=box];
                     \\    {[op]s}_{[out]x}->T_{[out]x}[label="{[dtype]s}{[shape]any}"];
                     \\
                 , .{
                     .op = utils.rawTagName(info.op),
                     .out = @intFromPtr(out),
-                    .dtype = utils.rawTagName(out.dtype),
-                    .shape = out.shape[0..out.ndims],
-                    .strides = out.strides[0..out.ndims],
-                    .offset = out.offset,
-                    .fc = out.meta.constant,
-                    .label = out.meta.label orelse "null",
+                    .dtype = utils.rawTagName(out.layout.dtype),
+                    .shape = out.layout.shape,
+                    .strides = out.layout.strides,
+                    .offset = out.layout.offset,
+                    .constant = out.autograd.constant,
+                    .label = out.labels.name orelse "null",
                 });
             },
         }
 
-        switch (out.meta.instr) {
+        switch (out.instr.*) {
             .InitOp => {},
             inline else => |info| {
                 for (info.in) |in| {
@@ -197,8 +197,8 @@ pub fn dataflowJson(entrypoints: anytype, writer: anytype, allocator: std.mem.Al
             continue;
         }
         try tensors_json.put(out, out.toJson());
-        try instructions_json.append(out.meta.instr.toJson(out));
-        switch (out.meta.instr) {
+        try instructions_json.append(out.instr.toJson(out));
+        switch (out.instr) {
             .InitOp => {},
             inline else => |info| {
                 for (info.in) |in| {

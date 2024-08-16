@@ -1,7 +1,7 @@
 const std = @import("std");
 const ops = @import("ops.zig");
 const dtypes = @import("dtypes.zig");
-const AnyTensor = @import("tensor/anytensor.zig").AnyTensor;
+const AnyTensor = @import("tensor/tensor.zig").AnyTensor;
 const tensor_typing = @import("tensor/tensor_typing.zig");
 pub fn arrayPermute(comptime T: type, comptime len: u8, array: [len]u64, comptime perm: [len]u8) [len]T {
     var used: [len]bool = [_]bool{false} ** len;
@@ -261,7 +261,7 @@ pub fn paramsOf(comptime entrypoint: anytype) []const *const AnyTensor {
         while (stack.popLeft()) |tup| {
             @setEvalBranchQuota(500 * stack.len + 1000);
             curr, stack = tup;
-            switch (tensor_typing.asTensor(curr).meta.instr) {
+            switch (tensor_typing.asTensor(curr).instr.*) {
                 .InitOp => |instr| switch (instr.op) {
                     .param => {
                         list = list.appendLeft(curr);
@@ -286,11 +286,11 @@ pub fn paramsOf(comptime entrypoint: anytype) []const *const AnyTensor {
         const SortContext = struct {
             values: []*const AnyTensor,
             pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
-                return ctx.values[a].meta.label.?.len < ctx.values[b].meta.label.?.len or blk: {
-                    if (ctx.values[a].meta.label.?.len > ctx.values[b].meta.label.?.len) {
+                return ctx.values[a].labels.name.?.len < ctx.values[b].labels.name.?.len or blk: {
+                    if (ctx.values[a].labels.name.?.len > ctx.values[b].labels.name.?.len) {
                         break :blk false;
                     }
-                    for (ctx.values[a].meta.label.?, ctx.values[b].meta.label.?) |char_a, char_b| {
+                    for (ctx.values[a].labels.name.?, ctx.values[b].labels.name.?) |char_a, char_b| {
                         if (char_a == char_b) {
                             continue;
                         } else {
@@ -312,7 +312,7 @@ pub fn paramsOf(comptime entrypoint: anytype) []const *const AnyTensor {
         i = 0;
         for (params) |param| {
             if (active) |act| {
-                if (!std.mem.eql(u8, act.meta.label.?, param.meta.label.?)) {
+                if (!std.mem.eql(u8, act.labels.name.?, param.labels.name.?)) {
                     active = param;
                     deduped_params[i] = param;
                     i += 1;

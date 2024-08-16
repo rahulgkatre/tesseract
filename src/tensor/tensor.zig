@@ -1,7 +1,5 @@
 const std = @import("std");
-const AnyTensor = @import("anytensor.zig").AnyTensor;
 const F = @import("functions.zig");
-const meta = @import("meta.zig");
 const tensor_typing = @import("tensor_typing.zig");
 
 const utils = @import("../utils.zig");
@@ -13,28 +11,78 @@ const autograd = @import("../autograd.zig");
 test Tensor {
     _ = @import("tensor_testing.zig");
 }
+
+pub const Layout = struct {
+    dtype: dtypes.DType,
+    ndims: u8,
+    shape: []const u64,
+    strides: []const u64,
+    offset: u64,
+};
+
+pub const Labels = struct {
+    name: ?[]const u8,
+    dim_names: ?[]const ?[]const u8,
+};
+
+pub const Json = struct {
+    ptr: usize,
+    dtype: dtypes.DType,
+    ndims: u8,
+    shape: []const u64,
+    strides: []const u64,
+    offset: u64,
+};
+
+pub const AnyTensor = Tensor(anyopaque);
+
 pub fn Tensor(comptime TensorArrayType: type) type {
+    const isAnyTensor = TensorArrayType == anyopaque;
     return extern struct {
         const Self = @This();
 
         // All the functions for operations that do not modify metadata directly
         pub usingnamespace F;
+        pub const dtype: dtypes.DType = if (isAnyTensor) dtypes.default_float else utils.extractDType(TensorArrayType);
+        pub const ndims: u8 = if (isAnyTensor) 0 else utils.extractNdims(TensorArrayType);
+        pub const shape: [ndims]u64 = if (isAnyTensor) .{} else utils.extractShape(TensorArrayType);
+        pub const contiguous_strides: [ndims]u64 = if (isAnyTensor) .{} else utils.contiguousStrides(&shape);
+        pub const num_elements = if (isAnyTensor) 0 else utils.numElements(&shape);
 
-        pub const dtype: dtypes.DType = utils.extractDType(TensorArrayType);
-        pub const ndims: u8 = utils.extractNdims(TensorArrayType);
-        pub const shape: [ndims]u64 = utils.extractShape(TensorArrayType);
-        pub const contiguous_strides: [ndims]u64 = utils.contiguousStrides(&shape);
-        pub const num_elements = utils.numElements(&shape);
-
-        meta: *const meta.Metadata,
-        dtype: dtypes.DType = dtype,
-        ndims: u8 = ndims,
-        shape: *const [ndims]u64 = &shape,
-        strides: *const [ndims]u64 = &contiguous_strides,
-        offset: u64 = 0,
+        instr: *const ops.Instruction,
+        layout: *const Layout = &.{
+            .dtype = dtype,
+            .ndims = ndims,
+            .shape = &shape,
+            .strides = &contiguous_strides,
+            .offset = 0,
+        },
+        labels: *const Labels = &.{
+            .name = null,
+            .dim_names = null,
+        },
+        autograd: *const autograd.Autograd = &.{
+            .grad_fn = autograd.noGrad,
+            .constant = false,
+        },
 
         pub fn toAnyTensor(comptime self: *const Self) *const AnyTensor {
             return @ptrCast(self);
+        }
+
+        pub fn toTensor(comptime self: *const AnyTensor) *const tensor_typing.TensorTypeOf(self) {
+            return @ptrCast(self);
+        }
+
+        pub fn toJson(self: *const Self) Json {
+            return .{
+                .ptr = @intFromPtr(self),
+                .dtype = self.dtype,
+                .ndims = self.ndims,
+                .shape = self.shape[0..self.ndims],
+                .strides = self.strides[0..self.ndims],
+                .offset = self.offset,
+            };
         }
 
         pub fn ArrayType() type {
@@ -62,23 +110,25 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         }
 
         pub fn setDimNames(self: Self, comptime dim_names: std.meta.Tuple(&[_]type{?[]const u8} ** ndims)) Self {
-            var new_meta = self.meta.*;
-            new_meta.dim_names = &dim_names;
             return .{
-                .meta = &new_meta,
-                .strides = self.strides,
-                .offset = self.offset,
+                .instr = self.instr,
+                .labels = &.{
+                    .name = self.labels.name,
+                    .dim_names = &dim_names,
+                },
+                .autograd = self.autograd,
+                .layout = self.layout,
             };
         }
 
-        pub fn namedDim(comptime self: Self, dim: DimsEnumType(self.meta.dim_names)) u64 {
+        pub fn namedDim(comptime self: Self, dim: DimsEnumType(self.labels.dim_names)) u64 {
             return @intFromEnum(dim);
         }
 
         /// Determine if the stride pattern of the tensor defines a fully contiguous section of memory at runtime
         pub fn isContiguous(self: Self) bool {
             // Strides need to be decreasing unless its a broadcasted stride (0)
-            return utils.isContiguous(self.strides);
+            return utils.isContiguous(self.layout.strides);
         }
 
         pub fn storageSize(self: Self) u128 {
@@ -90,9 +140,9 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             // but the underlying memory has not increased in size
             // shape[d] - 1 is the last index in dimension d
             // Also incorporate the storage offset
-            var _size: u128 = self.offset + 1;
+            var _size: u128 = self.layout.offset + 1;
             for (0..ndims) |d| {
-                _size += (shape[d] - 1) * self.strides[d];
+                _size += (shape[d] - 1) * self.layout.strides[d];
             }
             // The result is the size of the storage needed to visit all indices of the tensor
             return _size;
@@ -104,7 +154,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
 
         /// Allows for negative dimension indexing to work by normalizing it to [0,ndims)
         pub fn signedToUnsignedDim(dim: i16) u8 {
-            return utils.signedToUnsignedDimNdims(Self.ndims, dim);
+            return utils.signedToUnsignedDimNdims(ndims, dim);
         }
 
         /// Supports negative indexing sugar (e.g. -1 = ndims - 1)
@@ -114,31 +164,37 @@ pub fn Tensor(comptime TensorArrayType: type) type {
 
         /// Supports negative indexing sugar (e.g. -1 = ndims - 1)
         pub fn dimStride(self: Self, d: i16) u64 {
-            return self.strides[signedToUnsignedDim(d)];
+            return self.layout.strides[signedToUnsignedDim(d)];
         }
 
-        pub fn setLabel(self: Self, label: ?[]const u8) Self {
-            const new_meta = blk: {
-                var metadata = self.meta.*;
-                metadata.label = label;
-                break :blk metadata;
+        pub fn setName(self: Self, name: ?[]const u8) Self {
+            return .{
+                .instr = self.instr,
+                .labels = &.{
+                    .name = name,
+                    .dim_names = self.labels.dim_names,
+                },
+                .autograd = self.autograd,
+                .layout = self.layout,
             };
-            return .{ .meta = &new_meta };
         }
 
-        pub fn requiresGrad(self: Self, label: ?[]const u8) Self {
-            const new_meta = blk: {
-                var metadata = self.meta.*;
-                metadata.label = label;
-                metadata.requires_grad = true;
-                metadata.grad_fn = struct {
+        pub fn requiresGrad(self: Self, name: []const u8) Self {
+            const new_autograd = blk: {
+                var new_autograd = self.autograd.*;
+                new_autograd.constant = false;
+                new_autograd.grad_fn = struct {
                     pub fn gradFnImpl(grad: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
-                        return autograd.accumulateGrad(label, grad, param_grads);
+                        return autograd.accumulateGrad(name, grad, param_grads);
                     }
                 }.gradFnImpl;
-                break :blk metadata;
+                break :blk new_autograd;
             };
-            return .{ .meta = &new_meta };
+
+            return (Self{
+                .instr = self.instr,
+                .autograd = &new_autograd,
+            }).setName(name);
         }
 
         //
@@ -148,18 +204,12 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// Create an empty tensor (i.e. allocate).
         /// Do not make any assumptions about data in the empty
         pub fn empty() Self {
-            const instr = .{
-                .InitOp = .{
-                    .op = .empty,
-                    .args = .{ .empty = {} },
-                },
-            };
             return .{
-                .meta = &.{
-                    .instr = instr,
-                    .constant = false,
-                    .label = null,
-                    .grad_fn = autograd.noGrad,
+                .instr = &.{
+                    .InitOp = .{
+                        .op = .empty,
+                        .args = .{ .empty = {} },
+                    },
                 },
             };
         }
@@ -168,86 +218,61 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// By default, full tensors will be constant folded in codegen
         /// unless they are marked as requires_grad
         pub fn full(comptime value: dtypes.ZigType(dtype)) Self {
-            const instr = .{
-                .InitOp = .{
-                    .op = .full,
-                    .args = .{ .full = std.fmt.comptimePrint("{}", .{value}) },
-                },
-            };
+            const str = std.fmt.comptimePrint("{}", .{value});
             return (Self{
-                .meta = &.{
-                    .instr = instr,
-                    .constant = true,
-                    .label = null,
-                    .grad_fn = autograd.noGrad,
+                .instr = &.{
+                    .InitOp = .{
+                        .op = .full,
+                        .args = .{ .full = str },
+                    },
                 },
-            }).setLabel("const_" ++ instr.InitOp.args.full[0..@min(instr.InitOp.args.full.len, 6)]);
+            }).setName("const_" ++ str[0..@min(str.len, 6)]);
         }
 
         /// Used to mark a tensor as an input to a graph,
         /// codegen will make this an argument of the function
         /// A label can be given to make two tensors of the same shape/dtype
         /// correspond to different arrays at runtime (e.g. for two input images )
-        pub fn input(comptime label: []const u8) Self {
-            return .{
-                .meta = &.{
-                    .instr = .{
-                        .InitOp = .{
-                            .op = .input,
-                            .args = .{ .input = {} },
-                        },
+        pub fn input(comptime name: []const u8) Self {
+            return (Self{
+                .instr = &.{
+                    .InitOp = .{
+                        .op = .input,
+                        .args = .{ .input = {} },
                     },
-                    .grad_fn = autograd.noGrad,
-                    .constant = false,
-                    .label = label,
                 },
-            };
+            }).setName(name);
         }
 
         /// Used to mark a tensor as a learnable param,
         /// codegen will make this an argument of the function,
         /// gradients can be accumulated for it,
         /// and optimizers can detect it,
-        pub fn param(label: []const u8) Self {
-            return .{
-                .meta = &.{
-                    .instr = .{
-                        .InitOp = .{
-                            .op = .param,
-                            .args = .{ .param = {} },
-                        },
+        pub fn param(name: []const u8) Self {
+            return (Self{
+                .instr = &.{
+                    .InitOp = .{
+                        .op = .param,
+                        .args = .{ .param = {} },
                     },
-                    .constant = false,
-                    .label = label,
-                    .requires_grad = true,
-                    .grad_fn = struct {
-                        pub fn gradFnImpl(grad: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
-                            return autograd.accumulateGrad(label, grad, param_grads);
-                        }
-                    }.gradFnImpl,
                 },
-            };
+            }).requiresGrad(name);
         }
 
         /// Fill a tensor with random generated numbers
         /// By default, random tensors will be constant folded in codegen
         /// unless they are marked as requires_grad
         /// Do not use this for random initialization of param_grads!
-        /// Note that some device backends do not support this
-        pub fn random(label: []const u8) Self {
+        pub fn random(name: []const u8) Self {
             std.debug.assert(dtypes.isFloat(dtype));
-            return .{
-                .meta = &.{
-                    .instr = .{
-                        .InitOp = .{
-                            .op = .random,
-                            .args = .{ .random = {} },
-                        },
+            return (Self{
+                .instr = &.{
+                    .InitOp = .{
+                        .op = .random,
+                        .args = .{ .random = {} },
                     },
-                    .constant = false,
-                    .label = label,
                 },
-            };
+            }).setName(name);
         }
 
         //
@@ -256,49 +281,47 @@ pub fn Tensor(comptime TensorArrayType: type) type {
 
         ///Cast an array of a datatype to another datatype
         pub fn cast(comptime self: Self, comptime new_dtype: dtypes.DType) tensor_typing.TensorType(new_dtype, shape) {
-            if (new_dtype != self.dtype) {
-                return .{
-                    .meta = &.{
-                        .instr = .{
-                            .DataOp = .{
-                                .in = .{self.toAnyTensor()},
-                                .op = .cast,
-                                .args = .{ .cast = new_dtype },
-                            },
-                        },
-                        .grad_fn = autograd.noGrad,
-                        .constant = self.meta.constant,
-                        .label = self.meta.label,
+            if (new_dtype == dtype) return self;
+            const new_layout = blk: {
+                var new_layout = self.layout.*;
+                new_layout.dtype = new_dtype;
+                break :blk new_layout;
+            };
+            return .{
+                .instr = &.{
+                    .DataOp = .{
+                        .in = .{self.toAnyTensor()},
+                        .op = .cast,
+                        .args = .{ .cast = new_dtype },
                     },
-                    .strides = self.strides,
-                    .offset = self.offset,
-                };
-            } else {
-                return self;
-            }
+                },
+                .layout = &new_layout,
+                .autograd = &.{
+                    .grad_fn = autograd.noGrad,
+                    .constant = self.autograd.constant,
+                },
+                .labels = self.labels,
+            };
         }
 
         /// Make an array contguous (a full new copy) if it is not already
         pub fn contiguous(comptime self: Self) Self {
             if (self.isContiguous()) return self;
             return .{
-                .meta = &.{
-                    .instr = .{
-                        .DataOp = .{
-                            .in = .{self.toAnyTensor()},
-                            .op = .contiguous,
-                            .args = .{
-                                .contiguous = .{
-                                    .shape = self.shape,
-                                    .strides = &contiguous_strides,
-                                    .offset = 0,
-                                },
+                .instr = &.{
+                    .DataOp = .{
+                        .in = .{self.toAnyTensor()},
+                        .op = .contiguous,
+                        .args = .{
+                            .contiguous = .{
+                                .shape = self.shape,
+                                .strides = &contiguous_strides,
+                                .offset = 0,
                             },
                         },
                     },
-                    .constant = false,
-                    .label = self.meta.label,
                 },
+                .labels = self.labels,
             };
         }
 
@@ -320,26 +343,23 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         }
         pub fn pad(comptime self: Self, comptime padding: anytype, comptime mode: PadMode) Pad(padding) {
             return .{
-                .meta = &.{
-                    .instr = .{
-                        .DataOp = .{
-                            .in = .{self.toAnyTensor()},
-                            .op = .pad,
-                            .args = .{
-                                .pad = .{
-                                    .padding = &padding,
-                                    .mode = switch (mode) {
-                                        .constant => |constant| .{ .constant = std.fmt.comptimePrint("{}", .{constant}) },
-                                        else => mode,
-                                    },
+                .instr = &.{
+                    .DataOp = .{
+                        .in = .{self.toAnyTensor()},
+                        .op = .pad,
+                        .args = .{
+                            .pad = .{
+                                .padding = &padding,
+                                .mode = switch (mode) {
+                                    .constant => |constant| .{ .constant = std.fmt.comptimePrint("{}", .{constant}) },
+                                    else => mode,
                                 },
                             },
                         },
                     },
-                    .grad_fn = autograd.noGrad,
-                    .constant = false,
-                    .label = self.meta.label,
                 },
+                .labels = self.labels,
+                .autograd = self.autograd,
             };
         }
 
@@ -361,30 +381,38 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             // This greatly simplifies the graph as view ops are essentially compressed
             const first_not_view_tensor = blk: {
                 var t = self.toAnyTensor();
-                while (std.meta.activeTag(t.meta.instr) == .DataOp and t.meta.instr.DataOp.op == .view) {
-                    t = t.meta.instr.DataOp.in[0];
+                while (std.meta.activeTag(t.instr.*) == .DataOp and t.instr.DataOp.op == .view) {
+                    t = t.instr.DataOp.in[0];
                 }
                 break :blk t;
             };
-            const out = View(new_shape){
-                .meta = &.{
-                    .instr = .{
-                        .DataOp = .{
-                            .in = .{first_not_view_tensor},
-                            .op = .view,
-                            .args = .{ .view = .{
-                                .shape = &new_shape,
-                                .strides = &new_strides,
-                                .offset = new_offset,
-                            } },
-                        },
-                    },
-                    .constant = self.meta.constant,
-                    .label = self.meta.label,
-                    .grad_fn = autograd.noGrad,
-                },
+
+            const new_layout = .{
+                .dtype = dtype,
+                .ndims = new_shape.len,
+                .shape = &new_shape,
                 .strides = &new_strides,
                 .offset = new_offset,
+            };
+
+            const out = View(new_shape){
+                .instr = &.{
+                    .DataOp = .{
+                        .in = .{first_not_view_tensor},
+                        .op = .view,
+                        .args = .{ .view = .{
+                            .shape = &new_shape,
+                            .strides = &new_strides,
+                            .offset = new_offset,
+                        } },
+                    },
+                },
+                .layout = &new_layout,
+                .autograd = &.{
+                    .constant = self.autograd.constant,
+                    .grad_fn = autograd.noGrad,
+                },
+                .labels = self.labels,
             };
             if (out.storageSize() > self.storageSize()) {
                 @compileError(std.fmt.comptimePrint(
@@ -398,13 +426,13 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                     \\New storage offset: {}
                     \\New storage size: {}
                 , .{
-                    self.shape[0..self.ndims],
-                    self.strides[0..self.ndims],
-                    self.offset,
+                    self.layout.shape,
+                    self.layout.strides,
+                    self.layout.offset,
                     self.storageSize(),
-                    out.shape[0..out.ndims],
-                    out.strides[0..out.ndims],
-                    out.offset,
+                    out.layout.shape,
+                    out.layout.strides,
+                    out.layout.offset,
                     out.storageSize(),
                 }));
             }
@@ -420,24 +448,23 @@ pub fn Tensor(comptime TensorArrayType: type) type {
 
         ///Apply an elementwise unary operation
         pub fn applyUnaryOp(self: Self, comptime op: ops.UnaryOp) UnaryOpResultType(op) {
+            const grad_fn = struct {
+                pub fn gradFnImpl(grad_out: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
+                    return autograd.unaryGrad(op, self, grad_out, param_grads);
+                }
+            }.gradFnImpl;
             return .{
-                .meta = &.{
-                    .instr = .{
-                        .UnaryOp = .{
-                            .in = .{self.toAnyTensor()},
-                            .op = op,
-                        },
+                .instr = &.{
+                    .UnaryOp = .{
+                        .in = .{self.toAnyTensor()},
+                        .op = op,
                     },
-                    .constant = self.meta.constant,
-                    .label = self.meta.label,
-                    .grad_fn = struct {
-                        pub fn gradFnImpl(grad_out: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
-                            return autograd.unaryGrad(op, self, grad_out, param_grads);
-                        }
-                    }.gradFnImpl,
                 },
-                .strides = self.strides,
-                .offset = self.offset,
+                .autograd = &.{
+                    .constant = self.autograd.constant,
+                    .grad_fn = grad_fn,
+                },
+                .labels = self.labels,
             };
         }
 
@@ -457,21 +484,21 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             const bc_shape = utils.broadcastShape(shape, Other.shape);
             const a = self.expand(bc_shape);
             const b = F.expand(other, bc_shape);
+            const grad_fn = struct {
+                pub fn gradFnImpl(grad_out: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
+                    return autograd.binaryGrad(op, a, b, grad_out, param_grads);
+                }
+            }.gradFnImpl;
             return .{
-                .meta = &.{
-                    .instr = .{
-                        .BinaryOp = .{
-                            .in = .{ a.toAnyTensor(), b.toAnyTensor() },
-                            .op = op,
-                        },
+                .instr = &.{
+                    .BinaryOp = .{
+                        .in = .{ a.toAnyTensor(), b.toAnyTensor() },
+                        .op = op,
                     },
-                    .grad_fn = struct {
-                        pub fn gradFnImpl(grad_out: anytype, param_grads: []const *const AnyTensor) []const *const AnyTensor {
-                            return autograd.binaryGrad(op, a, b, grad_out, param_grads);
-                        }
-                    }.gradFnImpl,
-                    .constant = a.meta.constant and b.meta.constant,
-                    .label = null,
+                },
+                .autograd = &.{
+                    .grad_fn = grad_fn,
+                    .constant = a.autograd.constant and b.autograd.constant,
                 },
             };
         }
@@ -540,21 +567,21 @@ pub fn Tensor(comptime TensorArrayType: type) type {
                 },
             };
             return .{
-                .meta = &.{
-                    .instr = .{
-                        .ReduceOp = .{
-                            .in = .{self.toAnyTensor()},
-                            .op = op,
-                            .args = .{
-                                .dims = reduce_dims_array,
-                                .mask = &reduce_dims_mask,
-                            },
+                .instr = &.{
+                    .ReduceOp = .{
+                        .in = .{self.toAnyTensor()},
+                        .op = op,
+                        .args = .{
+                            .dims = reduce_dims_array,
+                            .mask = &reduce_dims_mask,
                         },
                     },
+                },
+                .autograd = &.{
                     .constant = false,
-                    .label = self.meta.label,
                     .grad_fn = autograd.noGrad,
                 },
+                .labels = self.labels,
             };
         }
 
@@ -575,15 +602,15 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             const true_expand = tensor_typing.asTensor(true_value).expand(Out.shape);
             const false_expand = tensor_typing.asTensor(false_value).expand(Out.shape);
             return .{
-                .meta = &.{
-                    .instr = .{
-                        .TernaryOp = .{
-                            .in = .{ mask_expand.toAnyTensor(), true_expand.toAnyTensor(), false_expand.toAnyTensor() },
-                            .op = .where,
-                        },
+                .instr = .{
+                    .TernaryOp = .{
+                        .in = .{ mask_expand.toAnyTensor(), true_expand.toAnyTensor(), false_expand.toAnyTensor() },
+                        .op = .where,
                     },
+                },
+                .autograd = &.{
+                    .grad_fn = autograd.noGrad,
                     .constant = false,
-                    .label = null,
                 },
             };
         }

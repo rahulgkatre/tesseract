@@ -1,6 +1,6 @@
 const std = @import("std");
 const tensor = @import("tensor.zig");
-const AnyTensor = @import("anytensor.zig").AnyTensor;
+const AnyTensor = @import("tensor.zig").AnyTensor;
 const Tensor = tensor.Tensor;
 
 const dtypes = @import("../dtypes.zig");
@@ -28,7 +28,7 @@ pub fn TensorTypeOf(any: anytype) type {
         => return Tensor(Type),
         else => @compileError(std.fmt.comptimePrint("Cannot convert {any} to a tensor type", .{Type})),
     }
-    return TensorType(any.dtype, any.shape[0..any.ndims]);
+    return TensorType(any.layout.dtype, any.layout.shape);
 }
 
 /// Like @as but for casting to matching Tensor type
