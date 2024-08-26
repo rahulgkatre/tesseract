@@ -1,5 +1,5 @@
 const std = @import("std");
-const AnyTensor = @import("tensor/tensor.zig").AnyTensor;
+const AnyTensor = tensor.AnyTensor;
 const dtypes = @import("dtypes.zig");
 
 const F = @import("tensor/functions.zig");

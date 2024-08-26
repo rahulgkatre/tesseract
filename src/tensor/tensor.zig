@@ -1,6 +1,7 @@
 const std = @import("std");
 const F = @import("functions.zig");
 const types = @import("types.zig");
+const tests = @import("tests.zig");
 
 const utils = @import("../utils.zig");
 const ops = @import("../ops.zig");
@@ -8,18 +9,19 @@ const dtypes = @import("../dtypes.zig");
 const graph = @import("../graph.zig");
 const autograd = @import("../autograd.zig");
 
-const tests = @import("tests.zig");
-
 test tests {
     _ = tests;
 }
 
+/// An AnyTensor is a shape-erased tensor. This makes it easy to store in graphs,
+/// but further computations are not allowed unless casted back to a shaped tensor.
 pub const AnyTensor = Tensor(anyopaque);
 
-pub fn Tensor(comptime TensorArrayType: type) type {
+/// A Tensor is a multidimensional Array.
+pub fn Tensor(Array: type) type {
     // Need to be extern to have a well defined layout for pointer casting between AnyTensor and ShapedTensor
     return extern struct {
-        const isAnyTensor = TensorArrayType == anyopaque;
+        const isAnyTensor = Array == anyopaque;
         // Self is used for all functions that involve reading fields or calculating some value.
         // It is fine for AnyTensor to be able to do these things too.
         const Self = @This();
@@ -30,9 +32,9 @@ pub fn Tensor(comptime TensorArrayType: type) type {
 
         // All the functions for operations that do not modify metadata directly
         pub usingnamespace F;
-        pub const _dtype: dtypes.DType = if (isAnyTensor) dtypes.DType.anyopaque else utils.extractDType(TensorArrayType);
-        pub const _ndims: u8 = if (isAnyTensor) 0 else utils.extractNdims(TensorArrayType);
-        pub const _shape: [_ndims]u64 = if (isAnyTensor) .{} else utils.extractShape(TensorArrayType);
+        pub const _dtype: dtypes.DType = if (isAnyTensor) dtypes.DType.anyopaque else utils.extractDType(Array);
+        pub const _ndims: u8 = if (isAnyTensor) 0 else utils.extractNdims(Array);
+        pub const _shape: [_ndims]u64 = if (isAnyTensor) .{} else utils.extractShape(Array);
         pub const contiguous_strides: [_ndims]u64 = if (isAnyTensor) .{} else utils.contiguousStrides(&_shape);
         pub const num_elements = if (isAnyTensor) 0 else utils.numElements(&_shape);
 
@@ -113,7 +115,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
             };
         }
 
-        pub fn namedDim(comptime self: Self, dim: types.DimsEnumType(self.labels.dim_names)) u64 {
+        pub fn namedDim(comptime self: Self, dim: types.DimEnum(self.labels.dim_names)) u64 {
             return @intFromEnum(dim);
         }
 
@@ -197,6 +199,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// Create an empty tensor (i.e. allocate).
         /// Do not make any assumptions about data in the empty
         pub fn empty() ShapedTensor {
+            std.debug.assert(!isAnyTensor);
             return .{
                 .instr = &.{
                     .InitOp = .{
@@ -211,6 +214,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// By default, full tensors will be constant folded in codegen
         /// unless they are marked as requires_grad
         pub fn full(comptime value: dtypes.ZigType(_dtype)) ShapedTensor {
+            std.debug.assert(!isAnyTensor);
             const str = std.fmt.comptimePrint("{}", .{value});
             return (Self{
                 .instr = &.{
@@ -227,6 +231,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// A label can be given to make two tensors of the same shape/dtype
         /// correspond to different arrays at runtime (e.g. for two input images )
         pub fn input(comptime name: []const u8) ShapedTensor {
+            std.debug.assert(!isAnyTensor);
             return (ShapedTensor{
                 .instr = &.{
                     .InitOp = .{
@@ -242,6 +247,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// gradients can be accumulated for it,
         /// and optimizers can detect it,
         pub fn param(name: []const u8) ShapedTensor {
+            std.debug.assert(!isAnyTensor);
             return (ShapedTensor{
                 .instr = &.{
                     .InitOp = .{
@@ -257,6 +263,7 @@ pub fn Tensor(comptime TensorArrayType: type) type {
         /// unless they are marked as requires_grad
         /// Do not use this for random initialization of param_grads!
         pub fn random(name: []const u8) ShapedTensor {
+            std.debug.assert(!isAnyTensor);
             std.debug.assert(dtypes.isFloat(_dtype));
             return (ShapedTensor{
                 .instr = &.{

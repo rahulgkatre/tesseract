@@ -1,7 +1,7 @@
 const std = @import("std");
 const ops = @import("ops.zig");
 const dtypes = @import("dtypes.zig");
-const AnyTensor = @import("tensor/tensor.zig").AnyTensor;
+const AnyTensor = tensor.AnyTensor;
 const tensor = @import("tensor/tensor.zig");
 const types = @import("tensor/types.zig");
 

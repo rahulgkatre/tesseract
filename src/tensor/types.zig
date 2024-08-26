@@ -19,7 +19,7 @@ pub const Labels = struct {
     dim_names: ?[]const ?[]const u8,
 };
 
-pub fn DimsEnumType(comptime maybe_dim_names: ?[]const ?[]const u8) type {
+pub fn DimEnum(comptime maybe_dim_names: ?[]const ?[]const u8) type {
     if (maybe_dim_names) |dim_names| {
         var dim_enum_fields: [dim_names.len]std.builtin.Type.EnumField = undefined;
         var enum_idx: usize = 0;
@@ -86,11 +86,11 @@ pub fn asTensor(comptime any: anytype) TensorTypeOf(any) {
 /// Like @Type but for constructing a Tensor type from its "type info"
 /// Given dtype and shape, recreate the array type and return the corresponing Tensor type
 pub fn TensorType(dtype: dtypes.DType, shape: anytype) type {
-    var ArrayType = dtypes.ZigType(dtype);
+    var Array = dtypes.ZigType(dtype);
     for (0..shape.len) |dim| {
-        ArrayType = [shape[shape.len - dim - 1]]ArrayType;
+        Array = [shape[shape.len - dim - 1]]Array;
     }
-    return Tensor(ArrayType);
+    return Tensor(Array);
 }
 
 pub fn TensorTuple(comptime tensors: anytype) type {
